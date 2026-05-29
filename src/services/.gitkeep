@@ -1,0 +1,3 @@
+// Services contain all business logic
+// Each service is isolated and reusable
+// Never put business logic in controllers or routes

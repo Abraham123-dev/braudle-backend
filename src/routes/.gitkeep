@@ -1,0 +1,3 @@
+// Routes define endpoints only
+// Each feature gets one route file
+// Routes call controllers, never call services directly

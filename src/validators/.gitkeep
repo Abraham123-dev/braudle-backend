@@ -1,0 +1,3 @@
+// Zod validation schemas
+// One schema per feature/endpoint
+// Validates input shape, types, length, allowed values

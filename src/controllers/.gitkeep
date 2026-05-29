@@ -1,0 +1,3 @@
+// Controllers handle HTTP request/response
+// Only job: validate input is present (Zod does), call service, return response
+// Never put business logic here

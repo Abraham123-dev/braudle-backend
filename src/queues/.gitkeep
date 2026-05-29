@@ -1,0 +1,3 @@
+// BullMQ queue definitions
+// Each background job type gets one queue
+// Queues connect workers to tasks

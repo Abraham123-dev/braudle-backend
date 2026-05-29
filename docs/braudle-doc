@@ -1,0 +1,948 @@
+BRAUDLE
+AI-Powered Personal Learning Platform
+
+Full Product & Technical Documentation
+Version 1.0  |  Stack: Next.js (TS) · Node.js (JS) · Express · MongoDB · Docker
+
+Author: Abraham (Jide)  |  May 2026
+
+WHAT IS BRAUDLE?	BRAUDLE is an AI-powered personal tutor web app that transforms uploaded study materials (PDFs, notes) into interactive, adaptive learning experiences. It teaches, questions, evaluates, and personalises lessons for every student — acting as a 24/7 private tutor.
+
+MVP SCOPE	User signup/login  |  PDF upload (2/day)  |  Image notes upload (5/day)  |  AI Mode Selection  |  Quiz generation  |  Session summary with progress tracking
+ 
+📘  SECTION 1: PRODUCT OVERVIEW
+Vision, mission, users, and core modes
+
+1.1 Vision & Mission
+BRAUDLE exists to give every student — especially those in underserved environments — access to a high-quality personal tutor at any time, completely on-demand.
+
+Vision	Mission
+Build an AI tutor that helps students understand, retain, and apply knowledge effectively.	Transform raw study materials into interactive, personalized learning experiences.
+
+1.2 Target Users
+User Type	Who They Are	Priority
+Students (Secondary)	Students preparing for exams with limited tutor access	PRIMARY
+Students (University)	University students studying from lecture notes and PDFs	PRIMARY
+Self-learners	Anyone learning independently from their own materials	SECONDARY
+Teachers / Foundations	Educators who assign BRAUDLE to their students	FUTURE
+
+1.3 What BRAUDLE Is NOT
+NOT This	But This Instead
+A summariser	An AI that teaches content step-by-step like a real tutor
+A flashcard generator	An adaptive learning system that detects misconceptions
+A search engine	A personal academic companion that knows your weaknesses
+A static quiz app	A dynamic tutor that adjusts based on your performance
+
+1.4 Core Learning Modes
+Mode	What It Does	MVP?
+Teach Mode	AI breaks content into sections, explains step-by-step, pauses to check understanding	YES
+Quiz Mode	Generates MCQ and theory questions from uploaded material with instant feedback	YES
+Session Summary	Shows what student understood well and what needs more work	YES
+Explain Like I'm...	Adapts explanation depth — Beginner / Intermediate / Advanced	Phase 1
+Break It Down	Isolates one confusing concept and simplifies it completely	Phase 1
+Voice Tutor	Student speaks, AI responds — fully voice-based tutoring session	Phase 1
+Collaborative Rooms	Group study with AI-assisted discussion on shared documents	Phase 2
+ 
+🎯  SECTION 2: USER EXPERIENCE FLOW
+End-to-end student journey from signup to session summary
+
+2.1 Full Student Journey (MVP)
+Step	What Happens	System Action
+1. Land on BRAUDLE	Student sees landing page with clear CTA	Serve Next.js landing page
+2. Sign In with Google	Click 'Continue with Google' — no form, no password	Google OAuth callback → match/create User + StudentProfile → issue JWT
+3. Dashboard	See uploaded docs, recent sessions, progress overview	Fetch user data from API
+4. Upload Document	Drag and drop PDF (max 2/day) or Image (max 5/day). Max 50MB per file. Large files processed in background queue.	Rate limit check → Multer upload → BullMQ queue → Extraction (pdf-parse / Groq Vision) → Semantic chunk → Store in DB
+5. Choose Mode	Student selects intent: 'Teach Mode', 'Explain the concepts', 'I sabi am, give me quiz', 'Exam for it', or 'Others' (custom text)	Initialize session with specific system prompt for chosen mode
+6. AI Teaches/Interacts	BRAUDLE responds based on mode via SSE streaming for real-time interaction	Stream AI responses via Groq API (SSE)
+7. Student Answers	Student types answers or interacts with the prompt	Send answer to AI for evaluation
+8. Quiz/Evaluation	If in Quiz/Exam mode, system serves questions based on document content	POST /quiz/generate endpoint
+9. Submit Quiz	Student submits answers, gets instant feedback per question	Evaluate + update StudentProfile
+10. Session Summary	See score, strong topics, weak topics, next steps	Update learningHistory in DB
+ 
+🏗️  SECTION 3: SYSTEM ARCHITECTURE
+High-level architecture, tech stack, and service breakdown
+
+3.1 Tech Stack
+Layer	Technology	Purpose
+Frontend	Next.js 14 + TypeScript	Web UI, routing, SSR, API calls
+Backend	Node.js + Express.js + JavaScript	REST API server, business logic
+AI Engine	Groq API (llama-3.3-70b-versatile)	Teaching, quiz generation, evaluation
+Database	MongoDB + Mongoose	All persistent data storage
+File Storage	AWS S3 / Cloudflare R2	Uploaded PDFs and audio files
+PDF Processing	pdf-parse	Extract text from uploaded PDFs locally — no API cost
+Auth	Passport.js + passport-google-oauth20 + JWT	Google OAuth login, JWT session management
+Background Queue	BullMQ + Redis	Async PDF processing — large files don't block the API
+Rate Limiting	express-rate-limit + rate-limit-mongo	Limit uploads to 2/day per user, protect all endpoints
+Security	helmet + cors + express-mongo-sanitize + hpp	HTTP hardening, injection protection, parameter pollution
+Containerisation	Docker + Docker Compose	Dev consistency, production deployment
+Caching	Redis (shared with BullMQ)	Cache chunked documents, session data, rate limit counters
+
+3.2 High-Level Architecture Flow
+The system follows a clean request flow from the student's browser through the API to the AI engine and database:
+
+Student Browser  (Next.js)
+↓  HTTP / WebSocket
+Express REST API  (Node.js)
+↓  Service calls
+Ingestion Service  |  AI Tutor Service  |  Quiz Service  |  Voice Service
+↓  LLM calls  ↓  DB reads/writes  ↓  File I/O
+Groq API               MongoDB Atlas          AWS S3 / R2
+
+3.3 Core Services Breakdown
+Service	Responsibility	Key Dependencies
+Ingestion Service	Accepts file uploads, extracts text, chunks into learning units, stores in MongoDB	pdf-parse, multer, MongoDB
+AI Tutor Service	Builds prompts, calls Groq API, streams responses back to student, handles conversation history	groq-sdk, Conversation collection
+Quiz Service	Generates questions from document chunks, accepts student answers, evaluates responses, returns feedback	Groq API, Quiz collection
+Adaptive Engine	Reads quiz results, updates StudentProfile weak/strong topics, adjusts future prompt context	StudentProfile collection
+Auth Service	Google OAuth via Passport.js — matches/creates users, issues JWT tokens, protects routes via middleware	passport-google-oauth20, jsonwebtoken
+Voice Service	Speech-to-text for student input, text-to-speech for AI responses	Whisper API, ElevenLabs
+ 
+🗄️  SECTION 4: DATABASE SCHEMA
+Full MongoDB collections, fields, types, and relationships
+
+BRAUDLE uses MongoDB with Mongoose. All collections are listed below with complete field definitions.
+
+4.1 User Collection
+Stores core authentication and identity information for every user.
+
+Field	Type	Required	Description
+_id	ObjectId	YES	Auto-generated MongoDB primary key
+googleId	String	YES	Unique ID returned by Google OAuth — used to match returning users
+name	String	YES	Full name pulled from Google profile
+email	String	YES	Unique email address pulled from Google account
+avatar	String	no	Google profile photo URL — updated on each login
+role	Enum	YES	One of: 'student' | 'admin' | 'teacher'. Default: 'student'
+createdAt	Date	YES	Timestamp of first login (account creation)
+updatedAt	Date	YES	Auto-updated on any field change
+
+4.2 StudentProfile Collection
+One profile per student. Tracks learning level, strengths, weaknesses, and full history. This is the core of adaptive learning.
+
+Field	Type	Required	Description
+_id	ObjectId	YES	Auto-generated primary key
+userId	ObjectId	YES	Reference to User._id (foreign key)
+level	Enum	YES	Current level: 'beginner' | 'intermediate' | 'advanced'. Default: 'beginner'
+weakTopics	String[]	no	Array of topic strings student scored poorly on
+strongTopics	String[]	no	Array of topic strings student scored well on
+totalSessions	Number	YES	Running count of completed sessions. Default: 0
+averageScore	Number	YES	Rolling average quiz score across all sessions (0-100)
+learningHistory	Array	no	Array of session result objects (see sub-schema below)
+learningHistory[].documentId	ObjectId	YES	Which document this session was about
+learningHistory[].topic	String	YES	Main topic covered in the session
+learningHistory[].score	Number	YES	Quiz score for this session (0-100)
+learningHistory[].mode	String	YES	Mode used: 'teach' | 'quiz' | 'breakdown'
+learningHistory[].date	Date	YES	When the session occurred
+createdAt	Date	YES	Profile creation timestamp
+
+4.3 Document Collection
+Stores all uploaded study materials. Raw text is extracted and split into chunks for AI processing.
+
+Field	Type	Required	Description
+_id	ObjectId	YES	Auto-generated primary key
+userId	ObjectId	YES	Owner of this document — ref to User._id
+title	String	YES	File name or user-defined document title
+type	Enum	YES	File type: 'pdf' | 'image' | 'audio' | 'text'
+fileUrl	String	no	S3/R2 URL to the original uploaded file
+rawText	String	YES	Full extracted text from the document
+chunks	String[]	YES	Array of text segments (~500 tokens each) used for AI teaching
+totalChunks	Number	YES	Count of chunks — used to track teaching progress
+subject	String	no	Subject tag e.g. 'Mathematics', 'Biology' (optional)
+processingStatus	Enum	YES	Processing state: 'pending' | 'processing' | 'ready' | 'failed'
+createdAt	Date	YES	Upload timestamp
+
+4.4 Session Collection
+Tracks each tutoring or quiz session. One document can have multiple sessions across different days.
+
+Field	Type	Required	Description
+_id	ObjectId	YES	Auto-generated primary key
+userId	ObjectId	YES	Student who ran this session — ref to User._id
+documentId	ObjectId	YES	Document studied in this session — ref to Document._id
+mode	Enum	YES	Session type: 'teach' | 'quiz' | 'breakdown' | 'exam'
+status	Enum	YES	Current state: 'active' | 'completed' | 'abandoned'
+currentChunkIndex	Number	YES	Which chunk the student is currently on (for Teach Mode progress)
+score	Number	no	Final quiz score (0-100). Null until session completed.
+summary	String	no	AI-generated summary of session: what was learned, what needs work
+startedAt	Date	YES	Session start timestamp
+completedAt	Date	no	Session end timestamp — null if not yet complete
+durationMinutes	Number	no	Total time spent in session (calculated on completion)
+
+4.5 Conversation Collection
+Stores the full message history for each session. This is passed back to the ai with every new message to maintain context.
+
+Field	Type	Required	Description
+_id	ObjectId	YES	Auto-generated primary key
+sessionId	ObjectId	YES	The session this conversation belongs to — ref to Session._id
+userId	ObjectId	YES	The student — ref to User._id
+messages	Array	YES	Ordered array of all messages in this conversation
+messages[].role	Enum	YES	Message sender: 'user' | 'assistant' | 'system'
+messages[].content	String	YES	Full text content of the message
+messages[].timestamp	Date	YES	When this message was sent/received
+messages[].type	Enum	no	Message type: 'explanation' | 'question' | 'answer' | 'feedback'
+createdAt	Date	YES	When the conversation was created
+
+4.6 Quiz Collection
+Stores generated quiz questions and student answers for a given session. Created after Teach Mode completes.
+
+Field	Type	Required	Description
+_id	ObjectId	YES	Auto-generated primary key
+sessionId	ObjectId	YES	Parent session — ref to Session._id
+documentId	ObjectId	YES	Source document — ref to Document._id
+questions	Array	YES	Array of question objects (see sub-schema below)
+questions[].question	String	YES	The question text
+questions[].type	Enum	YES	Question type: 'mcq' | 'theory' | 'true_false'
+questions[].options	String[]	no	MCQ answer choices (A, B, C, D) — null for theory questions
+questions[].answer	String	YES	The correct answer
+questions[].explanation	String	YES	Why this is the correct answer — shown after student submits
+questions[].studentAnswer	String	no	What the student submitted — null until answered
+questions[].isCorrect	Boolean	no	Whether student answer was correct — null until submitted
+totalQuestions	Number	YES	Total number of questions in this quiz
+score	Number	no	Final score percentage — calculated on submission
+submittedAt	Date	no	When student submitted the quiz
+
+4.7 Collection Relationships
+How collections connect to each other:
+
+User  (1)
+  ├─  StudentProfile  (1)   — one profile per user
+  ├─  Document  (many)     — user uploads many documents
+  └─  Session  (many)      — user has many study sessions
+         ├─  Conversation  (1)   — one chat history per session
+         └─  Quiz  (1)           — one quiz per session
+ 
+🔌  SECTION 5: API DESIGN
+All REST endpoints, request payloads, and responses
+
+5.1 Auth Endpoints  (Google OAuth Only)
+Method + Route	Purpose	Auth Required
+GET  /api/auth/google	Redirects student to Google OAuth consent screen	No
+GET  /api/auth/google/callback	Google redirects here after login — creates/matches user, issues JWT	No
+GET  /api/auth/me	Get current logged-in user from JWT	Yes (JWT)
+POST /api/auth/logout	Clear JWT cookie and invalidate session	Yes (JWT)
+
+5.2 Document Endpoints
+Method + Route	Purpose	Auth Required
+POST /api/documents/upload	Upload PDF (2/day) or Image (5/day) — triggers ingestion pipeline	Yes
+GET  /api/documents	Get all documents for current user	Yes
+GET  /api/documents/:id	Get a single document with its chunks	Yes
+DELETE /api/documents/:id	Delete a document and all related sessions	Yes
+
+5.3 AI Tutor Endpoints
+Method + Route	Purpose	Auth Required
+POST /api/sessions/start	Start a new session — returns sessionId. Expects 'mode' in body: ('teach', 'explain', 'quiz', 'exam', 'custom')	Yes
+POST /api/sessions/:id/chat	Send message/intent in current mode — streams AI response via SSE	Yes
+POST /api/sessions/:id/explain	Request deeper explanation of current concept	Yes
+POST /api/sessions/:id/breakdown	Break down a specific confusing concept	Yes
+GET  /api/sessions/:id	Get session details and current state	Yes
+GET  /api/sessions/:id/conversation	Get full conversation history for a session	Yes
+PATCH /api/sessions/:id/complete	Mark session as completed, generate summary	Yes
+
+5.4 Quiz Endpoints
+Method + Route	Purpose	Auth Required
+POST /api/quiz/generate	Generate quiz questions from a completed teach session	Yes
+GET  /api/quiz/:sessionId	Get the quiz for a given session	Yes
+POST /api/quiz/:id/submit	Submit all answers and receive scores + feedback	Yes
+
+5.5 Student Profile Endpoints
+Method + Route	Purpose	Auth Required
+GET  /api/profile	Get student's full learning profile (level, scores, history)	Yes
+GET  /api/profile/history	Get paginated session history	Yes
+GET  /api/profile/stats	Get aggregate stats: avg score, sessions, weak topics	Yes
+ 
+🧠  SECTION 6: AI TUTORING LOGIC
+How the AI tutor works — prompts, chunking, evaluation, and adaptation
+
+6.1 Overview — How BRAUDLE Teaches
+Every session follows this flow:
+
+Document Uploaded  →  Text Extracted (PDF/Image)  →  Chunked into Sections
+↓
+Student Chooses Intent:
+[ Teach Mode ] | [ Explain Concepts ] | [ I sabi am, give me quiz ] | [ Exam for it ] | [ Others... ]
+↓
+System Prompt Fixed Based on Choice  →  Groq API Called
+↓
+AI Interacts via SSE Stream  →  Asks Questions if teaching  →  Student Answers
+↓
+AI Evaluates Answer  →  Corrects Misconceptions  →  Moves Forward
+↓
+Session Done  →  Summary Generated  →  Score Calculated  →  Profile Updated
+
+6.2 Document Chunking Strategy
+Chunking is the most critical pre-processing step. Poor chunking = poor teaching. BRAUDLE uses a semantic-aware chunking approach:
+
+Strategy	How It Works	Why It Matters
+Target size	~500 tokens per chunk (approx 350-400 words)	Fits within optimal context window for clear explanations
+Boundary detection	Split at paragraph breaks and heading boundaries first	Preserves logical units — AI teaches complete ideas, not half-sentences
+Overlap	50-token overlap between consecutive chunks	Prevents AI losing context between sections
+Metadata tagging	Each chunk tagged with: chunk index, estimated topic, page range	Enables progress tracking and session recovery
+
+6.3 System Prompt Architecture
+Every call to Claude is built from a layered prompt:
+
+Layer 1	ROLE DEFINITION — 'You are BRAUDLE, a patient and encouraging personal tutor for students. You do NOT summarise. You teach, question, and evaluate.'
+Layer 2	STUDENT CONTEXT — 'The student's current level is: {level}. Their weak topics include: {weakTopics}. Adapt your explanation depth accordingly.'
+Layer 3	CURRENT CHUNK — 'Here is the section you are teaching right now: {chunk_text}. Teach this in 3-5 clear points. Use simple language. After explaining, ask one comprehension question. Wait for the student to answer before continuing.'
+Layer 4	CONVERSATION HISTORY — Full messages[] array injected here so Claude has full context of what has already been taught and answered.
+Layer 5	BEHAVIOUR RULES — 'If student answer is wrong, identify the specific misunderstanding and correct it clearly before moving on. Never skip a wrong answer. Never be harsh or discouraging.'
+
+6.4 Quiz Generation Prompt
+After teaching is complete, BRAUDLE generates a quiz using this structured prompt:
+
+QUIZ GENERATION PROMPT STRUCTURE:
+
+System: You are a professional exam question writer for students.
+        Generate exactly {n} questions based ONLY on the provided content.
+        Mix question types: 60% MCQ, 40% short theory.
+        Each question must have: question, type, options[], answer, explanation.
+        Return ONLY valid JSON. No markdown, no preamble.
+
+User:   Here is the full content studied in this session:
+        {all_chunks_text}
+        Generate {n} quiz questions covering all major topics above.
+
+Expected response: JSON array of question objects matching the Quiz schema.
+
+6.5 Misconception Detection Logic
+When a student answers a check question incorrectly, the AI does NOT just say 'wrong'. It follows this evaluation pattern:
+
+Student Answer Type	AI Response Strategy
+Completely wrong	Identify what they got wrong specifically. Re-explain just that concept. Ask a simpler version of the same question.
+Partially correct	Acknowledge what was right. Pinpoint the specific gap. Clarify and ask them to complete the answer.
+Correct but unclear	Confirm it is correct. Ask them to explain it in their own words to solidify understanding.
+Correct	Confirm clearly. Give brief positive reinforcement. Move to the next chunk.
+
+6.6 Adaptive Learning — How the Profile Updates
+After every quiz submission, the system automatically updates the StudentProfile:
+
+•	Questions scored < 60% → topic added to weakTopics array
+•	Questions scored >= 85% → topic added to strongTopics array
+•	Overall score < 50% → level stays or downgrades one step
+•	Overall score >= 80% consistently (3+ sessions) → level upgrades
+•	Future teach sessions inject weakTopics into the prompt — AI spends more time on weak areas
+ 
+📁  SECTION 7: PROJECT STRUCTURE
+Folder layout for frontend and backend
+
+7.1 Backend Folder Structure (Node.js + Express)
+
+braudle-backend/
+├── src/
+│   ├── config/
+│   │   ├── db.js              # MongoDB connection
+│   │   └── env.js             # Environment variable validation
+│   ├── models/
+│   │   ├── User.model.js
+│   │   ├── StudentProfile.model.js
+│   │   ├── Document.model.js
+│   │   ├── Session.model.js
+│   │   ├── Conversation.model.js
+│   │   └── Quiz.model.js
+│   ├── services/
+│   │   ├── ingestion.service.js   # PDF extract + chunk
+│   │   ├── ai.service.js          # Groq API calls + prompt builder
+│   │   ├── quiz.service.js        # Quiz generation + evaluation
+│   │   └── profile.service.js     # Adaptive profile updates
+│   ├── routes/
+│   │   ├── auth.routes.js
+│   │   ├── document.routes.js
+│   │   ├── session.routes.js
+│   │   ├── quiz.routes.js
+│   │   └── profile.routes.js
+│   ├── controllers/
+│   │   ├── auth.controller.js
+│   │   ├── document.controller.js
+│   │   ├── session.controller.js
+│   │   ├── quiz.controller.js
+│   │   └── profile.controller.js
+│   ├── middleware/
+│   │   ├── auth.middleware.js     # JWT validation
+│   │   ├── upload.middleware.js   # Multer file handling
+│   │   └── error.middleware.js    # Global error handler
+│   ├── utils/
+│   │   ├── chunker.js             # Text chunking logic
+│   │   ├── promptBuilder.js       # Build layered AI prompts
+│   │   └── scoreCalculator.js     # Quiz scoring logic
+│   └── app.js                     # Express app setup
+├── Dockerfile
+├── .env.example
+└── package.json
+
+7.2 Frontend Folder Structure (Next.js 14)
+
+braudle-frontend/
+├── app/
+│   ├── (auth)/
+│   │   └── login/page.tsx        # Single page: 'Continue with Google' button only
+│   ├── auth/callback/page.tsx    # Handles Google OAuth redirect, stores JWT
+│   ├── dashboard/
+│   │   ├── page.tsx              # Main student dashboard
+│   │   └── upload/page.tsx       # Upload a new document
+│   ├── session/
+│   │   ├── [id]/page.tsx          # Active learning session
+│   │   └── [id]/quiz/page.tsx     # Quiz view
+│   ├── profile/page.tsx           # Learning profile & stats
+│   └── layout.tsx
+├── components/
+│   ├── ui/                        # Reusable UI primitives
+│   ├── tutor/
+│   │   ├── ChatBubble.tsx
+│   │   ├── TutorInput.tsx
+│   │   └── ProgressBar.tsx
+│   ├── quiz/
+│   │   ├── QuizQuestion.tsx
+│   │   └── QuizResults.tsx
+│   └── dashboard/
+│       ├── DocumentCard.tsx
+│       └── SessionHistory.tsx
+├── lib/
+│   ├── api.ts                     # Axios instance + API calls
+│   └── auth.ts                    # Auth helpers
+└── package.json
+ 
+⚡  SECTION 7B: AI ENGINE ARCHITECTURE (Groq + Hugging Face)
+Model selection, SDK setup, and specialized task routing
+
+7B.1 Dual-Provider Strategy (Zero Cost)
+BRAUDLE uses a hybrid approach to maintain zero AI costs during Phase 1 by utilizing the free tiers of Groq and Hugging Face.
+
+Provider	Models Used	Primary Role
+Groq	Llama 3.3 70B, 3.1 8B, 3.2 Vision	High-speed reasoning, teaching, and OCR
+Hugging Face	MiniLM-L6, Flan-T5	Zero-LLM cost classification and semantic matching
+
+7B.2 Model Job Routing
+Model	Job Description	Reason
+llama-3.3-70b-versatile	Primary Teaching Engine	Deep reasoning needed for adaptive tutoring
+llama-3.1-8b-instant	Fast Flags & Simple Checks	Low latency for casual interactions
+llama-3.2-11b-vision	Handwriting/Image Transcription	Vision-capable for student note uploads
+all-MiniLM-L6-v2 (HF)	Semantic Similarity Scoring	Evaluates short answers against correct ones without LLM calls
+flan-t5-large (HF)	Fast Answer Classification	Efficiently categorizes responses as 'Correct', 'Partial', etc.
+
+7B.3 SDK Setup (ai.service.js)
+
+// Install: npm install groq-sdk
+
+import Groq from 'groq-sdk';
+
+const groq = new Groq({ apiKey: process.env.GROQ_API_KEY });
+
+export async function callGroq(messages: Message[], stream = true) {
+  return await groq.chat.completions.create({
+    model:       'llama-3.3-70b-versatile',
+    messages,
+    stream,
+    temperature: 0.7,
+    max_tokens:  1024,
+    top_p:       0.9,
+  });
+}
+
+7B.4 Streaming to the Frontend
+Groq streams tokens back chunk by chunk. The backend pipes this stream to the frontend using Server-Sent Events (SSE). The frontend displays each token as it arrives — exactly like a tutor typing in real time.
+
+// Backend — Express route streaming Groq response via SSE
+
+res.setHeader('Content-Type', 'text/event-stream');
+res.setHeader('Cache-Control', 'no-cache');
+
+const stream = await callGroq(messages, true);
+
+for await (const chunk of stream) {
+  const token = chunk.choices[0]?.delta?.content || '';
+  res.write(`data: ${JSON.stringify({ token })}\n\n`);
+}
+
+res.write('data: [DONE]\n\n');
+res.end();
+
+7B.5 Rate Limits (Free Tier)
+Limit	Free Tier Value	What to Do When Hit
+Requests per minute	30 RPM	Add retry logic with 2s exponential backoff
+Tokens per minute	14,400 TPM	Keep max_tokens at 1024, chunk size at ~500 tokens
+Requests per day	14,400 RPD	Sufficient for MVP — upgrade plan when user base grows
+ 
+🐳  SECTION 8: DOCKER & ENVIRONMENT
+Containerisation and environment variable guide
+
+8.1 Required Environment Variables
+Variable	Description	Example Value
+PORT	Backend server port	5000
+MONGODB_URI	MongoDB Atlas connection string	mongodb+srv://...
+JWT_SECRET	Secret for signing JWT tokens	a_long_random_string
+JWT_EXPIRES_IN	Token expiry duration	7d
+GOOGLE_CLIENT_ID	From Google Cloud Console — OAuth 2.0 Client ID	xxxx.apps.googleusercontent.com
+GOOGLE_CLIENT_SECRET	From Google Cloud Console — OAuth 2.0 Secret	GOCSPX-xxxxx
+GOOGLE_CALLBACK_URL	Where Google redirects after login	http://localhost:5000/api/auth/google/callback
+GROQ_API_KEY	Groq API key from console.groq.com	gsk_...
+AWS_BUCKET_NAME	S3 bucket for file storage	braudle-uploads
+AWS_ACCESS_KEY_ID	AWS access key	AKIA...
+AWS_SECRET_ACCESS_KEY	AWS secret key	xxxxx
+AWS_REGION	AWS region	us-east-1
+NEXT_PUBLIC_API_URL	Frontend pointing to backend	http://localhost:5000
+
+8.2 Docker Compose Services
+Service	Image / Build	Purpose
+backend	Custom Dockerfile	Node.js Express API server
+frontend	Custom Dockerfile	Next.js web application
+mongo	mongo:7	Local MongoDB (dev only — use Atlas in prod)
+ 
+🚀  SECTION 9: DEVELOPMENT ROADMAP
+Phase-by-phase feature delivery plan
+
+Phase	Features	Goal
+Phase 1 — MVP & Intelligence	User auth (signup/login)  |  PDF upload + text extraction  |  Teach Mode  |  Quiz generation + submission  |  Session summary  |  Basic student profile  |  Adaptive learning engine  |  Explain Like I'm... modes  |  Break It Down mode  |  Voice tutor  |  Misconception detection  |  Progress dashboard	Build a primary working product that actually knows the student and adapts.
+Phase 2 — Scale & Collaborate	Collaborative study rooms  |  /audio upload support  |  Admin / teacher dashboard  |  Foundation/school multi-user management  |  Mobile-responsive polish	BRAUDLE becomes a platform, not just an app. Multi-user and classroom support.
+ 
+🤖  SECTION 10: INSTRUCTIONS FOR AI AGENTS
+How AI coding agents should interpret and work on this codebase
+
+10.1 What This Project Is
+BRAUDLE is an AI-powered personal tutor web app. It is NOT a summariser, flashcard app, or chatbot. It is a full adaptive learning system. Every feature should serve the core mission: teach students effectively and personally.
+
+10.2 Core Rules for Agents
+•	Use JavaScript (ESM) for backend — use TypeScript for frontend only
+•	Auth is Google OAuth ONLY — never add password fields, bcrypt, or manual registration logic
+•	All API routes must have JWT middleware unless explicitly marked public (Google callback routes are public)
+•	Never hardcode API keys — always read from process.env
+•	All Groq API calls must go through ai.service.js — never call Groq directly in controllers
+•	Chunking logic lives exclusively in utils/chunker.js — do not duplicate it
+•	Every new MongoDB model must follow the existing schema pattern with timestamps: true
+•	Use async/await throughout — no .then() chains
+•	All errors must be passed to next(error) for the global error handler to catch
+
+10.3 How Sessions Work (For Agents)
+When an agent is implementing or extending a learning session, follow this logic:
+
+•	1. Post-Upload: System prompts user for intent ('Teach Mode', 'Explain concepts', 'I sabi am, give me quiz', 'Exam', or 'Others')
+•	2. Session starts — load document chunks from DB and initialize based on chosen mode
+•	3. Build prompt using promptBuilder.js with: role definition + student level + mode-specific instructions + document context
+•	4. Call Groq API and stream response to frontend via SSE
+•	5. Save AI response to Conversation.messages[]
+•	6. Handle student input differently per mode:
+     - Teach Mode: Break it down, check understanding, move to next chunk
+     - Explain Concepts: Holistic view, simplified analogies
+     - Quiz/Exam: Evaluate immediately, update profile, do not re-explain unless asked
+•	7. All interaction must be streamed via SSE for a word-by-word real-time experience
+
+10.4 Key Files Agents Should Know
+File	What It Does
+src/services/ai.service.js	Single source of truth for all Groq API calls. Contains buildPrompt() and callGroq() functions.
+src/utils/chunker.js	Splits raw document text into learning-sized chunks. Do not modify without understanding overlap logic.
+src/utils/promptBuilder.js	Assembles the 5-layer system prompt for each AI call. Inject student context here.
+src/services/profile.service.js	Updates StudentProfile after every quiz. Contains scoring thresholds and level-up logic.
+src/middleware/auth.middleware.js	JWT validation. Attaches req.user to every protected request.
+
+📄  SECTION 11: DOCUMENT UPLOAD SYSTEM & RATE LIMITING
+Large file handling, background queues, and daily enforcement
+
+11.1 Upload Rate Limiting — PDF (2/day) & Images (5/day)
+Every user is limited by file type per day. This is enforced at the middleware level.
+
+Scenario	Limit	HTTP Response if Hit
+PDF Upload	2 per user per day	429 Too Many Requests
+Image Upload	5 per user per day	429 Too Many Requests
+File Size	Max 50MB per file	413 Payload Too Large
+
+11.2 Upload Limit Schema (MongoDB)
+Tracked in the User document directly:
+
+// Added to User model
+pdfUploadCount:   { type: Number, default: 0 },
+imgUploadCount:   { type: Number, default: 0 },
+lastUploadDate:   { type: Date,   default: null },
+
+// Middleware logic
+const today = new Date().toDateString();
+const isNewDay = user.lastUploadDate?.toDateString() !== today;
+
+if (isNewDay) { 
+  user.pdfUploadCount = 0; 
+  user.imgUploadCount = 0; 
+}
+
+// Logic then checks file type and increments specific counter
+// if (pdf) user.pdfUploadCount += 1;
+// if (img) user.imgUploadCount += 1;
+
+11.3 Document Handling — Background Queue
+Large files are never processed synchronously. The API responds immediately and a background worker handles the heavy lifting.
+
+File Size	Processing Strategy	User Experience
+Under 5MB	Process inline — fast enough to not block	Ready in ~2 seconds
+5MB – 50MB	Queue immediately via BullMQ — background worker processes	Sees 'Processing...' spinner, notified when ready
+Over 50MB	Rejected at upload — file too large	Error message: 'Max file size is 50MB'
+Unsupported	Rejected at Multer middleware	Error message: 'Only PDF and Image files are accepted'
+
+11.4 Background Queue Flow (BullMQ + Redis)
+
+User uploads file → Rate limit passes → Multer saves file to S3
+↓
+Document created in MongoDB (status: 'pending') → Job added to BullMQ queue
+↓  API immediately returns documentId to frontend
+Background Worker picks up job → Extraction (pdf-parse / Groq Vision)
+↓
+Semantic chunker splits text → Chunks stored in MongoDB
+↓
+Document status updated → 'ready' → Frontend prompts for session mode
+
+↓
+Semantic chunker splits text → Chunks stored in MongoDB
+↓
+Document status updated → 'ready' → Frontend polls and unlocks study session
+
+11.5 File Size & Limit Summary
+Limit	Value	Enforced By
+PDF uploads per user per day	2	Custom middleware — checks User.pdfUploadCount
+Image uploads per user per day	5	Custom middleware — checks User.imgUploadCount
+Max file size per upload	50MB	Multer limits config
+Accepted file types	PDF, JPG, PNG	Multer fileFilter
+Max pages (PDF)	300 pages	Worker check
+Queue retry on failure	3 retries	BullMQ job options
+
+🔒  SECTION 12: SECURITY & SYSTEM HARDENING
+Rate limiting, injection protection, secrets management, horizontal scaling, and caching
+
+12.1 Security Layers Overview
+Layer	Tool / Method	What It Protects Against
+HTTP Headers	helmet	Clickjacking, XSS, MIME sniffing, content injection
+CORS	cors (whitelist only)	Unauthorized domains calling your API
+Rate Limiting	express-rate-limit	Brute force attacks, DDoS, API abuse
+NoSQL Injection	express-mongo-sanitize	MongoDB operator injection via req.body
+Parameter Pollution	hpp	HTTP parameter pollution attacks
+JWT Security	jsonwebtoken + httpOnly cookies	Token theft, XSS token stealing
+Secrets Management	.env + Docker secrets	API keys never in codebase or Docker image
+Input Validation	zod / joi	Malformed request bodies crashing the server
+File Upload Safety	Multer type + size checks	Malicious file uploads, oversized payloads
+MongoDB Security	Atlas IP whitelist + auth	Unauthorized database access
+
+12.2 Express Security Setup
+Apply these in app.js before any route is registered:
+
+import helmet               from 'helmet';
+import cors                 from 'cors';
+import mongoSanitize        from 'express-mongo-sanitize';
+import hpp                  from 'hpp';
+import rateLimit            from 'express-rate-limit';
+
+// 1. Security headers
+app.use(helmet());
+
+// 2. CORS — only allow your frontend domain
+app.use(cors({ origin: process.env.FRONTEND_URL, credentials: true }));
+
+// 3. Global rate limit — 100 requests per 15 min per IP
+app.use(rateLimit({ windowMs: 15 * 60 * 1000, max: 100 }));
+
+// 4. NoSQL injection protection
+app.use(mongoSanitize());
+
+// 5. HTTP parameter pollution
+app.use(hpp());
+
+// 6. Body size limit — prevent large payload attacks
+app.use(express.json({ limit: '10kb' }));
+
+12.3 JWT Security — httpOnly Cookies
+Never store JWT in localStorage — it is vulnerable to XSS. Always use httpOnly cookies:
+
+// After Google OAuth success — set cookie, not response body
+res.cookie('braudle_token', jwtToken, {
+  httpOnly: true,      // JS cannot read this cookie
+  secure:   true,      // HTTPS only in production
+  sameSite: 'strict',  // CSRF protection
+  maxAge:   7 * 24 * 60 * 60 * 1000  // 7 days
+});
+
+// Auth middleware reads from cookie
+const token = req.cookies.braudle_token;
+const decoded = jwt.verify(token, process.env.JWT_SECRET!);
+
+12.4 Environment Secrets — Never In Code
+Rule	Why
+Never commit .env to Git — add to .gitignore immediately	Leaked secrets expose your entire system
+Use .env.example with placeholder values only — commit this	Lets developers know what vars are needed without exposing values
+In Docker — pass env vars at runtime, never bake into image	Docker images can be inspected — never embed secrets in layers
+In production — use Railway / Render / AWS Secrets Manager	Encrypted secret storage, not plain .env files on a server
+Rotate GROQ_API_KEY and JWT_SECRET every 90 days	Limits exposure window if a key is ever compromised
+
+12.5 Rate Limiting Strategy — All Endpoints
+Endpoint Group	Limit	Window	Purpose
+All endpoints (global)	100 requests	15 minutes per IP	General DDoS/abuse protection
+POST /api/auth/google/callback	20 requests	15 minutes per IP	Prevent OAuth brute force
+POST /api/documents/upload	Type-specific	24 hours (per userId)	2 PDF / 5 Image per day
+POST /api/sessions/chat	60 requests	1 minute per user	Prevent AI API cost abuse
+POST /api/quiz/generate	10 requests	1 hour per user	Prevent quiz spam
+
+12.6 Caching Strategy (Redis)
+Redis is already running for BullMQ. Use the same instance for caching:
+
+What to Cache	Cache Key	TTL	Why
+Document chunks after processing	chunks:{documentId}	24 hours	Avoid re-reading MongoDB on every teach request
+Student profile (level, weak topics)	profile:{userId}	10 minutes	Profile is read on every session — cache reduces DB load
+Quiz questions after generation	quiz:{sessionId}	1 hour	Avoid regenerating quiz if student refreshes page
+Rate limit counters	ratelimit:{userId}:{date}	24 hours	Fast in-memory check without hitting MongoDB
+
+12.7 Horizontal Scaling
+When BRAUDLE grows and one server isn't enough, scale horizontally using this strategy:
+
+Component	Scaling Strategy	How
+Express API	Stateless — scale to multiple instances	Docker replicas behind a load balancer (Nginx / AWS ALB)
+MongoDB	MongoDB Atlas auto-scaling	Atlas handles replica sets and sharding automatically
+Redis	Redis Cluster or Redis Cloud	Shared cache and queue state across all API instances
+BullMQ Workers	Spin up more worker containers	Each worker pulls from the same Redis queue — no coordination needed
+File Storage	S3 / Cloudflare R2	Already distributed — no scaling needed
+Next.js Frontend	Vercel (auto-scales)	Deploy to Vercel — zero config scaling
+
+KEY INSIGHT	Because the Express API is stateless (JWT auth, Redis for session/cache, MongoDB Atlas for data), you can add more API containers at any time with zero code changes. The load balancer distributes traffic automatically.
+ 
+🐳  SECTION 13: DOCKER SETUP
+Dockerfile structure, Docker Compose, and container architecture
+
+13.1 Container Architecture
+Container	Service	Port	Depends On
+braudle-backend	Node.js Express API	5000	mongo, redis
+braudle-worker	BullMQ PDF processing worker	none (no HTTP)	mongo, redis
+braudle-frontend	Next.js web app	3000	braudle-backend
+mongo	MongoDB (dev only — use Atlas in prod)	27017	none
+redis	Redis — queue + cache	6379	none
+
+13.2 Backend Dockerfile
+
+# braudle-backend/Dockerfile
+
+FROM node:20-alpine
+WORKDIR /app
+ENV NODE_ENV=production
+COPY package*.json ./
+RUN npm ci --only=production
+COPY . .
+
+# Security: run as non-root user
+RUN addgroup -S braudle && adduser -S braudle -G braudle
+USER braudle
+
+EXPOSE 5000
+CMD ["node", "src/app.js"]
+
+13.3 Frontend Dockerfile
+
+# braudle-frontend/Dockerfile
+
+FROM node:20-alpine AS builder
+WORKDIR /app
+COPY package*.json ./
+RUN npm ci
+COPY . .
+RUN npm run build                   # next build
+
+FROM node:20-alpine AS production
+WORKDIR /app
+ENV NODE_ENV=production
+COPY --from=builder /app/.next ./.next
+COPY --from=builder /app/public ./public
+COPY --from=builder /app/package*.json ./
+RUN npm ci --only=production
+
+RUN addgroup -S braudle && adduser -S braudle -G braudle
+USER braudle
+
+EXPOSE 3000
+CMD ["npm", "start"]
+
+13.4 Docker Compose (Full Dev Environment)
+
+# docker-compose.yml
+version: '3.9'
+
+services:
+  backend:
+    build: ./braudle-backend
+    ports: ['5000:5000']
+    env_file: ./braudle-backend/.env
+    depends_on: [mongo, redis]
+    volumes:
+      - ./braudle-backend/src:/app/src   # hot reload in dev
+
+  worker:
+    build: ./braudle-backend
+    command: node src/workers/pdf.worker.js
+    env_file: ./braudle-backend/.env
+    depends_on: [mongo, redis]
+
+  frontend:
+    build: ./braudle-frontend
+    ports: ['3000:3000']
+    env_file: ./braudle-frontend/.env.local
+    depends_on: [backend]
+
+  mongo:
+    image: mongo:7
+    ports: ['27017:27017']
+    volumes:
+      - mongo_data:/data/db             # persist data between restarts
+
+  redis:
+    image: redis:7-alpine
+    ports: ['6379:6379']
+    volumes:
+      - redis_data:/data
+
+volumes:
+  mongo_data:
+  redis_data:
+ 
+🚀  SECTION 14: GETTING STARTED
+Step-by-step: what to install, how to set up MongoDB, Google Auth, and run BRAUDLE locally
+
+14.1 Prerequisites — Install These First
+Tool	Version	How to Install
+Node.js	v20 LTS	https://nodejs.org — download LTS installer
+npm	v10+	Comes with Node.js
+Docker Desktop	Latest	https://docker.com/products/docker-desktop
+Git	Latest	https://git-scm.com
+VS Code	Latest	https://code.visualstudio.com
+
+14.2 Backend — NPM Packages to Install
+Run these commands inside your braudle-backend/ folder:
+
+# Core server
+npm install express mongoose dotenv cors cookie-parser
+
+# Auth — Google OAuth + JWT
+npm install passport passport-google-oauth20 jsonwebtoken
+
+# Security
+npm install helmet hpp express-rate-limit express-mongo-sanitize
+
+# File upload + PDF extraction
+npm install multer pdf-parse aws-sdk
+
+# Background queue + caching
+npm install bullmq ioredis
+
+# AI engine
+npm install groq-sdk
+
+# Input validation
+npm install zod
+
+# Dev dependencies
+npm install -D nodemon
+
+14.3 Frontend — NPM Packages to Install
+Run these inside your braudle-frontend/ folder:
+
+# Create Next.js app first (if not done)
+npx create-next-app@latest braudle-frontend --typescript --tailwind --app
+
+# HTTP client
+npm install axios
+
+# State management
+npm install zustand
+
+# UI components
+npm install @radix-ui/react-dialog @radix-ui/react-progress lucide-react
+
+# File upload UI
+npm install react-dropzone
+
+14.4 MongoDB Setup
+Step	Action
+1. Create Atlas account	Go to https://cloud.mongodb.com — sign up free
+2. Create a cluster	Choose M0 Free Tier — pick your nearest region
+3. Create database user	Security → Database Access → Add user with password — save credentials
+4. Whitelist IP	Security → Network Access → Add IP: 0.0.0.0/0 for dev (restrict in production)
+5. Get connection string	Connect → Drivers → Copy URI — looks like: mongodb+srv://user:pass@cluster.mongodb.net/braudle
+6. Add to .env	MONGODB_URI=mongodb+srv://user:pass@cluster.mongodb.net/braudle
+7. Test connection	Run your backend — if you see 'MongoDB connected' in console — done
+
+14.5 Google OAuth Setup
+Step	Action
+1. Open Google Cloud Console	Go to https://console.cloud.google.com
+2. Create a project	Click 'New Project' → name it 'BRAUDLE' → Create
+3. Enable OAuth	APIs & Services → OAuth consent screen → External → Fill in app name, email
+4. Create credentials	APIs & Services → Credentials → Create → OAuth 2.0 Client ID → Web Application
+5. Set Authorized redirect URI	Add: http://localhost:5000/api/auth/google/callback (for dev)
+6. Copy credentials	Copy Client ID and Client Secret
+7. Add to .env	GOOGLE_CLIENT_ID=xxxx  |  GOOGLE_CLIENT_SECRET=xxxx  |  GOOGLE_CALLBACK_URL=http://localhost:5000/api/auth/google/callback
+8. Add test user	OAuth consent screen → Test users → Add your Gmail — required while app is in testing mode
+
+14.6 Groq API Setup
+Step	Action
+1. Create account	Go to https://console.groq.com — sign up free
+2. Generate API key	API Keys → Create API Key → Copy it immediately (only shown once)
+3. Add to .env	GROQ_API_KEY=gsk_xxxxxxxxxxxxxxxxxxxx
+4. Select model	Use: llama-3.3-70b-versatile — best for teaching and reasoning tasks
+
+14.7 First Run — Start Everything
+
+# Step 1 — Start all containers
+docker-compose up --build
+
+# Step 2 — Verify services running
+docker ps
+# Should show: backend, worker, frontend, mongo, redis all running
+
+# Step 3 — Test backend health
+curl http://localhost:5000/api/health
+# Expected: { status: 'ok', mongodb: 'connected', redis: 'connected' }
+
+# Step 4 — Open frontend
+# Visit http://localhost:3000 in your browser
+
+14.8 Build Order — What to Build First
+Order	What to Build	Why This Order
+1	Project scaffolding — folders, Docker, .env	Everything depends on this foundation
+2	MongoDB connection + all Mongoose models	Auth and every other service needs the DB
+3	Google OAuth + JWT — full auth flow	Every protected route needs this working first
+4	Document upload endpoint + rate limiting middleware	Core input — nothing works without uploaded content
+5	BullMQ worker — extraction + semantic chunker	Processes the uploaded files into teachable chunks
+6	Groq AI service — buildPrompt + callGroq + stream	The brain of BRAUDLE — needed for the tutor
+7	Learning Session — start, message loop, streaming	Core MVP feature
+8	Quiz generation + submission + scoring	Completes the learning loop
+9	Session summary + profile update	Closes the MVP loop
+10	Frontend — auth, dashboard, upload, session, quiz pages	Build UI last — it just consumes the API
+
+BRAUDLE — Full Technical Documentation v4.0
+Built by Abraham  |  Stack: Next.js (TS) · Node.js (JS) · Express · MongoDB · Docker · Groq API
+This document is the single source of truth for all engineers and AI agents working on BRAUDLE.
+✅ Google OAuth login
+✅ PDF upload (2 per day, 50MB max)
+✅ Image upload — handwritten notes (5 per day, Groq Vision)
+✅ Background processing queue (BullMQ)
+✅ AI Interaction Mode with SSE streaming
+✅ Basic StudentProfile
+________________________________________
+✅ Misconception Detection
+   Two-step: fast model classifies, smart model corrects
+   Four types: correct, partial, wrong, unclear
+   Stored in StudentProfile for adaptive learning
+
+✅ Break It Down Mode
+   Student triggered
+   Session mode flag switches to breakdown
+   Chunk index does NOT increment during breakdown
+   Different explanation approach every time
+
+✅ Explain Like I'm... (3 levels)
+   Beginner / Intermediate / Advanced
+   Toggle at top of every session
+   Changes prompt Layer 2 dynamically
+   Set at onboarding, changeable mid-session
+
+✅ Maths Tutor Mode
+   Detects maths content automatically
+   Different prompt — returns structured JSON
+   Steps array with LaTeX notation
+   Desmos for graphs (free embed)
+   KaTeX for rendering (npm)
+   D3 for geometry diagrams
+   mathjs for computation
+________________________________________
+✅ Onboarding Flow — 6 screens
+   Screen 1: Welcome (uses their Google name)
+   Screen 2: Study level (4 options)
+   Screen 3: Subjects (tag cloud, up to 5, African curriculum included)
+   Screen 4: Learning style (3 options)
+   Screen 5: Goal (scholarship is highlighted option)
+

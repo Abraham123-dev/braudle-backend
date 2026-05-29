@@ -1,0 +1,3 @@
+// MongoDB Mongoose models
+// One file per collection
+// Defines schema, validation, indexes

@@ -1,0 +1,3 @@
+// BullMQ background workers
+// Process long-running jobs: PDF extraction, image transcription, etc.
+// Never blocks the HTTP request
