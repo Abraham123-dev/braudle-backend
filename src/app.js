@@ -3,7 +3,8 @@ import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import hpp from 'hpp';
-import { env } from './config/env.js';
+import { env } from './config/env.js';import { globalLimiter } from './middleware/rateLimit.middleware.js';
+
 
 const app = express();
 
@@ -49,4 +50,7 @@ app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
 
+app.use(globalLimiter); // Apply before routes
+
 export { app };
+

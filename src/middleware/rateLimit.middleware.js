@@ -1,34 +1,70 @@
 // Rate limiting middleware
-// Uses Redis for flexible per-feature rate limits
+// Uses express-rate-limit with Redis store for flexible per-feature rate limits
 
+import rateLimit from 'express-rate-limit';
+import RedisStore from 'rate-limit-redis';
 import { redisClient } from '../config/redis.js';
-import { AppError } from '../utils/AppError.js';
 
-const rateLimit = (key, limit, windowSeconds = 3600) => {
-  return async (req, res, next) => {
-    try {
-      const userId = req.user?.id;
-      if (!userId) {
-        throw new AppError('Authentication required', 401);
-      }
+// Global rate limiter: 100 requests per 15 minutes
+const globalLimiter = rateLimit({
+  windowMs: 15 * 60 * 1000, // 15 minutes
+  max: 100,
+  message: 'Too many requests from this IP, please try again later.',
+  standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
+  legacyHeaders: false, // Disable the `X-RateLimit-*` headers
+  skip: (req) => req.method === 'GET', // Don't rate limit GET requests
+});
 
-      const rateLimitKey = `${key}:${userId}`;
-      const current = await redisClient.incr(rateLimitKey);
+// Upload rate limiter: 2 PDFs per day per user
+const uploadPdfLimiter = rateLimit({
+  store: new RedisStore({
+    client: redisClient,
+    prefix: 'rl:pdf:',
+  }),
+  windowMs: 24 * 60 * 60 * 1000, // 24 hours
+  max: 2, // 2 uploads per day
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: 'You have reached the limit of 2 PDF uploads per day',
+  statusCode: 429,
+});
 
-      if (current === 1) {
-        await redisClient.expire(rateLimitKey, windowSeconds);
-      }
+// Image upload rate limiter: 5 images per day per user
+const uploadImageLimiter = rateLimit({
+  store: new RedisStore({
+    client: redisClient,
+    prefix: 'rl:image:',
+  }),
+  windowMs: 24 * 60 * 60 * 1000, // 24 hours
+  max: 5, // 5 uploads per day
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: 'You have reached the limit of 5 image uploads per day',
+  statusCode: 429,
+});
 
-      if (current > limit) {
-        throw new AppError(`Rate limit exceeded. Max ${limit} requests per ${windowSeconds}s`, 429);
-      }
+// Session chat rate limiter: 60 messages per hour per user
+const sessionChatLimiter = rateLimit({
+  store: new RedisStore({
+    client: redisClient,
+    prefix: 'rl:chat:',
+  }),
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 60, // 60 messages per hour
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: 'Too many messages. Please wait before sending another.',
+  statusCode: 429,
+});
 
-      res.set('X-RateLimit-Remaining', limit - current);
-      next();
-    } catch (error) {
-      throw error;
-    }
-  };
-};
+// Quiz rate limiter: 10 submissions per hour per user
+const quizLimiter = rateLimit({
+  store: new RedisStore({
+    client: redisClient,
+    prefix: 'rl:quiz:',
+  }),
+  windowMs: 60 * 60 * 1000, // 1 hour
+  max: 10, // 10 quiz submissions per hour
+  keyGenerator: (req) => req.user?.id || req.ip,
+  message: 'Too many quiz submissions. Please wait before trying again.',
+  statusCode: 429,
+});
 
-export { rateLimit };
+export { globalLimiter, uploadPdfLimiter, uploadImageLimiter, sessionChatLimiter, quizLimiter };

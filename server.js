@@ -7,8 +7,8 @@ await connectDB();
 
 // Start server
 const server = app.listen(env.port, () => {
-  console.log(`🚀 Server running on port ${env.port} in ${env.nodeEnv} mode`);
-  console.log(`🔗 http://localhost:${env.port}`);
+  console.log(` Server running on port ${env.port} in ${env.nodeEnv} mode`);
+  console.log(` http://localhost:${env.port}`);
 });
 
 // Handle graceful shutdown
