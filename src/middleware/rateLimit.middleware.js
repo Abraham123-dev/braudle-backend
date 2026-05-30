@@ -1,7 +1,7 @@
 // Rate limiting middleware
 // Uses express-rate-limit with Redis store for flexible per-feature rate limits
 
-import rateLimit from 'express-rate-limit';
+import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import RedisStore from 'rate-limit-redis';
 import { redisClient } from '../config/redis.js';
 
@@ -18,12 +18,12 @@ const globalLimiter = rateLimit({
 // Upload rate limiter: 2 PDFs per day per user
 const uploadPdfLimiter = rateLimit({
   store: new RedisStore({
-    client: redisClient,
+    sendCommand: (...args) => redisClient.call(...args),
     prefix: 'rl:pdf:',
   }),
   windowMs: 24 * 60 * 60 * 1000, // 24 hours
   max: 2, // 2 uploads per day
-  keyGenerator: (req) => req.user?.id || req.ip,
+  keyGenerator: (req) => req.user?.id || ipKeyGenerator(req),
   message: 'You have reached the limit of 2 PDF uploads per day',
   statusCode: 429,
 });
@@ -31,12 +31,12 @@ const uploadPdfLimiter = rateLimit({
 // Image upload rate limiter: 5 images per day per user
 const uploadImageLimiter = rateLimit({
   store: new RedisStore({
-    client: redisClient,
+    sendCommand: (...args) => redisClient.call(...args),
     prefix: 'rl:image:',
   }),
   windowMs: 24 * 60 * 60 * 1000, // 24 hours
   max: 5, // 5 uploads per day
-  keyGenerator: (req) => req.user?.id || req.ip,
+  keyGenerator: (req) => req.user?.id || ipKeyGenerator(req),
   message: 'You have reached the limit of 5 image uploads per day',
   statusCode: 429,
 });
@@ -44,12 +44,12 @@ const uploadImageLimiter = rateLimit({
 // Session chat rate limiter: 60 messages per hour per user
 const sessionChatLimiter = rateLimit({
   store: new RedisStore({
-    client: redisClient,
+    sendCommand: (...args) => redisClient.call(...args),
     prefix: 'rl:chat:',
   }),
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 60, // 60 messages per hour
-  keyGenerator: (req) => req.user?.id || req.ip,
+  keyGenerator: (req) => req.user?.id || ipKeyGenerator(req),
   message: 'Too many messages. Please wait before sending another.',
   statusCode: 429,
 });
@@ -57,12 +57,12 @@ const sessionChatLimiter = rateLimit({
 // Quiz rate limiter: 10 submissions per hour per user
 const quizLimiter = rateLimit({
   store: new RedisStore({
-    client: redisClient,
+    sendCommand: (...args) => redisClient.call(...args),
     prefix: 'rl:quiz:',
   }),
   windowMs: 60 * 60 * 1000, // 1 hour
   max: 10, // 10 quiz submissions per hour
-  keyGenerator: (req) => req.user?.id || req.ip,
+  keyGenerator: (req) => req.user?.id || ipKeyGenerator(req),
   message: 'Too many quiz submissions. Please wait before trying again.',
   statusCode: 429,
 });

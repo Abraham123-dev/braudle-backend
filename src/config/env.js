@@ -11,9 +11,11 @@ const requiredEnvVars = [
   'GOOGLE_CALLBACK_URL',
   'GROQ_API_KEY',
   'HUGGINGFACE_API_KEY',
-  'AWS_BUCKET_NAME',
-  'AWS_ACCESS_KEY_ID',
-  'AWS_SECRET_ACCESS_KEY',
+  'CF_ACCOUNT_ID',
+  'CF_R2_ACCESS_KEY',
+  'CF_R2_SECRET_KEY',
+  'CF_R2_BUCKET',
+  'CF_R2_PUBLIC_URL',
 ];
 
 const missingVars = requiredEnvVars.filter(v => !process.env[v]);
@@ -50,11 +52,12 @@ export const env = {
     apiKey: process.env.HUGGINGFACE_API_KEY,
   },
   
-  aws: {
-    bucketName: process.env.AWS_BUCKET_NAME,
-    accessKeyId: process.env.AWS_ACCESS_KEY_ID,
-    secretAccessKey: process.env.AWS_SECRET_ACCESS_KEY,
-    region: process.env.AWS_REGION || 'us-east-1',
+  cfR2: {
+    accountId: process.env.CF_ACCOUNT_ID,
+    accessKey: process.env.CF_R2_ACCESS_KEY,
+    secretKey: process.env.CF_R2_SECRET_KEY,
+    bucket: process.env.CF_R2_BUCKET,
+    publicUrl: process.env.CF_R2_PUBLIC_URL,
   },
   
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
