@@ -11,7 +11,15 @@ const verifyJWT = (req, res, next) => {
     }
 
     const decoded = jwt.verify(token, env.jwt.secret);
-    req.user = decoded;
+
+    // Enforce the expected JWT payload contract.
+    if (!decoded?.id) {
+      throw new AppError('Invalid token payload', 401);
+    }
+
+    // Hard contract: controller/use sites expect req.user.id, not the entire decoded payload.
+    req.user = { id: decoded.id };
+
     next();
   } catch (error) {
     if (error instanceof jwt.JsonWebTokenError) {

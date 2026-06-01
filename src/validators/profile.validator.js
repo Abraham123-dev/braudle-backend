@@ -1,14 +1,30 @@
 import { z } from 'zod';
 
+// studyLevel, learningStyle, and goal accept preset values OR any custom string
+// (student can type 'other: preparing for WAEC science olympiad' etc.)
+// level stays as a strict enum — the AI uses it to decide explanation depth.
+
 export const onboardingSchema = z
   .object({
-    studyLevel: z.enum(['secondary', 'university', 'professional', 'self']),
+    studyLevel: z
+      .string()
+      .trim()
+      .min(1, 'Study level is required')
+      .max(200, 'Study level is too long'),
     subjects: z
       .array(z.string().trim().min(1, 'Subject is required').max(100, 'Subject is too long'))
       .min(1, 'Select at least one subject')
       .max(5, 'Maximum 5 subjects'),
-    learningStyle: z.enum(['explain_first', 'test_first', 'mix']),
-    goal: z.enum(['pass_exams', 'scholarship', 'understand', 'stay_ahead']),
+    learningStyle: z
+      .string()
+      .trim()
+      .min(1, 'Learning style is required')
+      .max(200, 'Learning style is too long'),
+    goal: z
+      .string()
+      .trim()
+      .min(1, 'Goal is required')
+      .max(200, 'Goal is too long'),
     level: z.enum(['beginner', 'intermediate', 'advanced']),
   })
   .strict();
@@ -21,6 +37,7 @@ export const updateProfileSchema = z
       .min(1, 'Select at least one subject')
       .max(5, 'Maximum 5 subjects')
       .optional(),
-    learningStyle: z.enum(['explain_first', 'test_first', 'mix']).optional(),
+    learningStyle: z.string().trim().min(1).max(200).optional(),
+    goal: z.string().trim().min(1).max(200).optional(),
   })
   .strict();

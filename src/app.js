@@ -9,6 +9,7 @@ import { redisClient } from './config/redis.js';
 import { globalLimiter } from './middleware/rateLimit.middleware.js';
 import passport from './config/passport.js';
 import authRoutes from './routes/auth.routes.js';
+import profileRoutes from './routes/profile.routes.js';
 
 
 const app = express();
@@ -52,6 +53,7 @@ app.use((req, res, next) => {
 app.use(globalLimiter); // Apply before routes
 
 app.use('/api/auth', authRoutes);
+app.use('/api/profile', profileRoutes);
 
 app.get('/api/health', (req, res) => {
   const mongoState = mongoose.connection.readyState;
