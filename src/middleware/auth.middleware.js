@@ -4,7 +4,7 @@ import { AppError } from '../utils/AppError.js';
 
 const verifyJWT = (req, res, next) => {
   try {
-    const token = req.cookies.jwt;
+    const token = req.cookies?.braudle_token;
 
     if (!token) {
       throw new AppError('No authentication token provided', 401);

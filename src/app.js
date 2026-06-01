@@ -7,6 +7,8 @@ import { env } from './config/env.js';
 import { mongoose } from './config/db.js';
 import { redisClient } from './config/redis.js';
 import { globalLimiter } from './middleware/rateLimit.middleware.js';
+import passport from './config/passport.js';
+import authRoutes from './routes/auth.routes.js';
 
 
 const app = express();
@@ -23,6 +25,7 @@ app.use(hpp());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use(cookieParser());
+app.use(passport.initialize());
 // Simple sanitizer for request body and params (works with Express v5 getters)
 function sanitizeObject(obj) {
   if (!obj || typeof obj !== 'object') return;
@@ -47,6 +50,8 @@ app.use((req, res, next) => {
 });
 
 app.use(globalLimiter); // Apply before routes
+
+app.use('/api/auth', authRoutes);
 
 app.get('/api/health', (req, res) => {
   const mongoState = mongoose.connection.readyState;
