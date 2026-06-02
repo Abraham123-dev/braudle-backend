@@ -34,7 +34,6 @@ const studentProfileSchema = new Schema(
       default: '',
       maxlength: [100, 'Study level is too long'],
     },
-    subjects: { type: [String], default: [] },
     learningStyle: {
       type: String,
       trim: true,

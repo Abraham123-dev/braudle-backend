@@ -1,32 +1,28 @@
-import jwt from 'jsonwebtoken';
 import crypto from 'crypto';
 import { env } from '../config/env.js';
 import { AppError } from '../utils/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import RefreshToken from '../models/RefreshToken.model.js';
 import User from '../models/User.model.js';
+import * as AuthService from '../services/auth.service.js';
 
 const ACCESS_COOKIE = 'braudle_token';
 const REFRESH_COOKIE = 'braudle_refresh';
 const ACCESS_COOKIE_MAX_AGE_MS = 15 * 60 * 1000;
 const REFRESH_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
+const COOKIE_OPTIONS = {
+  httpOnly: true,
+  secure: env.nodeEnv === 'production',
+  sameSite: env.nodeEnv === 'production' ? 'strict' : 'lax',
+};
+
 const setAccessCookie = (res, token) => {
-  res.cookie(ACCESS_COOKIE, token, {
-    httpOnly: true,
-    secure: env.nodeEnv === 'production',
-    sameSite: 'lax',
-    maxAge: ACCESS_COOKIE_MAX_AGE_MS,
-  });
+  res.cookie(ACCESS_COOKIE, token, { ...COOKIE_OPTIONS, maxAge: ACCESS_COOKIE_MAX_AGE_MS });
 };
 
 const setRefreshCookie = (res, token) => {
-  res.cookie(REFRESH_COOKIE, token, {
-    httpOnly: true,
-    secure: env.nodeEnv === 'production',
-    sameSite: 'lax',
-    maxAge: REFRESH_COOKIE_MAX_AGE_MS,
-  });
+  res.cookie(REFRESH_COOKIE, token, { ...COOKIE_OPTIONS, maxAge: REFRESH_COOKIE_MAX_AGE_MS });
 };
 
 const createAccessToken = (userId) =>
@@ -51,7 +47,7 @@ export const handleGoogleCallback = asyncHandler(async (req, res) => {
     throw new AppError('Authentication failed', 401);
   }
 
-  const accessToken = createAccessToken(user._id);
+  const accessToken = AuthService.createAccessToken(user._id);
   const refreshToken = await createRefreshToken(user._id);
 
   setAccessCookie(res, accessToken);
@@ -84,16 +80,8 @@ export const logout = asyncHandler(async (req, res) => {
     );
   }
 
-  res.clearCookie(ACCESS_COOKIE, {
-    httpOnly: true,
-    secure: env.nodeEnv === 'production',
-    sameSite: 'strict',
-  });
-  res.clearCookie(REFRESH_COOKIE, {
-    httpOnly: true,
-    secure: env.nodeEnv === 'production',
-    sameSite: 'strict',
-  });
+  res.clearCookie(ACCESS_COOKIE, COOKIE_OPTIONS);
+  res.clearCookie(REFRESH_COOKIE, COOKIE_OPTIONS);
 
   return res.status(200).json({ message: 'Logged out successfully' });
 });
@@ -120,7 +108,7 @@ export const refreshSession = asyncHandler(async (req, res) => {
     throw new AppError('Invalid refresh token', 401);
   }
 
-  const accessToken = createAccessToken(storedToken.userId);
+  const accessToken = AuthService.createAccessToken(storedToken.userId);
   const newRefreshToken = await createRefreshToken(storedToken.userId);
 
   setAccessCookie(res, accessToken);

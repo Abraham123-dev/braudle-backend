@@ -3,6 +3,8 @@ import passport from '../config/passport.js';
 import { env } from '../config/env.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { verifyJWT } from '../middleware/auth.middleware.js';
+import { validate } from '../middleware/validate.middleware.js';
+import { logoutSchema, emptyBodySchema } from '../validators/auth.validator.js';
 import { handleGoogleCallback, getMe, logout, refreshSession } from '../controllers/auth.controller.js';
 
 const router = Router();
@@ -20,8 +22,8 @@ router.get(
 
 router.get('/me', verifyJWT, asyncHandler(getMe));
 
-router.post('/logout', asyncHandler(logout));
+router.post('/logout', validate(logoutSchema), asyncHandler(logout));
 
-router.post('/refresh', asyncHandler(refreshSession));
+router.post('/refresh', validate(emptyBodySchema), asyncHandler(refreshSession));
 
 export default router;

@@ -3,6 +3,7 @@ import cors from 'cors';
 import helmet from 'helmet';
 import cookieParser from 'cookie-parser';
 import hpp from 'hpp';
+import mongoSanitize from 'express-mongo-sanitize';
 import { env } from './config/env.js';
 import { mongoose } from './config/db.js';
 import { redisClient } from './config/redis.js';
@@ -10,6 +11,7 @@ import { globalLimiter } from './middleware/rateLimit.middleware.js';
 import passport from './config/passport.js';
 import authRoutes from './routes/auth.routes.js';
 import profileRoutes from './routes/profile.routes.js';
+import { AppError } from './utils/AppError.js';
 
 
 const app = express();
@@ -26,34 +28,17 @@ app.use(hpp());
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use(cookieParser());
-app.use(passport.initialize());
-// Simple sanitizer for request body and params (works with Express v5 getters)
-function sanitizeObject(obj) {
-  if (!obj || typeof obj !== 'object') return;
-  for (const key of Object.keys(obj)) {
-    if (key.startsWith('$') || key.includes('.')) {
-      delete obj[key];
-      continue;
-    }
-    sanitizeObject(obj[key]);
-  }
-}
 
-app.use((req, res, next) => {
-  try {
-    sanitizeObject(req.body);
-    sanitizeObject(req.params);
-  } catch (e) {
-    // don't block requests on sanitizer errors
-    console.warn('Request sanitization failed', e.message);
-  }
-  next();
-});
+// Data sanitization against NoSQL query injection
+app.use(mongoSanitize());
+
+app.use(passport.initialize());
 
 app.use(globalLimiter); // Apply before routes
 
 app.use('/api/auth', authRoutes);
 app.use('/api/profile', profileRoutes);
+// Mount profile routes
 
 app.get('/api/health', (req, res) => {
   const mongoState = mongoose.connection.readyState;
@@ -92,4 +77,3 @@ app.use((req, res) => {
 });
 
 export { app };
-

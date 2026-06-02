@@ -13,11 +13,10 @@ export const completeOnboarding = asyncHandler(async (req, res) => {
   }
 
   // Create StudentProfile with fields from req.body
-  const { studyLevel, subjects, learningStyle, goal, level } = req.body;
+  const { studyLevel, learningStyle, goal, level } = req.body;
   const profile = await StudentProfile.create({
     userId,
     studyLevel,
-    subjects,
     learningStyle,
     goal,
     level,
@@ -26,8 +25,5 @@ export const completeOnboarding = asyncHandler(async (req, res) => {
   // Set User.onboardingComplete to true and save
   await User.findByIdAndUpdate(userId, { onboardingComplete: true });
 
-  return res.status(200).json({
-    message: 'Onboarding complete',
-    profile,
-  });
+  return res.status(200).json({ message: 'Onboarding complete', profile });
 });

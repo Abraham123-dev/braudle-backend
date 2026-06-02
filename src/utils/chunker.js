@@ -10,8 +10,18 @@ const splitIntoChunks = (text, chunkSize = 400) => {
 
   for (const para of paragraphs) {
     const words = para.split(' ');
-    
-    if (currentChunk.length + para.length > chunkSize) {
+
+    // If a single paragraph is larger than the chunkSize, split it by words
+    if (para.length > chunkSize) {
+      if (currentChunk.trim()) chunks.push(currentChunk.trim());
+      currentChunk = '';
+
+      const subChunks = para.match(new RegExp(`[\\s\\S]{1,${chunkSize}}(\\s|$)`, 'g')) || [];
+      chunks.push(...subChunks.map(s => s.trim()));
+      continue;
+    }
+
+    if ((currentChunk.length + para.length) > chunkSize) {
       if (currentChunk.trim()) chunks.push(currentChunk.trim());
       currentChunk = para;
     } else {

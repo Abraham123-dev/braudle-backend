@@ -110,7 +110,6 @@ Onboarding collects basic educational and behavioral data from the student to ca
   ```json
   {
     "studyLevel": "secondary",
-    "subjects": ["Biology", "Chemistry"],
     "learningStyle": "explain_first",
     "goal": "scholarship",
     "level": "beginner"
@@ -118,7 +117,6 @@ Onboarding collects basic educational and behavioral data from the student to ca
   ```
 * **Allowed Values & Constraints:**
   - `studyLevel`: Must be one of `["secondary", "university", "professional", "self"]`.
-  - `subjects`: An array of strings. Minimum 1 subject, maximum 5 subjects. Each subject must be between 1 and 100 characters.
   - `learningStyle`: Must be one of `["explain_first", "test_first", "mix"]`.
   - `goal`: Must be one of `["pass_exams", "scholarship", "understand", "stay_ahead"]`.
   - `level`: Must be one of `["beginner", "intermediate", "advanced"]`.
@@ -135,10 +133,6 @@ Onboarding collects basic educational and behavioral data from the student to ca
       "level": "beginner",
       "learningStyle": "explain_first",
       "goal": "scholarship",
-      "subjects": [
-        "Biology",
-        "Chemistry"
-      ],
       "weakTopics": [],
       "strongTopics": [],
       "xp": 0,

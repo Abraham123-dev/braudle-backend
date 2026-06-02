@@ -38,11 +38,6 @@ const buildTeachPrompt = (chunk, profile, isBreakdown = false) => {
     ? `The student's preferred learning style is: "${profile.learningStyle}". Adapt your delivery to this preference.`
     : '';
 
-  // Subjects context — tells AI the student's subject areas for relevant analogies
-  const subjectsContext = profile?.subjects?.length
-    ? `The student's subjects of interest are: ${profile.subjects.join(', ')}. Use examples from these subjects where relevant.`
-    : '';
-
   // Weak topics — AI spends more time on these
   const weakTopicsContext = profile?.weakTopics?.length
     ? `The student has struggled with these topics before: ${profile.weakTopics.join(', ')}. Pay extra attention if this chunk touches on them.`
@@ -54,7 +49,6 @@ const buildTeachPrompt = (chunk, profile, isBreakdown = false) => {
     goalContext,
     studyLevelContext,
     styleContext,
-    subjectsContext,
     weakTopicsContext,
   ].filter(Boolean).join('\n');
 
@@ -86,11 +80,12 @@ ${rules}`;
 
 /**
  * Builds the prompt for quiz generation from all chunks studied.
- * @param {Object[]} chunks - Array of document chunk strings.
+ * @param {string[]} chunks - Array of document chunk strings.
  * @param {Object} profile - The StudentProfile document from MongoDB.
+ * @param {number} count - Number of questions to generate (default 5).
  * @returns {string} Full quiz generation prompt.
  */
-const buildQuizPrompt = (chunks, profile) => {
+const buildQuizPrompt = (chunks, profile, count = 5) => {
   const levelNote = profile?.level === 'advanced'
     ? 'Questions should be challenging and require deep understanding.'
     : profile?.level === 'intermediate'
@@ -98,7 +93,7 @@ const buildQuizPrompt = (chunks, profile) => {
     : 'Questions should test basic understanding using simple, clear language.';
 
   return `You are a professional exam question writer for students.
-Generate exactly 5 questions based ONLY on the content provided below.
+Generate exactly ${count} questions based ONLY on the content provided below.
 Mix question types: 60% MCQ, 40% short theory.
 ${levelNote}
 Each question MUST include these fields: question, type, options (MCQ only), answer, explanation.
@@ -142,4 +137,3 @@ Do NOT move on. Do NOT be discouraging.`;
 };
 
 export { buildTeachPrompt, buildQuizPrompt, buildCorrectionPrompt };
-

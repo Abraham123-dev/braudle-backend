@@ -11,10 +11,6 @@ export const onboardingSchema = z
       .trim()
       .min(1, 'Study level is required')
       .max(200, 'Study level is too long'),
-    subjects: z
-      .array(z.string().trim().min(1, 'Subject is required').max(100, 'Subject is too long'))
-      .min(1, 'Select at least one subject')
-      .max(5, 'Maximum 5 subjects'),
     learningStyle: z
       .string()
       .trim()
@@ -32,11 +28,6 @@ export const onboardingSchema = z
 export const updateProfileSchema = z
   .object({
     level: z.enum(['beginner', 'intermediate', 'advanced']).optional(),
-    subjects: z
-      .array(z.string().trim().min(1, 'Subject is required').max(100, 'Subject is too long'))
-      .min(1, 'Select at least one subject')
-      .max(5, 'Maximum 5 subjects')
-      .optional(),
     learningStyle: z.string().trim().min(1).max(200).optional(),
     goal: z.string().trim().min(1).max(200).optional(),
   })
