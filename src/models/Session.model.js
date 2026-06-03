@@ -1,27 +1,58 @@
-import { mongoose } from '../config/db.js';
+import mongoose from 'mongoose';
 
-const { Schema } = mongoose;
-
-const sessionSchema = new Schema(
+const sessionSchema = new mongoose.Schema(
   {
-    userId: { type: Schema.Types.ObjectId, ref: 'User', required: true },
-    documentId: { type: Schema.Types.ObjectId, ref: 'Document', required: true },
-    mode: { type: String, enum: ['teach', 'quiz', 'breakdown', 'exam'], required: true },
-    status: { type: String, enum: ['active', 'completed', 'abandoned'], default: 'active' },
-    currentChunkIndex: { type: Number, default: 0 },
-    explainLevel: { type: String, enum: ['beginner', 'intermediate', 'advanced'], default: 'beginner' },
-    score: { type: Number },
-    summary: { type: String },
-    startedAt: { type: Date, default: Date.now },
-    completedAt: { type: Date },
-    durationMinutes: { type: Number },
+    userId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'User',
+      required: true,
+      index: true,
+    },
+    documentId: {
+      type: mongoose.Schema.Types.ObjectId,
+      ref: 'Document',
+      required: true,
+      index: true,
+    },
+    mode: {
+      type: String,
+      enum: ['teach', 'breakdown', 'quiz', 'exam', 'chat'],
+      default: 'teach',
+      required: true,
+    },
+    status: {
+      type: String,
+      enum: ['active', 'completed', 'abandoned'],
+      default: 'active',
+    },
+    currentChunkIndex: {
+      type: Number,
+      default: 0,
+    },
+    score: {
+      type: Number,
+      default: 0,
+    },
+    summary: {
+      type: String,
+    },
+    mentorSuggestions: {
+      type: [String],
+      default: [],
+    },
+    startedAt: {
+      type: Date,
+      default: Date.now,
+    },
+    completedAt: {
+      type: Date,
+    },
+    durationMinutes: {
+      type: Number,
+      default: 0,
+    },
   },
   { timestamps: true }
 );
-
-// Indexes to support common lookups
-sessionSchema.index({ userId: 1 });
-sessionSchema.index({ documentId: 1 });
-sessionSchema.index({ status: 1 });
 
 export default mongoose.model('Session', sessionSchema);

@@ -36,18 +36,27 @@ export const rotateRefreshToken = async (rawToken) => {
   const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
   const now = new Date();
 
-  // Find valid token and revoke it immediately (Rotation)
+  // Atomic update to mark as revoked to prevent TOCTOU race conditions
   const storedToken = await RefreshToken.findOneAndUpdate(
     {
       token: tokenHash,
+      revokedAt: { $exists: false },
       expiresAt: { $gt: now },
-      $or: [{ revokedAt: null }, { revokedAt: { $exists: false } }],
     },
-    { revokedAt: now },
+    { $set: { revokedAt: now } },
     { new: true }
   );
 
-  return storedToken;
+  if (storedToken) return storedToken;
+
+  // Detect Token Reuse (Security best practice)
+  const reusedToken = await RefreshToken.findOne({ token: tokenHash });
+  if (reusedToken && reusedToken.revokedAt) {
+    // Potential reuse attack: Invalidate all sessions for this user
+    await RefreshToken.deleteMany({ userId: reusedToken.userId });
+  }
+
+  return null;
 };
 
 export const clearExpiredTokens = async (userId) => {

@@ -1,21 +1,30 @@
 import { z } from 'zod';
 
-export const startSessionSchema = z
-  .object({
-    documentId: z.string().length(24, 'Invalid document ID'),
-    mode: z.enum(['teach', 'quiz', 'breakdown', 'exam']),
-    explainLevel: z.enum(['beginner', 'intermediate', 'advanced']).optional(),
-  })
-  .strict();
+/**
+ * Validator for starting a new learning session
+ */
+export const startSessionSchema = z.object({
+  documentId: z.string()
+    .regex(/^[0-9a-fA-F]{24}$/, 'Invalid document ID format'),
+  mode: z.enum(['teach', 'breakdown', 'quiz', 'exam', 'chat', 'flashcards'])
+    .default('teach'),
+});
 
-export const teachMessageSchema = z
-  .object({
-    userMessage: z.string().min(1, 'Message cannot be empty').max(1000, 'Message too long'),
-  })
-  .strict();
+/**
+ * Validator for sending a message in a session
+ */
+export const chatSchema = z.object({
+  message: z.string()
+    .min(1, 'Message cannot be empty')
+    .max(2000, 'Message is too long (max 2000 characters)'),
+});
 
-export const breakdownSchema = z
-  .object({
-    concept: z.string().min(1, 'Concept is required').max(500, 'Concept is too long'),
-  })
-  .strict();
+/**
+ * Validator for updating session state (accepting mentor suggestions)
+ */
+export const updateStateSchema = z.object({
+  mode: z.enum(['teach', 'breakdown', 'quiz', 'exam', 'chat', 'flashcards'])
+    .optional(),
+  currentChunkIndex: z.number().min(0).optional(),
+  mentorSuggestion: z.string().optional(),
+});

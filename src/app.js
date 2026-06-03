@@ -11,6 +11,8 @@ import { globalLimiter } from './middleware/rateLimit.middleware.js';
 import passport from './config/passport.js';
 import authRoutes from './routes/auth.routes.js';
 import profileRoutes from './routes/profile.routes.js';
+import documentRoutes from './routes/document.routes.js';
+import sessionRoutes from './routes/session.routes.js';
 import { AppError } from './utils/AppError.js';
 
 
@@ -25,7 +27,10 @@ app.use(
 );
 
 app.use(hpp());
-app.use(express.json({ limit: '10mb' }));
+app.use((req, res, next) => {
+  if (req.method === 'GET' || req.method === 'DELETE') return next();
+  express.json({ limit: '10mb' })(req, res, next);
+});
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use(cookieParser());
 
@@ -43,7 +48,8 @@ app.use(globalLimiter); // Apply before routes
 
 app.use('/api/auth', authRoutes);
 app.use('/api/profile', profileRoutes);
-// Mount profile routes
+app.use('/api/documents', documentRoutes);
+app.use('/api/sessions', sessionRoutes);
 
 app.get('/api/health', (req, res) => {
   const mongoState = mongoose.connection.readyState;
@@ -65,15 +71,23 @@ app.use((err, req, res, next) => {
   console.error(`[ERROR] ${err.statusCode || 500} - ${err.message}`);
   if (err.stack) console.error(err.stack);
 
-  if (env.nodeEnv === 'development') {
-    return res.status(statusCode).json({
-      error: message,
-      stack: err.stack,
-    });
+  // Handle body-parser / JSON.parse errors gracefully
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    statusCode = 400;
+    message = 'Invalid JSON payload provided';
+    err.isOperational = true;
   }
 
+  const isDev = env.nodeEnv === 'development';
+  
+  // Only show stack trace in dev for 500 errors or non-operational bugs
+  // Keep 400-level errors clean
+  const showStack = isDev && (statusCode === 500 || !err.isOperational);
+
   res.status(statusCode).json({
-    error: statusCode === 500 ? 'Something went wrong' : message,
+    status: 'error',
+    message: statusCode === 500 && !isDev ? 'Internal Server Error' : message,
+    ...(showStack && { stack: err.stack }),
   });
 });
 

@@ -1,19 +1,14 @@
 import { z } from 'zod';
 
-// File validation is handled by Multer middleware, not Zod.
-export const uploadSchema = z
-  .object({
-    title: z
-      .string()
-      .trim()
-      .min(1, 'Title cannot be empty if provided')
-      .max(200, 'Title is too long')
-      .optional(),
-    subject: z
-      .string()
-      .trim()
-      .min(1, 'Subject cannot be empty if provided')
-      .max(100, 'Subject is too long')
-      .optional(),
-  })
-  .strict();
+/**
+ * Validator for document upload metadata
+ */
+export const uploadSchema = z.object({
+  title: z.string()
+    .min(1, 'Title is required')
+    .max(200, 'Title cannot exceed 200 characters'),
+  subject: z.string()
+    .max(100, 'Subject cannot exceed 100 characters')
+    .optional()
+    .or(z.literal('')), // Allows empty string if not provided
+});

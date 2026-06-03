@@ -1,8 +1,6 @@
-import { mongoose } from '../config/db.js';
+import mongoose from 'mongoose';
 
-const { Schema } = mongoose;
-
-const userSchema = new Schema(
+const userSchema = new mongoose.Schema(
   {
     googleId: { type: String, required: true, unique: true, index: true },
     name: { type: String, required: true, trim: true },
