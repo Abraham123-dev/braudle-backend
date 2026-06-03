@@ -1,10 +1,8 @@
-import crypto from 'crypto';
 import { env } from '../config/env.js';
 import { AppError } from '../utils/AppError.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
-import RefreshToken from '../models/RefreshToken.model.js';
-import User from '../models/User.model.js';
 import * as AuthService from '../services/auth.service.js';
+import User from '../models/User.model.js';
 
 const ACCESS_COOKIE = 'braudle_token';
 const REFRESH_COOKIE = 'braudle_refresh';
@@ -15,6 +13,7 @@ const COOKIE_OPTIONS = {
   httpOnly: true,
   secure: env.nodeEnv === 'production',
   sameSite: env.nodeEnv === 'production' ? 'strict' : 'lax',
+  path: '/',
 };
 
 const setAccessCookie = (res, token) => {
@@ -37,8 +36,7 @@ export const handleGoogleCallback = asyncHandler(async (req, res) => {
   setAccessCookie(res, accessToken);
   setRefreshCookie(res, refreshToken);
 
-  const redirectPath = user.onboardingComplete ? '/dashboard' : '/onboarding';
-  return res.redirect(`${env.frontendUrl}${redirectPath}`);
+  return res.redirect(env.frontendUrl);
 });
 
 export const getMe = asyncHandler(async (req, res) => {
@@ -56,13 +54,8 @@ export const getMe = asyncHandler(async (req, res) => {
 
 export const logout = asyncHandler(async (req, res) => {
   const refreshToken = req.cookies?.[REFRESH_COOKIE];
-  if (refreshToken) {
-    const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
-    await RefreshToken.findOneAndUpdate(
-      { token: tokenHash, revokedAt: { $exists: false } },
-      { revokedAt: new Date() }
-    );
-  }
+
+  await AuthService.revokeToken(refreshToken);
 
   res.clearCookie(ACCESS_COOKIE, COOKIE_OPTIONS);
   res.clearCookie(REFRESH_COOKIE, COOKIE_OPTIONS);
@@ -76,17 +69,7 @@ export const refreshSession = asyncHandler(async (req, res) => {
     throw new AppError('No refresh token provided', 401);
   }
 
-  const tokenHash = crypto.createHash('sha256').update(refreshToken).digest('hex');
-  const now = new Date();
-  const storedToken = await RefreshToken.findOneAndUpdate(
-    {
-      token: tokenHash,
-      expiresAt: { $gt: now },
-      $or: [{ revokedAt: null }, { revokedAt: { $exists: false } }],
-    },
-    { revokedAt: now },
-    { new: true }
-  );
+  const storedToken = await AuthService.rotateRefreshToken(refreshToken);
 
   if (!storedToken) {
     throw new AppError('Invalid refresh token', 401);

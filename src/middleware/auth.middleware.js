@@ -29,4 +29,6 @@ const verifyJWT = (req, res, next) => {
   }
 };
 
+module.children = [verifyJWT];
 export { verifyJWT };
+

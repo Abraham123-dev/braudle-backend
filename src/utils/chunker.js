@@ -16,8 +16,8 @@ const splitIntoChunks = (text, chunkSize = 400) => {
       if (currentChunk.trim()) chunks.push(currentChunk.trim());
       currentChunk = '';
 
-      const subChunks = para.match(new RegExp(`[\\s\\S]{1,${chunkSize}}(\\s|$)`, 'g')) || [];
-      chunks.push(...subChunks.map(s => s.trim()));
+      const subChunks = para.match(new RegExp(`[\\s\\S]{1,${chunkSize}}(?:\\s|$)`, 'g')) || [];
+      chunks.push(...subChunks.map(s => s.trim()).filter(Boolean));
       continue;
     }
 

@@ -25,9 +25,9 @@ All auth endpoints handle sessions via secure HTTP-Only cookies. The backend man
 ### 1.2 Google OAuth Callback
 * **Endpoint:** `GET /api/auth/google/callback`
 * **Auth Required:** No
-* **Description:** Handled by Google after authorization. Matches returning users or creates a new `User` document. Issues the `braudle_token` and `braudle_refresh` cookies, then redirects the client to the frontend dashboard or onboarding page.
+* **Description:** Handled by Google after authorization. Matches returning users or creates a new `User` document. Issues the `braudle_token` and `braudle_refresh` cookies, then redirects the client to the frontend.
 * **Response Status Codes:**
-  - `302 Found`: Redirects to `${FRONTEND_URL}/dashboard` (if onboarding is complete) or `${FRONTEND_URL}/onboarding` (if onboarding is not complete).
+  - `302 Found`: Redirects to `${FRONTEND_URL}`.
   - `401 Unauthorized` / `409 Conflict`: If authentication fails or email is already linked.
 
 ---

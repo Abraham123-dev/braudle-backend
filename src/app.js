@@ -30,7 +30,12 @@ app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use(cookieParser());
 
 // Data sanitization against NoSQL query injection
-app.use(mongoSanitize());
+app.use((req, res, next) => {
+  if (req.body) mongoSanitize.sanitize(req.body);
+  if (req.query) mongoSanitize.sanitize(req.query);
+  if (req.params) mongoSanitize.sanitize(req.params);
+  next();
+});
 
 app.use(passport.initialize());
 
