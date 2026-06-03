@@ -25,22 +25,6 @@ const setRefreshCookie = (res, token) => {
   res.cookie(REFRESH_COOKIE, token, { ...COOKIE_OPTIONS, maxAge: REFRESH_COOKIE_MAX_AGE_MS });
 };
 
-const createAccessToken = (userId) =>
-  jwt.sign({ id: userId }, env.jwt.secret, { expiresIn: env.jwt.expiresIn });
-
-const createRefreshToken = async (userId) => {
-  const rawToken = crypto.randomBytes(64).toString('hex');
-  const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
-
-  await RefreshToken.create({
-    userId,
-    token: tokenHash,
-    expiresAt: new Date(Date.now() + REFRESH_COOKIE_MAX_AGE_MS),
-  });
-
-  return rawToken;
-};
-
 export const handleGoogleCallback = asyncHandler(async (req, res) => {
   const user = req.user;
   if (!user) {
@@ -48,7 +32,7 @@ export const handleGoogleCallback = asyncHandler(async (req, res) => {
   }
 
   const accessToken = AuthService.createAccessToken(user._id);
-  const refreshToken = await createRefreshToken(user._id);
+  const refreshToken = await AuthService.generateRefreshToken(user._id, REFRESH_COOKIE_MAX_AGE_MS);
 
   setAccessCookie(res, accessToken);
   setRefreshCookie(res, refreshToken);
@@ -109,7 +93,7 @@ export const refreshSession = asyncHandler(async (req, res) => {
   }
 
   const accessToken = AuthService.createAccessToken(storedToken.userId);
-  const newRefreshToken = await createRefreshToken(storedToken.userId);
+  const newRefreshToken = await AuthService.generateRefreshToken(storedToken.userId, REFRESH_COOKIE_MAX_AGE_MS);
 
   setAccessCookie(res, accessToken);
   setRefreshCookie(res, newRefreshToken);
