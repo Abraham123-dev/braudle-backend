@@ -1,40 +1,45 @@
 import { redisClient } from '../config/redis.js';
 
-const getCached = async (key) => {
+/**
+ * Sets a value in Redis with an optional TTL
+ * @param {string} key 
+ * @param {any} value 
+ * @param {number} ttl - Time to live in seconds (default 24h)
+ */
+export const setCached = async (key, value, ttl = 86400) => {
+  try {
+    const stringValue = typeof value === 'string' ? value : JSON.stringify(value);
+    await redisClient.set(key, stringValue, 'EX', ttl);
+  } catch (err) {
+    console.error(`[CACHE] Set error for key ${key}:`, err.message);
+  }
+};
+
+/**
+ * Gets a value from Redis
+ * @param {string} key 
+ * @returns {any|null}
+ */
+export const getCached = async (key) => {
   try {
     const value = await redisClient.get(key);
-    return value ? JSON.parse(value) : null;
-  } catch (error) {
-    console.error(`Cache GET error for ${key}:`, error);
+    if (!value) return null;
+    
+    try {
+      return JSON.parse(value);
+    } catch {
+      return value;
+    }
+  } catch (err) {
+    console.error(`[CACHE] Get error for key ${key}:`, err.message);
     return null;
   }
 };
 
-const setCached = async (key, value, ttlSeconds = 3600) => {
-  try {
-    await redisClient.setex(key, ttlSeconds, JSON.stringify(value));
-  } catch (error) {
-    console.error(`Cache SET error for ${key}:`, error);
-  }
-};
-
-const deleteCached = async (key) => {
+export const deleteCached = async (key) => {
   try {
     await redisClient.del(key);
-  } catch (error) {
-    console.error(`Cache DELETE error for ${key}:`, error);
+  } catch (err) {
+    console.error(`[CACHE] Delete error for key ${key}:`, err.message);
   }
 };
-
-const clearCachePattern = async (pattern) => {
-  try {
-    const keys = await redisClient.keys(pattern);
-    if (keys.length > 0) {
-      await redisClient.del(...keys);
-    }
-  } catch (error) {
-    console.error(`Cache CLEAR pattern error for ${pattern}:`, error);
-  }
-};
-
-export { getCached, setCached, deleteCached, clearCachePattern };

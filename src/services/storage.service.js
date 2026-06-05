@@ -27,6 +27,10 @@ export const sanitizeFilename = (filename) => {
 };
 
 export const uploadToR2 = async (buffer, key, contentType) => {
+  // Normalize the public URL by removing any protocol if present in the env var
+  // This prevents URLs like https://https://files.com
+  const publicDomain = env.cfR2.publicUrl.replace(/^https?:\/\//, '');
+
   const command = new PutObjectCommand({
     Bucket: env.cfR2.bucket,
     Key: key,
@@ -35,7 +39,7 @@ export const uploadToR2 = async (buffer, key, contentType) => {
   });
 
   await s3Client.send(command);
-  return `https://${env.cfR2.publicUrl}/${key}`;
+  return `https://${publicDomain}/${key}`;
 };
 
 export const downloadFromR2 = async (key) => {

@@ -1,5 +1,6 @@
 import Groq from 'groq-sdk';
 import { env } from '../config/env.js';
+import { GROQ_MODELS } from '../config/models.js';
 
 const groq = new Groq({ apiKey: env.groq.apiKey });
 
@@ -22,7 +23,7 @@ export const streamGroq = async (systemPrompt, userMessage, history = []) => {
   ];
 
   return groq.chat.completions.create({
-    model: 'llama-3.3-70b-versatile', // Smart model for high quality reasoning
+    model: GROQ_MODELS.smart,
     messages,
     stream: true,
     temperature: 0.7,
@@ -32,10 +33,35 @@ export const streamGroq = async (systemPrompt, userMessage, history = []) => {
 };
 
 /**
+ * Transcribes handwritten text from an image using Groq Vision.
+ */
+export const transcribeImage = async (imageBase64) => {
+  const response = await groq.chat.completions.create({
+    model: GROQ_MODELS.vision,
+    messages: [
+      {
+        role: 'user',
+        content: [
+          {
+            type: 'text',
+            text: 'Transcribe all handwritten text in this image accurately. Preserve headings and lists. Return only text.',
+          },
+          {
+            type: 'image_url',
+            image_url: { url: `data:image/jpeg;base64,${imageBase64}` },
+          },
+        ],
+      },
+    ],
+  });
+  return response.choices[0]?.message?.content || '';
+};
+
+/**
  * Performs a non-streaming call to Groq.
  * Useful for background tasks like quiz generation or content summarization.
  */
-export const callGroq = async (messages, model = 'llama-3.3-70b-versatile') => {
+export const callGroq = async (messages, model = GROQ_MODELS.smart) => {
   const completion = await groq.chat.completions.create({
     model,
     messages,
@@ -49,7 +75,7 @@ export const callGroq = async (messages, model = 'llama-3.3-70b-versatile') => {
 /**
  * Call Groq with basic exponential backoff for rate limits.
  */
-export const callGroqWithRetry = async (messages, model = 'llama-3.3-70b-versatile', retries = 3) => {
+export const callGroqWithRetry = async (messages, model = GROQ_MODELS.smart, retries = 3) => {
   for (let attempt = 0; attempt < retries; attempt++) {
     try {
       return await callGroq(messages, model);

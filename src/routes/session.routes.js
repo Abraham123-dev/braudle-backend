@@ -1,7 +1,7 @@
 import { Router } from 'express';
 import { verifyJWT } from '../middleware/auth.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
-import { startSessionSchema, chatSchema } from '../validators/session.validator.js';
+import { startSessionSchema, chatSchema, updateStateSchema } from '../validators/session.validator.js';
 import {
   startSession,
   chatSession,

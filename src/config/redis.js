@@ -11,15 +11,15 @@ const redisClient = new redis(env.redisUrl, {
 });
 
 redisClient.on('connect', () => {
-  console.log('✅ Redis connected successfully');
+  console.log('Redis connected successfully');
 });
 
 redisClient.on('error', (err) => {
-  console.error('❌ Redis error:', err.message);
+  console.error(' Redis error:', err.message);
 });
 
 redisClient.on('close', () => {
-  console.warn('⚠️  Redis connection closed');
+  console.warn(' Redis connection closed');
 });
 
 export { redisClient };

@@ -1,5 +1,6 @@
 // Splits text into chunks for AI processing
-// Target: ~500 tokens per chunk (~350-400 words)
+// Note: Current implementation uses character length (chunkSize).
+// Default 400 characters is approximately 60-80 words.
 
 const splitIntoChunks = (text, chunkSize = 400) => {
   if (!text || text.length === 0) return [];
