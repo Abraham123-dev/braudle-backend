@@ -46,6 +46,14 @@ const documentSchema = new mongoose.Schema(
       type: Number,
       default: 0,
     },
+    misconceptions: [
+      {
+        topic: { type: String, required: true },
+        description: { type: String, required: true },
+        identifiedAt: { type: Date, default: Date.now },
+        isResolved: { type: Boolean, default: false }
+      }
+    ]
   },
   { timestamps: true }
 );

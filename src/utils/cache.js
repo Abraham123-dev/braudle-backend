@@ -43,3 +43,11 @@ export const deleteCached = async (key) => {
     console.error(`[CACHE] Delete error for key ${key}:`, err.message);
   }
 };
+
+export const CACHE_KEYS = {
+  TEACH: (docId, chunkIdx, level) => `teach:${docId}:${chunkIdx}:${level}`,
+  QUIZ: (documentId) => `quiz:${documentId}`,
+  PROFILE: (userId) => `profile:${userId}`,
+  EMBED: (docId, chunkIdx) => `embed:${docId}:${chunkIdx}`,
+  ACTIVE_STREAM: (userId) => `ai:stream:${userId}`,
+};

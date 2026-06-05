@@ -6,6 +6,8 @@ import StudentProfile from '../models/StudentProfile.model.js';
 import Conversation from '../models/Conversation.model.js';
 import { buildTeachPrompt } from '../utils/promptBuilder.js';
 import * as AIService from '../services/ai.service.js';
+import * as AdaptationService from '../services/adaptation.service.js';
+import { getCached, setCached, deleteCached, CACHE_KEYS } from '../utils/cache.js';
 
 /**
  * Starts a new learning session for a specific document
@@ -17,6 +19,7 @@ export const startSession = asyncHandler(async (req, res) => {
   // 1. Verify document exists, belongs to user, and is processed
   const document = await Document.findOne({ _id: documentId, userId });
   if (!document) throw new AppError('Document not found', 404);
+  if (document.userId.toString() !== userId) throw new AppError('Forbidden: Access denied', 403);
   if (document.processingStatus !== 'ready') {
     throw new AppError('Document is still being processed. Please wait.', 400);
   }
@@ -58,50 +61,81 @@ export const chatSession = asyncHandler(async (req, res) => {
   const { message } = req.body;
   const userId = req.user.id;
 
+  // Concurrent Stream Protection
+  const streamLockKey = CACHE_KEYS.ACTIVE_STREAM(userId);
+  const activeStream = await getCached(streamLockKey);
+  if (activeStream) throw new AppError('Only one active tutoring stream allowed at a time', 429);
+
   // 1. Get Session and associated data
   const session = await Session.findOne({ _id: sessionId, userId });
   if (!session || session.status !== 'active') {
-    throw new AppError('Session not found or inactive', 404);
+    throw new AppError('Forbidden: Access denied or session inactive', 403);
   }
-
   const document = await Document.findById(session.documentId);
   if (!document) throw new AppError('Document not found', 404);
 
   const profile = await StudentProfile.findOne({ userId });
   if (!profile) throw new AppError('Student profile not found', 404);
 
-  const conversation = await Conversation.findOne({ sessionId });
-  if (!conversation) throw new AppError('Conversation not found', 404);
+  // Conversation Null Safety
+  let conversation = await Conversation.findOne({ sessionId });
+  if (!conversation) {
+    conversation = await Conversation.create({ sessionId, userId, messages: [] });
+  }
 
   // 2. Prepare Context (Current chunk + History)
   const currentChunk = (document.chunks && document.chunks[session.currentChunkIndex]) || '';
-  const history = conversation.messages.slice(-10); // Last 5 exchanges
+  const history = (conversation.messages || []).slice(-10); // Last 5 exchanges
 
-  // 3. Build Prompt
-  const systemPrompt = buildTeachPrompt(currentChunk, profile, session.mode);
-
+  // Expensive AI Cache Check
+  const cacheKey = CACHE_KEYS.TEACH(document._id, session.currentChunkIndex, profile.level);
+  const cachedResponse = await getCached(cacheKey);
+  
   // 4. Setup SSE Headers
   res.setHeader('Content-Type', 'text/event-stream');
   res.setHeader('Cache-Control', 'no-cache');
   res.setHeader('Connection', 'keep-alive');
 
+  // Lock the stream
+  await setCached(streamLockKey, sessionId, 300); // 5 min TTL auto-cleanup
+
+  // 3. Build Prompt
+  const systemPrompt = buildTeachPrompt(currentChunk, profile, session.mode);
+
   let fullAIResponse = '';
+  let isClosed = false;
+  let stream;
+
+  req.on('close', () => {
+    isClosed = true;
+    deleteCached(streamLockKey);
+    if (stream?.abort) stream.abort();
+  });
 
   try {
+    if (cachedResponse && message === 'ready') {
+      fullAIResponse = cachedResponse;
+      res.write(`data: ${JSON.stringify({ token: cachedResponse })}\n\n`);
+    } else {
     // 5. Stream from AI Service (Groq)
-    const stream = await AIService.streamGroq(systemPrompt, message, history);
+    stream = await AIService.streamGroq(systemPrompt, message, history);
 
     for await (const part of stream) {
+      if (isClosed) break;
       const chunkValue = part.choices[0]?.delta?.content || '';
       if (chunkValue) {
         fullAIResponse += chunkValue;
         res.write(`data: ${JSON.stringify({ token: chunkValue })}\n\n`);
       }
     }
+    }
 
     // 6. Signal completion
     res.write('data: [DONE]\n\n');
     res.end();
+
+    // Cache costly response
+    if (!cachedResponse) await setCached(cacheKey, fullAIResponse, 86400);
 
     // 7. Persist conversation after successful stream
     conversation.messages.push(
@@ -109,9 +143,11 @@ export const chatSession = asyncHandler(async (req, res) => {
       { role: 'assistant', content: fullAIResponse }
     );
     await conversation.save();
+    await deleteCached(streamLockKey);
   } catch (error) {
     res.write(`data: ${JSON.stringify({ error: 'AI Stream interrupted' })}\n\n`);
     res.end();
+    await deleteCached(streamLockKey);
   }
 });
 
@@ -120,6 +156,7 @@ export const getSession = asyncHandler(async (req, res) => {
     .populate('documentId', 'title subject');
   
   if (!session) throw new AppError('Session not found', 404);
+  if (session.userId.toString() !== req.user.id) throw new AppError('Forbidden: Access denied', 403);
   
   const conversation = await Conversation.findOne({ sessionId: session._id });
 
@@ -134,6 +171,9 @@ export const completeSession = asyncHandler(async (req, res) => {
   );
 
   if (!session) throw new AppError('Session not found', 404);
+
+  // Background task: Extract summary and misconceptions from chat transcript
+  AdaptationService.extractSessionInsights(session._id);
 
   res.status(200).json({ status: 'success', message: 'Session marked as completed' });
 });

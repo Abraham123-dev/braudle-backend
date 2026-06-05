@@ -1,6 +1,6 @@
 import * as AIService from './ai.service.js';
 import * as Cache from '../utils/cache.js';
-import { buildQuizPrompt } from '../utils/promptBuilder.js';
+import { buildQuizPrompt, buildCustomAssessmentPrompt } from '../utils/promptBuilder.js';
 import { AppError } from '../utils/AppError.js';
 import Document from '../models/Document.model.js';
 import { GROQ_MODELS } from '../config/models.js';
@@ -46,4 +46,34 @@ export const generateQuiz = async (documentId, profile, count = 5) => {
   } catch (err) {
     console.error('[QUIZ] Generation/Parse error:', err.message);
     throw new AppError('Failed to generate a valid quiz. Please try again.', 500);
-  }}
+  }
+};
+
+/**
+ * Generates a custom practice exam/quiz with specific parameters
+ */
+export const generateCustomAssessment = async (documentId, options) => {
+  // Using a hash-like key since it has multiple parameters
+  const cacheKey = `custom_quiz:${documentId}:${options.difficulty}:${options.format}:${options.numQuestions}`;
+  
+  const cachedQuiz = await Cache.getCached(cacheKey);
+  if (cachedQuiz) return cachedQuiz;
+
+  const document = await Document.findById(documentId);
+  if (!document || !document.chunks || document.chunks.length === 0) {
+    throw new AppError('Document content not ready for quiz generation', 400);
+  }
+
+  const prompt = buildCustomAssessmentPrompt(document.chunks, options);
+  const response = await AIService.callGroqWithRetry([{ role: 'system', content: prompt }], GROQ_MODELS.smart);
+
+  try {
+    const cleanJson = response.replace(/```json|```/g, '').trim();
+    const quizData = JSON.parse(cleanJson);
+    await Cache.setCached(cacheKey, quizData, 86400);
+    return quizData;
+  } catch (err) {
+    console.error('[CUSTOM QUIZ] Generation/Parse error:', err.message);
+    throw new AppError('Failed to generate a valid custom assessment. Please try again.', 500);
+  }
+};

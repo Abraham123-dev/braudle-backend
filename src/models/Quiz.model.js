@@ -11,8 +11,7 @@ const questionSchema = new Schema(
     explanation: { type: String, required: true },
     studentAnswer: { type: String },
     isCorrect: { type: Boolean },
-  },
-  { _id: false }
+  }
 );
 
 const quizSchema = new Schema(

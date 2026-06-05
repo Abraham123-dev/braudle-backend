@@ -6,6 +6,15 @@ export const generateQuizSchema = z
   })
   .strict();
 
+export const generateCustomAssessmentSchema = z
+  .object({
+    documentId: z.string().length(24, 'Invalid document ID'),
+    format: z.enum(['objective', 'subjective', 'theory', 'mixed']),
+    difficulty: z.enum(['easy', 'medium', 'hard', 'expert']),
+    numQuestions: z.number().min(5).max(30)
+  })
+  .strict();
+
 export const submitQuizSchema = z
   .object({
     answers: z

@@ -1,0 +1,25 @@
+## What BRAUDLE Is
+
+BRAUDLE is an AI-powered personal tutor.
+
+Students upload PDFs, slides, or handwritten notes.
+
+The backend:
+
+1. Stores files in Cloudflare R2.
+2. Processes documents through BullMQ workers.
+3. Extracts text via PDF parsing or OCR.
+4. Splits content into chunks.
+5. Stores chunks in MongoDB.
+6. Uses Groq models to teach content progressively.
+7. Tracks understanding through sessions, quizzes, misconceptions, XP, and adaptive profiles.
+
+The system is NOT a general chatbot.
+
+The AI must always teach from uploaded learning materials.
+
+Core learning loop:
+
+Upload → Process → Teach → Question → Evaluate → Adapt → Quiz → Update Profile
+
+When implementing features, preserve this learning loop.

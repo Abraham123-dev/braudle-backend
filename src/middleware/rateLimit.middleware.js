@@ -67,4 +67,17 @@ const quizLimiter = rateLimit({
   statusCode: 429,
 });
 
-export { globalLimiter, uploadPdfLimiter, uploadImageLimiter, sessionChatLimiter, quizLimiter };
+// Quiz generation rate limiter: 5 generations per day per user
+const quizGenerationLimiter = rateLimit({
+  store: new RedisStore({
+    sendCommand: (...args) => redisClient.call(...args),
+    prefix: 'rl:quiz_gen:',
+  }),
+  windowMs: 24 * 60 * 60 * 1000, // 24 hours
+  max: 5, // 5 quiz generations per day
+  keyGenerator: (req) => req.user?.id || ipKeyGenerator(req),
+  message: 'You have reached the limit of 5 quiz generations per day. Please try again tomorrow.',
+  statusCode: 429,
+});
+
+export { globalLimiter, uploadPdfLimiter, uploadImageLimiter, sessionChatLimiter, quizLimiter, quizGenerationLimiter };

@@ -1,6 +1,6 @@
 # BRAUDLE Backend — Codebase Scan Summary
-**Scanned:** May 29, 2026  
-**Status:** LAYER 1 partially complete, LAYER 2-10 NOT STARTED
+**Scanned:** June 05, 2026 (Updated)
+**Status:** LAYERS 1-8 COMPLETE, LAYER 11 (Workers) IN PROGRESS (with new /documents/:id/status endpoint)
 
 ---
 

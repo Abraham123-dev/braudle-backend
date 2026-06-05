@@ -8,17 +8,19 @@ import {
   uploadDocument,
   getDocuments,
   getDocument,
+  getDocumentStatus,
   deleteDocument,
 } from '../controllers/document.controller.js';
 
 const router = Router();
 
 // POST /upload - Handle file upload with limits and validation
-router.post('/upload', verifyJWT, resetUploadCountersIfNeeded, uploadSingle, validate(uploadSchema), uploadDocument);
+router.post('/upload', verifyJWT, resetUploadCountersIfNeeded, uploadSingle, validate(uploadSchema), uploadDocument); //
 
 // Basic CRUD for documents
 router.get('/', verifyJWT, getDocuments);
 router.get('/:id', verifyJWT, getDocument);
+router.get('/:id/status', verifyJWT, getDocumentStatus);
 router.delete('/:id', verifyJWT, deleteDocument);
 
 export default router;

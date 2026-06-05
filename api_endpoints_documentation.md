@@ -1,157 +1,174 @@
-# BRAUDLE API Endpoint Documentation
+# BRAUDLE Backend API Documentation
 
-**Base URL:** `http://localhost:5000`
+This document outlines all **24 REST API endpoints** currently available in the BRAUDLE backend. It is designed for frontend developers to understand exactly what to send, what they will receive, and the hidden backend logic powering each feature.
 
-This document details all currently implemented API endpoints, starting from Authentication (Layer 3) to Onboarding (Layer 5). 
-
----
-
-## 🔒 1. Authentication Endpoints (`/api/auth`)
-
-All auth endpoints handle sessions via secure HTTP-Only cookies. The backend manages two cookies:
-* `braudle_token`: Short-lived Access Token (JWT, expires in 15 minutes).
-* `braudle_refresh`: Long-lived Refresh Token (stored in database, expires in 7 days).
-
-### 1.1 Initiate Google OAuth
-* **Endpoint:** `GET /api/auth/google`
-* **Auth Required:** No
-* **Description:** Redirects the user to the Google OAuth 2.0 consent screen to log in or register.
-* **Frontend Responsibility:** 
-  - Place a button labeled "Continue with Google".
-  - Redirect the browser directly to this endpoint: `window.location.href = 'http://localhost:5000/api/auth/google';`
+**Base URL:** `http://localhost:5000/api`
+**Authentication:** All routes (except `auth/google`) expect an `httpOnly` JWT cookie sent automatically by the browser. Ensure `withCredentials: true` is set on your frontend Axios/Fetch client.
 
 ---
 
-### 1.2 Google OAuth Callback
-* **Endpoint:** `GET /api/auth/google/callback`
-* **Auth Required:** No
-* **Description:** Handled by Google after authorization. Matches returning users or creates a new `User` document. Issues the `braudle_token` and `braudle_refresh` cookies, then redirects the client to the frontend.
-* **Response Status Codes:**
-  - `302 Found`: Redirects to `${FRONTEND_URL}`.
-  - `401 Unauthorized` / `409 Conflict`: If authentication fails or email is already linked.
+## 1. Authentication (`/api/auth`)
+
+### 1.1 `GET /auth/google`
+- **Logic:** Redirects the user to the Google OAuth consent screen.
+- **Frontend Action:** Use a standard `<a>` tag or `window.location.href` to trigger this.
+
+### 1.2 `GET /auth/google/callback`
+- **Logic:** Handled automatically. Sets `accessToken` and `refreshToken` cookies, then redirects to frontend dashboard.
+
+### 1.3 `POST /auth/refresh`
+- **Logic:** Uses the `refreshToken` cookie to issue a new `accessToken` cookie. Call this silently in the background when an API request fails with `401 Unauthorized`.
+
+### 1.4 `POST /auth/logout`
+- **Logic:** Clears all cookies.
+
+### 1.5 `GET /auth/me`
+- **Logic:** Returns the basic user data (Name, Email, Profile Picture).
 
 ---
 
-### 1.3 Get Current User Profile
-* **Endpoint:** `GET /api/auth/me`
-* **Auth Required:** Yes (`braudle_token` cookie must be present)
-* **Description:** Fetches the logged-in user's essential identity details.
-* **Response Status Codes:**
-  - `200 OK`: Success.
-  - `401 Unauthorized`: Token missing, expired, or invalid.
-  - `404 Not Found`: User no longer exists in the database.
-* **Response Example (`200 OK`):**
+## 2. Onboarding & Profile (`/api/profile`)
+
+### 2.1 `GET /profile`
+- **Logic:** Returns the full `StudentProfile` (Level, XP, Streak, Weak Topics).
+
+### 2.2 `POST /profile/setup`
+- **Logic:** Creates the initial student profile. Must be called after first login.
+- **Request Body:**
   ```json
   {
-    "user": {
-      "_id": "60d5ec493d8b2d2f78c8577a",
-      "name": "Jide Abraham",
-      "email": "jide@example.com",
-      "avatar": "https://lh3.googleusercontent.com/a/ALm5wu0...",
-      "role": "student",
-      "onboardingComplete": false
-    }
-  }
-  ```
-* **Frontend Validation & Actions:**
-  - Call this endpoint on application startup / page refresh to populate the global state (e.g., Zustand/Redux).
-  - If `onboardingComplete` is `false`, redirect the user to `/onboarding`.
-  - If `401 Unauthorized` is returned, clear local state and redirect to `/login`.
-
----
-
-### 1.4 Refresh Access Token
-* **Endpoint:** `POST /api/auth/refresh`
-* **Auth Required:** Yes (`braudle_refresh` cookie must be present)
-* **Description:** Invalidates the current refresh token, rotates it, and issues new Access and Refresh tokens inside HTTP-Only cookies.
-* **Response Status Codes:**
-  - `200 OK`: Session refreshed successfully.
-  - `401 Unauthorized`: Refresh token missing, expired, or revoked.
-* **Response Example (`200 OK`):**
-  ```json
-  {
-    "message": "Session refreshed"
-  }
-  ```
-* **Frontend Actions:**
-  - Set up an interceptor in your HTTP client (e.g., Axios instance).
-  - If a request returns `401` due to an expired access token, intercept it, call `POST /api/auth/refresh`, and then retry the original request.
-
----
-
-### 1.5 Logout
-* **Endpoint:** `POST /api/auth/logout`
-* **Auth Required:** No (But cookie should be present to revoke it on server)
-* **Description:** Revokes the active refresh token in the database and clears all auth cookies.
-* **Response Status Codes:**
-  - `200 OK`: Logged out successfully.
-* **Response Example (`200 OK`):**
-  ```json
-  {
-    "message": "Logged out successfully"
-  }
-  ```
-* **Frontend Actions:**
-  - Call this endpoint when the user clicks the "Logout" button.
-  - Clear the local client state and redirect the user back to `/login`.
-
----
-
-## 🎓 2. Profile & Onboarding Endpoints (`/api/profile`)
-
-Onboarding collects basic educational and behavioral data from the student to calibrate the adaptive AI system.
-
-### 2.1 Complete Onboarding
-* **Endpoint:** `POST /api/profile/onboarding`
-* **Auth Required:** Yes (`braudle_token` cookie must be present)
-* **Request Header:** `Content-Type: application/json`
-* **Description:** Submits onboarding questionnaire results. Creates the `StudentProfile` and permanently flags the User's `onboardingComplete` status to `true`. Runs once per user.
-* **Request Body Schema (Zod Validated):**
-  ```json
-  {
-    "studyLevel": "secondary",
+    "level": "beginner",
+    "studyLevel": "University Year 1",
     "learningStyle": "explain_first",
-    "goal": "scholarship",
-    "level": "beginner"
+    "goal": "Pass JAMB Biology"
   }
   ```
-* **Allowed Values & Constraints:**
-  - `studyLevel`: Must be one of `["secondary", "university", "professional", "self"]`.
-  - `learningStyle`: Must be one of `["explain_first", "test_first", "mix"]`.
-  - `goal`: Must be one of `["pass_exams", "scholarship", "understand", "stay_ahead"]`.
-  - `level`: Must be one of `["beginner", "intermediate", "advanced"]`.
-* **Response Status Codes:**
-  - `200 OK`: Onboarding completed and profile successfully created.
-  - `400 Bad Request`: Validation error or onboarding already completed.
-  - `401 Unauthorized`: Access token missing or invalid.
-* **Response Example (`200 OK`):**
+- **Response:** Returns the created profile object.
+
+---
+
+## 3. The Library (`/api/documents`)
+
+### 3.1 `POST /documents/upload` (Multipart/Form-Data)
+- **Logic:** Uploads a file to Cloudflare R2 and queues it for background AI chunking/transcription. Rate limited: 2 PDFs/day or 5 Images/day.
+- **Form Data:**
+  - `file`: The PDF or image file.
+  - `title`: Name of the document.
+  - `subject`: e.g., "Biology".
+- **Response:** `{ "documentId": "123", "status": "pending" }`
+
+### 3.2 `GET /documents`
+- **Logic:** Fetches all documents for the library. **Crucially**, this returns the `misconceptions` array for each document (populated by Layer 10), so the frontend can display a "What You're Missing" section on the PDF card.
+
+### 3.3 `GET /documents/:id/status`
+- **Logic:** Poll this endpoint after uploading. Once `processingStatus` equals `"ready"`, the user can start studying.
+
+### 3.4 `GET /documents/:id` & `DELETE /documents/:id`
+- **Logic:** Fetches a specific document, or permanently deletes it (cascading deletes to all sessions and conversations).
+
+---
+
+## 4. Teaching Sessions (`/api/sessions`)
+
+### 4.1 `POST /sessions/start`
+- **Logic:** Anchors a new study session to a document. Cancels any previous active sessions for that document.
+- **Request Body:** `{ "documentId": "123", "mode": "teach" }`
+- **Response:** Returns `sessionId`.
+
+### 4.2 `POST /sessions/:id/chat` (SSE Stream)
+- **Logic:** The core AI engine. Streams text word-by-word. It checks Redis cache first to save costs. If the student answers wrongly, the AI auto-corrects them based on their profile level.
+- **Headers Needed:** `Accept: text/event-stream`
+- **Request Body:** `{ "message": "What is mitochondria?" }`
+- **Response:** Streams chunks `data: {"token": "The "}` -> `data: [DONE]`
+
+### 4.3 `GET /sessions/:id`
+- **Logic:** Returns the session metadata and the full `messages` array so the chat UI can be restored if the user refreshes the page.
+
+### 4.4 `POST /sessions/:id/complete`
+- **Logic:** Marks the session as finished. **Background Magic:** It silently triggers an AI analyst to read the entire chat transcript, extract specific `misconceptions`, save them to the Document in the Library, and update the global profile weak spots.
+
+### 4.5 `PATCH /sessions/:id/state`
+- **Logic:** Updates the current `mode` (e.g. from `teach` to `breakdown`) or the `currentChunkIndex`.
+
+---
+
+## 5. Quizzes & Exams (`/api/quiz`)
+
+### 5.1 `POST /quiz/generate`
+- **Logic:** Generates a 5-question quiz based on an active session. Rate limited to 5/day.
+- **Request Body:** `{ "sessionId": "123" }`
+- **Response:** Returns the quiz object. **Answers are stripped** to prevent frontend cheating.
+
+### 5.2 `POST /quiz/custom`
+- **Logic:** Generates a highly customized practice exam directly from an uploaded document. It creates a background "ghost session" marked as `mode: exam` if the difficulty is expert.
+- **Request Body:**
   ```json
   {
-    "message": "Onboarding complete",
-    "profile": {
-      "userId": "60d5ec493d8b2d2f78c8577a",
-      "level": "beginner",
-      "learningStyle": "explain_first",
-      "goal": "scholarship",
-      "weakTopics": [],
-      "strongTopics": [],
-      "xp": 0,
-      "streak": 0,
-      "longestStreak": 0,
-      "totalSessions": 0,
-      "averageScore": 0,
-      "weeklyChallenge": {
-        "progress": 0,
-        "completed": false
-      },
-      "learningHistory": [],
-      "_id": "60d5ed1e3d8b2d2f78c8577d",
-      "createdAt": "2026-06-01T18:00:00.000Z",
-      "updatedAt": "2026-06-01T18:00:00.000Z"
+    "documentId": "123",
+    "format": "theory",       // "objective", "subjective", "theory", "mixed"
+    "difficulty": "expert",   // "easy", "medium", "hard", "expert"
+    "numQuestions": 15
+  }
+  ```
+
+### 5.3 `GET /quiz/:quizId`
+- **Logic:** Retrieves a generated quiz. If `score` is undefined, the answers are stripped.
+
+### 5.4 `POST /quiz/:quizId/submit`
+- **Logic:** Grades the quiz using zero-cost Hugging Face math embeddings (saves AI API tokens). Calculates a final score, assigns bonus XP, saves recent score history, and automatically levels up the student if applicable.
+- **Request Body:**
+  ```json
+  {
+    "answers": [
+      { "questionId": "abc", "answer": "Powerhouse of the cell" }
+    ]
+  }
+  ```
+- **Response:** 
+  ```json
+  {
+    "status": "success",
+    "score": 95,
+    "newLevel": "intermediate",
+    "quiz": { ...full graded quiz with correct answers revealed... }
+  }
+  ```
+
+### 5.5 `GET /quiz/history`
+- **Logic:** Returns an array of all completed quizzes/exams.
+
+---
+
+## 6. Dashboard & Practice API (`/api/dashboard`)
+
+### 6.1 `GET /dashboard/performance`
+- **Logic:** Aggregates all completed quizzes to calculate the overall average, total taken, and builds a breakdown of performance by subject.
+- **Response:**
+  ```json
+  {
+    "data": {
+      "totalQuizzes": 12,
+      "averageScore": 88,
+      "subjectPerformance": [
+        { "subject": "Cell Biology", "averageScore": 92, "quizzesTaken": 8 },
+        { "subject": "Macroeconomics", "averageScore": 74, "quizzesTaken": 4 }
+      ]
     }
   }
   ```
-* **Frontend Validation Rules (Highly Recommended before API call):**
-  - **Subject Select Limit:** Do not let the student check more than 5 subjects in the tag cloud UI. Disable other subject checkboxes once 5 are selected.
-  - **Required Fields:** Ensure the user has selected a value for `studyLevel`, `learningStyle`, `goal`, and `level` before submitting the form.
-  - **Redirect Action:** On successful `200 OK` response, update the local user state (`onboardingComplete = true`) and immediately redirect the user to `/dashboard`.
+
+### 6.2 `GET /dashboard/recommendations`
+- **Logic:** Powers the smart suggestion cards on the Practice UI. Finds recently completed sessions with no quizzes, and scans the Library for unresolved misconceptions to suggest targeted practice.
+- **Response:**
+  ```json
+  {
+    "data": {
+      "readyToTest": [
+        { "documentId": "123", "title": "Cell Biology", "reason": "Based on recently completed modules" }
+      ],
+      "weakSpots": [
+        { "documentId": "456", "title": "Macroeconomics", "weakTopics": ["Supply and Demand"], "reason": "Targeted practice on concepts you struggled with" }
+      ]
+    }
+  }
+  ```

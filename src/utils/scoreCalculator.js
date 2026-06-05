@@ -19,4 +19,14 @@ const shouldUpgradeLevel = (currentLevel, recentScores) => {
   return avg >= 80 && currentLevel !== 'advanced';
 };
 
-export { calculateScore, determineLevel, shouldUpgradeLevel };
+const calculateXP = (score) => {
+  // Base XP is the score itself
+  let xp = score;
+  // Bonus XP for high scores
+  if (score >= 90) xp += 50;
+  else if (score >= 80) xp += 20;
+  return Math.round(xp);
+};
+
+export { calculateScore, determineLevel, shouldUpgradeLevel, calculateXP };
+

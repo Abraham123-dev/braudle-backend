@@ -111,6 +111,18 @@ export const getDocument = asyncHandler(async (req, res) => {
   return res.status(200).json(document);
 });
 
+export const getDocumentStatus = asyncHandler(async (req, res) => {
+  const document = await Document.findById(req.params.id).select('processingStatus userId');
+
+  if (!document) throw new AppError('Document not found', 404);
+  if (document.userId.toString() !== req.user.id) throw new AppError('Forbidden: Access denied', 403);
+
+  return res.status(200).json({
+    documentId: document._id,
+    processingStatus: document.processingStatus,
+  });
+});
+
 export const deleteDocument = asyncHandler(async (req, res) => {
   const document = await Document.findById(req.params.id);
 

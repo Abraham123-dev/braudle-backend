@@ -146,4 +146,77 @@ Your task:
 Do NOT move on. Do NOT be discouraging.`;
 };
 
-export { buildTeachPrompt, buildQuizPrompt, buildCorrectionPrompt };
+/**
+ * Builds the prompt for extracting a session summary and misconceptions.
+ * @param {Object[]} messages - The conversation history array.
+ * @returns {string} Extraction prompt string.
+ */
+const buildSessionAnalysisPrompt = (messages) => {
+  const transcript = messages
+    .filter(m => m.role !== 'system')
+    .map(m => `${m.role.toUpperCase()}: ${m.content}`)
+    .join('\n\n');
+
+  return `You are an expert educational analyst reviewing a completed tutoring session.
+Analyze the following transcript between the AI tutor and the student.
+
+Your task is to generate:
+1. A brief summary of what was covered and how the student performed (2-3 sentences).
+2. A list of specific misconceptions or weak topics the student struggled with.
+
+Return ONLY a valid JSON object with the following schema:
+{
+  "summary": "String describing the session outcome",
+  "misconceptions": [
+    {
+      "topic": "String (1-3 words, e.g., 'Mitochondria function')",
+      "description": "String detailing exactly what the student misunderstood"
+    }
+  ]
+}
+
+TRANSCRIPT:
+${transcript}`;
+};
+
+/**
+ * Builds the prompt for custom practice quizzes or exams.
+ * @param {string[]} chunks - Document chunks
+ * @param {Object} options - Custom parameters (format, difficulty, numQuestions)
+ * @returns {string} Custom assessment prompt.
+ */
+const buildCustomAssessmentPrompt = (chunks, options) => {
+  const { format, difficulty, numQuestions } = options;
+
+  let difficultyNote = '';
+  switch(difficulty) {
+    case 'easy': difficultyNote = 'Focus on basic recall and definitions. Simple vocabulary.'; break;
+    case 'medium': difficultyNote = 'Test comprehension and basic application. Standard difficulty.'; break;
+    case 'hard': difficultyNote = 'Test analysis and deep understanding. Require connecting concepts.'; break;
+    case 'expert': difficultyNote = 'Rigorous, exam-level difficulty. Test evaluation and synthesis of complex ideas.'; break;
+    default: difficultyNote = 'Standard difficulty.';
+  }
+
+  let formatNote = '';
+  if (format === 'objective') formatNote = 'ALL questions MUST be multiple choice (mcq) or true_false.';
+  else if (format === 'subjective') formatNote = 'ALL questions MUST be short answer theory (theory).';
+  else if (format === 'theory') formatNote = 'ALL questions MUST be long-form conceptual essays (theory) with detailed answers expected.';
+  else formatNote = 'Mix question types: 60% MCQ, 40% short theory.';
+
+  return `You are an expert exam setter.
+Generate exactly ${numQuestions} questions based ONLY on the content provided below.
+
+DIFFICULTY LEVEL: ${difficulty.toUpperCase()}
+${difficultyNote}
+
+FORMAT REQUIREMENT:
+${formatNote}
+
+Each question MUST include these fields: question, type (mcq/true_false/theory), options (only for mcq), answer, explanation.
+Return ONLY a valid JSON array. No markdown. No preamble. No trailing text.
+
+CONTENT TO USE:
+${chunks.join('\n\n---\n\n')}`;
+};
+
+export { buildTeachPrompt, buildQuizPrompt, buildCorrectionPrompt, buildSessionAnalysisPrompt, buildCustomAssessmentPrompt };
