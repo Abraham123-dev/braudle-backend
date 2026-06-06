@@ -8,6 +8,7 @@ import {
   getSession,
   completeSession,
   updateSessionState,
+  getWelcomeMessage,
 } from '../controllers/session.controller.js';
 
 const router = Router();
@@ -15,6 +16,7 @@ const router = Router();
 // All session routes require authentication
 router.post('/start', verifyJWT, validate(startSessionSchema), startSession);
 router.get('/:id', verifyJWT, getSession);
+router.get('/:id/welcome', verifyJWT, getWelcomeMessage);
 router.post('/:id/chat', verifyJWT, validate(chatSchema), chatSession);
 router.patch('/:id/complete', verifyJWT, completeSession);
 router.patch('/:id/state', verifyJWT, validate(updateStateSchema), updateSessionState);

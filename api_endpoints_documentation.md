@@ -61,7 +61,27 @@ This document outlines all **24 REST API endpoints** currently available in the 
 - **Logic:** Fetches all documents for the library. **Crucially**, this returns the `misconceptions` array for each document (populated by Layer 10), so the frontend can display a "What You're Missing" section on the PDF card.
 
 ### 3.3 `GET /documents/:id/status`
-- **Logic:** Poll this endpoint after uploading. Once `processingStatus` equals `"ready"`, the user can start studying.
+- **Logic:** Poll this endpoint after uploading (every 3-5 seconds). Returns a granular `processingStage` so the frontend can display a 6-step progress bar. Once `processingStatus` equals `"ready"`, also returns the AI-extracted `topics` and `summary`.
+- **Response:**
+  ```json
+  {
+    "documentId": "123",
+    "processingStatus": "processing",
+    "processingStage": "building_learning_map",
+    "topics": [],
+    "summary": ""
+  }
+  ```
+- **Processing Stages (map to your UI progress bar):**
+  | Stage | Display Label |
+  |---|---|
+  | `file_received` | File received |
+  | `extracting_content` | Extracting content |
+  | `identifying_concepts` | Identifying key concepts |
+  | `building_learning_map` | Building learning map |
+  | `preparing_tutor` | Preparing AI tutor |
+  | `ready` | Ready |
+  | `failed` | Processing failed |
 
 ### 3.4 `GET /documents/:id` & `DELETE /documents/:id`
 - **Logic:** Fetches a specific document, or permanently deletes it (cascading deletes to all sessions and conversations).
@@ -83,6 +103,29 @@ This document outlines all **24 REST API endpoints** currently available in the 
 
 ### 4.3 `GET /sessions/:id`
 - **Logic:** Returns the session metadata and the full `messages` array so the chat UI can be restored if the user refreshes the page.
+
+### 4.4 `GET /sessions/:id/welcome`
+- **Logic:** Call this immediately after `POST /sessions/start`. Returns a personalised tutor greeting built from the student's name, the document's AI-extracted `topics`, `summary`, and the list of all 6 learning modes. The frontend renders this as the first message in the chat window.
+- **Response:**
+  ```json
+  {
+    "status": "success",
+    "welcome": {
+      "message": "Hi Daniel! 👋\n\nI've finished studying your Biology notes.\n\nI found 4 key topics:\n• Photosynthesis\n• Cell Structure\n• Cellular Respiration\n• Plant Nutrition\n\nWhat would you like to do next?",
+      "topics": ["Photosynthesis", "Cell Structure", "Cellular Respiration", "Plant Nutrition"],
+      "summary": "This document explains how plants convert sunlight into energy...",
+      "documentTitle": "Biology Notes",
+      "learningModes": [
+        { "id": "breakdown", "label": "Break It Down", "description": "Simplify difficult concepts..." },
+        { "id": "teach", "label": "Explain Like I'm New", "description": "Teach from first principles..." },
+        { "id": "chat", "label": "Quick Insights", "description": "Get key takeaways..." },
+        { "id": "quiz", "label": "Quiz Me", "description": "Generate questions..." },
+        { "id": "exam", "label": "Practice Exam", "description": "Simulate exam conditions..." },
+        { "id": "chat", "label": "Ask Anything", "description": "Free-form chat..." }
+      ]
+    }
+  }
+  ```
 
 ### 4.4 `POST /sessions/:id/complete`
 - **Logic:** Marks the session as finished. **Background Magic:** It silently triggers an AI analyst to read the entire chat transcript, extract specific `misconceptions`, save them to the Document in the Library, and update the global profile weak spots.

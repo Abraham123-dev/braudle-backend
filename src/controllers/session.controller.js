@@ -7,7 +7,8 @@ import Conversation from '../models/Conversation.model.js';
 import { buildTeachPrompt } from '../utils/promptBuilder.js';
 import * as AIService from '../services/ai.service.js';
 import * as AdaptationService from '../services/adaptation.service.js';
-import { getCached, setCached, deleteCached, CACHE_KEYS } from '../utils/cache.js';
+import * as ProfileService from '../services/profile.service.js';
+import { getCached, setCached, deleteCached, CACHE_KEYS, CACHE_TTL } from '../utils/cache.js';
 
 /**
  * Starts a new learning session for a specific document
@@ -74,7 +75,8 @@ export const chatSession = asyncHandler(async (req, res) => {
   const document = await Document.findById(session.documentId);
   if (!document) throw new AppError('Document not found', 404);
 
-  const profile = await StudentProfile.findOne({ userId });
+  // Cache-aware profile fetch — avoids a MongoDB hit on every chat message
+  const profile = await ProfileService.getProfile(userId);
   if (!profile) throw new AppError('Student profile not found', 404);
 
   // Conversation Null Safety
@@ -97,7 +99,7 @@ export const chatSession = asyncHandler(async (req, res) => {
   res.setHeader('Connection', 'keep-alive');
 
   // Lock the stream
-  await setCached(streamLockKey, sessionId, 300); // 5 min TTL auto-cleanup
+  await setCached(streamLockKey, sessionId, CACHE_TTL.STREAM);
 
   // 3. Build Prompt
   const systemPrompt = buildTeachPrompt(currentChunk, profile, session.mode);
@@ -203,4 +205,65 @@ export const updateSessionState = asyncHandler(async (req, res) => {
   if (!session) throw new AppError('Active session not found', 404);
 
   res.status(200).json({ status: 'success', session });
+});
+
+/**
+ * Returns a personalised AI tutor welcome for a freshly opened session.
+ * Uses topics + summary extracted by the background worker.
+ * The frontend renders this as the first message in the chat window.
+ */
+export const getWelcomeMessage = asyncHandler(async (req, res) => {
+  const { id: sessionId } = req.params;
+  const userId = req.user.id;
+
+  const session = await Session.findOne({ _id: sessionId, userId });
+  if (!session) throw new AppError('Session not found', 404);
+
+  const document = await Document.findById(session.documentId)
+    .select('title topics summary');
+  if (!document) throw new AppError('Document not found', 404);
+
+  const profile = await ProfileService.getProfile(userId);
+  if (!profile) throw new AppError('Student profile not found', 404);
+
+  // Name comes from verifyJWT — no extra DB query needed
+  const firstName = req.user.name?.split(' ')[0] || 'there';
+
+  const topics = document.topics || [];
+  const summary = document.summary || '';
+
+  // Build the welcome message text
+  let welcomeText = `Hi ${firstName}! 👋\n\nI've finished studying your **${document.title}** notes.`;
+
+  if (topics.length > 0) {
+    welcomeText += `\n\nI found **${topics.length} key topic${topics.length > 1 ? 's' : ''}**:\n`;
+    welcomeText += topics.map(t => `• ${t}`).join('\n');
+  }
+
+  if (summary) {
+    welcomeText += `\n\n${summary}`;
+  }
+
+  welcomeText += `\n\nWhat would you like to do next?`;
+
+  // The 6 available learning modes
+  const learningModes = [
+    { id: 'breakdown',  label: 'Break It Down',        description: 'Simplify difficult concepts with analogies and clear language.' },
+    { id: 'teach',      label: 'Explain Like I\'m New', description: 'Teach from first principles with step-by-step guidance.' },
+    { id: 'chat',       label: 'Quick Insights',        description: 'Get key takeaways and ask specific questions freely.' },
+    { id: 'quiz',       label: 'Quiz Me',               description: 'Generate questions to test your knowledge of this document.' },
+    { id: 'exam',       label: 'Practice Exam',         description: 'Simulate exam conditions with no hints or encouragement.' },
+    { id: 'chat',       label: 'Ask Anything',          description: 'Free-form chat — ask whatever you want about this material.' },
+  ];
+
+  res.status(200).json({
+    status: 'success',
+    welcome: {
+      message: welcomeText,
+      topics,
+      summary,
+      documentTitle: document.title,
+      learningModes,
+    },
+  });
 });

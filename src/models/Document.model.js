@@ -35,6 +35,20 @@ const documentSchema = new mongoose.Schema(
       enum: ['pending', 'processing', 'ready', 'failed'],
       default: 'pending',
     },
+    // Granular 6-stage progress for the frontend progress bar
+    processingStage: {
+      type: String,
+      enum: [
+        'file_received',
+        'extracting_content',
+        'identifying_concepts',
+        'building_learning_map',
+        'preparing_tutor',
+        'ready',
+        'failed',
+      ],
+      default: 'file_received',
+    },
     rawText: {
       type: String,
     },
@@ -45,6 +59,15 @@ const documentSchema = new mongoose.Schema(
     totalChunks: {
       type: Number,
       default: 0,
+    },
+    // AI-extracted learning intelligence
+    topics: {
+      type: [String],
+      default: [],
+    },
+    summary: {
+      type: String,
+      default: '',
     },
     misconceptions: [
       {

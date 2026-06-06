@@ -219,4 +219,34 @@ CONTENT TO USE:
 ${chunks.join('\n\n---\n\n')}`;
 };
 
-export { buildTeachPrompt, buildQuizPrompt, buildCorrectionPrompt, buildSessionAnalysisPrompt, buildCustomAssessmentPrompt };
+export { buildTeachPrompt, buildQuizPrompt, buildCorrectionPrompt, buildSessionAnalysisPrompt, buildCustomAssessmentPrompt, buildDocumentUnderstandingPrompt };
+
+/**
+ * Builds the prompt for AI document understanding.
+ * Used by the background worker AFTER chunking to extract topics and a summary.
+ * @param {string[]} chunks - All document chunks.
+ * @returns {string} Document understanding prompt.
+ */
+function buildDocumentUnderstandingPrompt(chunks) {
+  // Use first 10 chunks as a representative sample — avoids token overflow on large docs
+  const sample = chunks.slice(0, 10).join('\n\n---\n\n');
+
+  return `You are an expert curriculum analyst and educational content specialist.
+A student has uploaded a study document to an AI tutoring platform.
+Your job is to read this document and prepare a structured learning profile for the AI tutor.
+
+Your task is to:
+1. Identify the main academic TOPICS covered in this document (3 to 8 topics, each 2-5 words).
+2. Write a plain-English SUMMARY of the document (2-4 sentences, student-friendly, no jargon).
+
+Return ONLY a valid JSON object. No markdown. No preamble. No trailing text.
+Schema:
+{
+  "topics": ["Topic One", "Topic Two", "Topic Three"],
+  "summary": "This document covers..."
+}
+
+DOCUMENT CONTENT:
+${sample}`;
+}
+

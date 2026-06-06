@@ -45,9 +45,19 @@ export const deleteCached = async (key) => {
 };
 
 export const CACHE_KEYS = {
-  TEACH: (docId, chunkIdx, level) => `teach:${docId}:${chunkIdx}:${level}`,
-  QUIZ: (documentId) => `quiz:${documentId}`,
-  PROFILE: (userId) => `profile:${userId}`,
-  EMBED: (docId, chunkIdx) => `embed:${docId}:${chunkIdx}`,
-  ACTIVE_STREAM: (userId) => `ai:stream:${userId}`,
+  TEACH:                (docId, chunkIdx, level) => `teach:${docId}:${chunkIdx}:${level}`,
+  QUIZ:                 (documentId) => `quiz:${documentId}`,
+  PROFILE:             (userId) => `profile:${userId}`,
+  EMBED:               (docId, chunkIdx) => `embed:${docId}:${chunkIdx}`,
+  ACTIVE_STREAM:       (userId) => `ai:stream:${userId}`,
+  DASHBOARD_PERF:      (userId) => `dashboard:perf:${userId}`,
+};
+
+// Centralised TTL constants (seconds) — change once, applied everywhere
+export const CACHE_TTL = {
+  TEACHING:   86400,   // 24h  — teaching responses are stable per chunk/level
+  QUIZ:       86400,   // 24h  — quiz questions per doc/level don't change
+  PROFILE:    300,     // 5min — profile changes after quiz/XP, stale-safe window
+  DASHBOARD:  300,     // 5min — aggregation is expensive, fine to lag slightly
+  STREAM:     300,     // 5min — safety TTL on the stream concurrency lock
 };

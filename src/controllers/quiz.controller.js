@@ -2,7 +2,7 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import { AppError } from '../utils/AppError.js';
 import Quiz from '../models/Quiz.model.js';
 import Session from '../models/Session.model.js';
-import StudentProfile from '../models/StudentProfile.model.js';
+import Document from '../models/Document.model.js';
 import * as QuizService from '../services/quiz.service.js';
 import * as HuggingFaceService from '../services/huggingface.service.js';
 import * as ProfileService from '../services/profile.service.js';
@@ -26,8 +26,8 @@ export const generateQuiz = asyncHandler(async (req, res) => {
   const session = await Session.findOne({ _id: sessionId, userId });
   if (!session) throw new AppError('Session not found or access denied', 404);
 
-  // Get student profile
-  const profile = await StudentProfile.findOne({ userId });
+  // Cache-aware profile fetch
+  const profile = await ProfileService.getProfile(userId);
   if (!profile) throw new AppError('Student profile not found', 404);
 
   // Check if a quiz already exists for this session

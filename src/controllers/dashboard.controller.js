@@ -3,10 +3,18 @@ import { AppError } from '../utils/AppError.js';
 import Quiz from '../models/Quiz.model.js';
 import Session from '../models/Session.model.js';
 import Document from '../models/Document.model.js';
-import StudentProfile from '../models/StudentProfile.model.js';
+import { getCached, setCached, CACHE_KEYS, CACHE_TTL } from '../utils/cache.js';
 
 export const getPerformance = asyncHandler(async (req, res) => {
   const userId = req.user.id;
+
+  // Cache-aware: this is an expensive multi-join aggregation.
+  // A 5-min stale window is fine — performance data doesn't change mid-session.
+  const cacheKey = CACHE_KEYS.DASHBOARD_PERF(userId);
+  const cached = await getCached(cacheKey);
+  if (cached) {
+    return res.status(200).json({ status: 'success', data: cached, fromCache: true });
+  }
 
   // 1. Fetch all submitted quizzes for the user (via session)
   const sessions = await Session.find({ userId }).select('_id');
@@ -28,7 +36,6 @@ export const getPerformance = asyncHandler(async (req, res) => {
 
     // Aggregate by subject
     quizzes.forEach(q => {
-      // Default to 'General' if document has no subject
       const subject = q.documentId?.subject || 'General';
       if (!subjectMap[subject]) {
         subjectMap[subject] = { totalScore: 0, count: 0 };
@@ -38,21 +45,18 @@ export const getPerformance = asyncHandler(async (req, res) => {
     });
   }
 
-  // Format subject performance
   const subjectPerformance = Object.keys(subjectMap).map(subject => ({
     subject,
     averageScore: Math.round(subjectMap[subject].totalScore / subjectMap[subject].count),
     quizzesTaken: subjectMap[subject].count
   }));
 
-  res.status(200).json({
-    status: 'success',
-    data: {
-      totalQuizzes,
-      averageScore,
-      subjectPerformance
-    }
-  });
+  const data = { totalQuizzes, averageScore, subjectPerformance };
+
+  // Cache the aggregation result for 5 minutes
+  await setCached(cacheKey, data, CACHE_TTL.DASHBOARD);
+
+  res.status(200).json({ status: 'success', data, fromCache: false });
 });
 
 export const getRecommendations = asyncHandler(async (req, res) => {
@@ -66,6 +70,7 @@ export const getRecommendations = asyncHandler(async (req, res) => {
 
   const readyToTest = [];
   for (const session of recentSessions) {
+    if (!session.documentId) continue;
     const existingQuiz = await Quiz.findOne({ sessionId: session._id });
     if (!existingQuiz) {
       readyToTest.push({
@@ -78,7 +83,7 @@ export const getRecommendations = asyncHandler(async (req, res) => {
     }
   }
 
-  // 2. Weak Spots Review: Look at documents with unresolved misconceptions
+  // 2. Weak Spots Review: Documents with unresolved misconceptions
   const documents = await Document.find({ 
     userId, 
     'misconceptions.0': { $exists: true } 
@@ -101,8 +106,8 @@ export const getRecommendations = asyncHandler(async (req, res) => {
   res.status(200).json({
     status: 'success',
     data: {
-      readyToTest: readyToTest.slice(0, 3), // Top 3
-      weakSpots: weakSpots.slice(0, 3) // Top 3
+      readyToTest: readyToTest.slice(0, 3),
+      weakSpots: weakSpots.slice(0, 3)
     }
   });
 });
