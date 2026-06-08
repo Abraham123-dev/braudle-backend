@@ -16,6 +16,7 @@ const determineLevel = (averageScore) => {
 const shouldUpgradeLevel = (currentLevel, recentScores) => {
   if (recentScores.length < 3) return false;
   const avg = recentScores.reduce((a, b) => a + b, 0) / recentScores.length;
+  // Ensures sequential growth: Beginner -> Intermediate -> Advanced
   return avg >= 80 && currentLevel !== 'advanced';
 };
 
@@ -29,4 +30,3 @@ const calculateXP = (score) => {
 };
 
 export { calculateScore, determineLevel, shouldUpgradeLevel, calculateXP };
-

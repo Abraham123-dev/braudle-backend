@@ -97,6 +97,10 @@ const documentWorker = new Worker(
         // Non-fatal: If AI understanding fails, the document is still usable for teaching.
         // Log the error but continue — chunks are still valid for the tutor.
         console.error(`[WORKER] AI understanding failed for ${documentId}:`, aiErr.message);
+        // Suggestion: Add a metadata flag so the frontend knows the summary is missing
+        await Document.findByIdAndUpdate(documentId, { 
+          $set: { 'metadata.aiUnderstandingFailed': true } 
+        });
       }
 
       // ── Stage 5 ─────────────────────────────────────────────────────────────
