@@ -10,5 +10,6 @@ export const uploadSchema = z.object({
   subject: z.string()
     .max(100, 'Subject cannot exceed 100 characters')
     .optional()
-    .or(z.literal('')), // Allows empty string if not provided
+    .or(z.literal('')), 
+
 });

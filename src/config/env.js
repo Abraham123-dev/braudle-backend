@@ -11,6 +11,7 @@ const requiredEnvVars = [
   'GOOGLE_CALLBACK_URL',
   'GROQ_API_KEY',
   'HUGGINGFACE_API_KEY',
+  'RESEND_API_KEY',
   'CF_ACCOUNT_ID',
   'CF_R2_ACCESS_KEY',
   'CF_R2_SECRET_KEY',
@@ -62,4 +63,8 @@ export const env = {
   },
   
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
+
+  resend: {
+    apiKey: process.env.RESEND_API_KEY,
+  },
 };

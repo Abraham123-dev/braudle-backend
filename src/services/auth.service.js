@@ -2,6 +2,7 @@ import crypto from 'crypto';
 import jwt from 'jsonwebtoken';
 import { env } from '../config/env.js';
 import RefreshToken from '../models/RefreshToken.model.js';
+import { redisClient } from '../config/redis.js';
 
 /**
  * Service to handle secure token logic and DB persistence
@@ -67,4 +68,33 @@ export const clearExpiredTokens = async (userId) => {
             { revokedAt: { $exists: true } }
         ]
     });
+};
+
+/**
+ * Generates a cryptographically secure token, hashes it, and stores the hash in Redis.
+ */
+export const generateMagicToken = async (email) => {
+  const rawToken = crypto.randomBytes(32).toString('hex');
+  const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+
+  // Store hash with 15 minute TTL
+  const key = `magic:${tokenHash}`;
+  await redisClient.set(key, JSON.stringify({ email }), 'EX', 15 * 60);
+
+  return rawToken;
+};
+
+/**
+ * Verifies a raw token by hashing it and checking against Redis.
+ */
+export const verifyMagicToken = async (rawToken) => {
+  const tokenHash = crypto.createHash('sha256').update(rawToken).digest('hex');
+  const key = `magic:${tokenHash}`;
+
+  const data = await redisClient.get(key);
+  if (!data) return null;
+
+  // Single-use enforcement: delete immediately
+  await redisClient.del(key);
+  return JSON.parse(data).email;
 };

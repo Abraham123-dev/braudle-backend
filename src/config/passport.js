@@ -35,6 +35,7 @@ passport.use(
             name,
             email,
             avatar,
+            authProvider: 'google',
           });
         } else {
           user.name = name;
