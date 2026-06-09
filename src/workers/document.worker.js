@@ -88,8 +88,8 @@ const documentWorker = new Worker(
           GROQ_MODELS.smart
         );
 
-        const cleanJson = aiResponse.replace(/```json|```/g, '').trim();
-        const understanding = JSON.parse(cleanJson);
+        const jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
+        const understanding = jsonMatch ? JSON.parse(jsonMatch[0]) : { topics: [], summary: '' };
 
         topics = Array.isArray(understanding.topics) ? understanding.topics : [];
         summary = typeof understanding.summary === 'string' ? understanding.summary : '';
@@ -104,8 +104,6 @@ const documentWorker = new Worker(
       }
 
       // ── Stage 5 ─────────────────────────────────────────────────────────────
-      await setStage(documentId, 'preparing_tutor');
-
       await Document.findByIdAndUpdate(documentId, {
         rawText: extractedText,
         chunks,

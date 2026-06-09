@@ -93,20 +93,26 @@ ${rules}`;
  * @param {string[]} chunks - Array of document chunk strings.
  * @param {Object} profile - The StudentProfile document from MongoDB.
  * @param {number} count - Number of questions to generate (default 5).
+ * @param {string[]} documentTopics - Available topics for the document.
  * @returns {string} Full quiz generation prompt.
  */
-const buildQuizPrompt = (chunks, profile, count = 5) => {
+const buildQuizPrompt = (chunks, profile, count = 5, documentTopics = []) => {
   const levelNote = profile?.level === 'advanced'
     ? 'Questions should be challenging and require deep understanding.'
     : profile?.level === 'intermediate'
     ? 'Questions should require application of knowledge, not just recall.'
     : 'Questions should test basic understanding using simple, clear language.';
 
+  const topicsNote = documentTopics.length > 0 
+    ? `STRICT REQUIREMENT: Map each question to exactly one topic from this list: [${documentTopics.join(', ')}]. Do not create new topics.`
+    : 'Assign a specific topic name (1-3 words) to each question based on its content.';
+
   return `You are a professional exam question writer for students.
 Generate exactly ${count} questions based ONLY on the content provided below.
 Mix question types: 60% MCQ, 40% short theory.
 ${levelNote}
-Each question MUST include these fields: question, type, options (MCQ only), answer, explanation.
+Each question MUST include these fields: topic, question, type, options (MCQ only), answer, explanation.
+${topicsNote}
 Return ONLY a valid JSON array. No markdown. No preamble. No trailing text.
 
 CONTENT TO USE:
@@ -182,11 +188,11 @@ ${transcript}`;
 /**
  * Builds the prompt for custom practice quizzes or exams.
  * @param {string[]} chunks - Document chunks
- * @param {Object} options - Custom parameters (format, difficulty, numQuestions)
+ * @param {Object} options - Custom parameters (format, difficulty, numQuestions, documentTopics)
  * @returns {string} Custom assessment prompt.
  */
 const buildCustomAssessmentPrompt = (chunks, options) => {
-  const { format, difficulty, numQuestions } = options;
+  const { format, difficulty, numQuestions, documentTopics = [] } = options;
 
   let difficultyNote = '';
   switch(difficulty) {
@@ -203,6 +209,10 @@ const buildCustomAssessmentPrompt = (chunks, options) => {
   else if (format === 'theory') formatNote = 'ALL questions MUST be long-form conceptual essays (theory) with detailed answers expected.';
   else formatNote = 'Mix question types: 60% MCQ, 40% short theory.';
 
+  const topicsNote = documentTopics.length > 0 
+    ? `Map each question to one of these topics: ${documentTopics.join(', ')}.`
+    : 'Assign a specific topic name (1-3 words) to each question based on its content.';
+
   return `You are an expert exam setter.
 Generate exactly ${numQuestions} questions based ONLY on the content provided below.
 
@@ -212,7 +222,8 @@ ${difficultyNote}
 FORMAT REQUIREMENT:
 ${formatNote}
 
-Each question MUST include these fields: question, type (mcq/true_false/theory), options (only for mcq), answer, explanation.
+Each question MUST include these fields: topic, question, type (mcq/true_false/theory), options (only for mcq), answer, explanation.
+${topicsNote}
 Return ONLY a valid JSON array. No markdown. No preamble. No trailing text.
 
 CONTENT TO USE:
@@ -249,4 +260,3 @@ Schema:
 DOCUMENT CONTENT:
 ${sample}`;
 }
-

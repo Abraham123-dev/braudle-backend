@@ -3,7 +3,7 @@ import passport from '../config/passport.js';
 import { env } from '../config/env.js';
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { verifyJWT } from '../middleware/auth.middleware.js';
-import { rateLimit } from '../middleware/rateLimit.middleware.js';
+import rateLimit from '../middleware/rateLimit.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
 import { logoutSchema, emptyBodySchema, emailLoginSchema, magicLinkSchema, onboardingSchema } from '../validators/auth.validator.js';
 import { handleGoogleCallback, getMe, logout, refreshSession, startEmailLogin, verifyMagicLink, updateOnboardingName } from '../controllers/auth.controller.js';

@@ -37,9 +37,10 @@ export const getProfile = async (userId) => {
  *
  * @param {string} userId - The user's ID
  * @param {number} score - The percentage score achieved on the quiz
+ * @param {Object[]} questions - The graded questions from the quiz
  * @returns {Promise<string>} The new or existing level
  */
-export const updateProfileAfterQuiz = async (userId, score) => {
+export const updateProfileAfterQuiz = async (userId, score, questions = []) => {
   const profile = await StudentProfile.findOne({ userId });
   if (!profile) return null;
 
@@ -57,6 +58,32 @@ export const updateProfileAfterQuiz = async (userId, score) => {
   // Check for level upgrade
   if (shouldUpgradeLevel(profile.level, profile.recentScores)) {
     profile.level = profile.level === 'beginner' ? 'intermediate' : 'advanced';
+  }
+
+  // ── Topical Mastery Analysis ──────────────────────────────────────────────
+  if (questions.length > 0) {
+    const topicStats = {};
+    questions.forEach(q => {
+      const normalizedTopic = q.topic?.trim();
+      if (!normalizedTopic) return;
+      
+      if (!topicStats[normalizedTopic]) topicStats[normalizedTopic] = { correct: 0, total: 0 };
+      topicStats[normalizedTopic].total++;
+      if (q.isCorrect) topicStats[normalizedTopic].correct++;
+    });
+
+    Object.entries(topicStats).forEach(([topic, stats]) => {
+      const accuracy = stats.correct / stats.total;
+      if (accuracy >= 0.8) {
+        // Strong mastery: Add to strong, remove from weak
+        if (!profile.strongTopics.includes(topic)) profile.strongTopics.push(topic);
+        profile.weakTopics = profile.weakTopics.filter(t => t.toLowerCase() !== topic.toLowerCase());
+      } else if (accuracy <= 0.4) {
+        // Struggle detected: Add to weak, remove from strong
+        if (!profile.weakTopics.includes(topic)) profile.weakTopics.push(topic);
+        profile.strongTopics = profile.strongTopics.filter(t => t.toLowerCase() !== topic.toLowerCase());
+      }
+    });
   }
 
   await profile.save();

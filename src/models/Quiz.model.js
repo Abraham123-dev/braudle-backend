@@ -1,24 +1,29 @@
-import { mongoose } from '../config/db.js';
+import mongoose from 'mongoose';
 
-const { Schema } = mongoose;
+const questionSchema = new mongoose.Schema({
+  topic: { type: String, required: true },
+  question: { type: String, required: true },
+  type: { type: String, enum: ['mcq', 'true_false', 'theory'], required: true },
+  options: [String], // Only used for MCQ
+  answer: { type: String, required: true },
+  explanation: { type: String },
+  studentAnswer: { type: String, default: '' },
+  isCorrect: { type: Boolean, default: false }
+});
 
-const questionSchema = new Schema(
+const quizSchema = new mongoose.Schema(
   {
-    question: { type: String, required: true },
-    type: { type: String, enum: ['mcq', 'theory', 'true_false'], required: true },
-    options: { type: [String] },
-    answer: { type: String, required: true },
-    explanation: { type: String, required: true },
-    studentAnswer: { type: String },
-    isCorrect: { type: Boolean },
-  }
-);
-
-const quizSchema = new Schema(
-  {
-    sessionId: { type: Schema.Types.ObjectId, ref: 'Session', required: true },
-    documentId: { type: Schema.Types.ObjectId, ref: 'Document', required: true },
-    questions: { type: [questionSchema], default: [] },
+    sessionId: { 
+      type: mongoose.Schema.Types.ObjectId, 
+      ref: 'Session', 
+      required: true 
+    },
+    documentId: { 
+      type: mongoose.Schema.Types.ObjectId, 
+      ref: 'Document', 
+      required: true 
+    },
+    questions: [questionSchema],
     totalQuestions: { type: Number, required: true },
     score: { type: Number },
     submittedAt: { type: Date },
@@ -26,20 +31,7 @@ const quizSchema = new Schema(
   { timestamps: true }
 );
 
-// Ensure MCQ questions include at least two options
-quizSchema.pre('save', function (next) {
-  if (!this.questions || !Array.isArray(this.questions)) return next();
-  for (const q of this.questions) {
-    if (q.type === 'mcq') {
-      if (!q.options || !Array.isArray(q.options) || q.options.length < 2) {
-        return next(new Error('MCQ questions must include at least two options'));
-      }
-    }
-  }
-  next();
-});
-
-// Indexes for efficient queries
+// Ensure we can quickly find quizzes by session or document
 quizSchema.index({ sessionId: 1 });
 quizSchema.index({ documentId: 1 });
 

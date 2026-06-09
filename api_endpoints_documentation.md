@@ -25,6 +25,27 @@ This document outlines all **24 REST API endpoints** currently available in the 
 ### 1.5 `GET /auth/me`
 - **Logic:** Returns the basic user data (Name, Email, Profile Picture).
 
+### 1.6 `POST /auth/email/start`
+- **Logic:** Starts the passwordless login flow by generating a secure token and sending a magic link via Resend.
+- **Rate Limit:** 3 requests per 15 minutes.
+- **Request Body:**
+  ```json
+  { "email": "student@example.com" }
+  ```
+- **Response:** Returns a generic message to prevent email enumeration.
+
+### 1.7 `POST /auth/email/verify`
+- **Logic:** Verifies the magic link token from Redis. If valid, it finds or creates the user and issues `httpOnly` JWT cookies. New users are created with a placeholder name `"New Student"` and `authProvider: "email"`.
+- **Request Body:**
+  ```json
+  { "token": "secure_magic_token_here" }
+  ```
+- **Response:** Returns the user object with a `needsNameUpdate` flag.
+
+### 1.8 `PATCH /auth/onboarding/name`
+- **Logic:** Updates the user's name during the initial onboarding step. Required for Email/Magic Link users who don't have a name from a social provider.
+- **Request Body:** `{ "name": "Daniel" }`
+
 ---
 
 ## 2. Onboarding & Profile (`/api/profile`)

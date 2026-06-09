@@ -45,12 +45,16 @@ export const getMe = asyncHandler(async (req, res) => {
     throw new AppError('Unauthorized', 401);
   }
 
-  const user = await User.findById(req.user.id).select('name email avatar role onboardingComplete');
+  const user = await User.findById(req.user.id).select('name email avatar role onboardingComplete authProvider');
   if (!user) {
     throw new AppError('User not found', 404);
   }
 
-  return res.status(200).json({ user });
+  const userData = user.toObject();
+  // Flag to let frontend know if we should show the "What is your name?" prompt
+  userData.needsNameUpdate = user.authProvider === 'email' && user.name === 'New Student';
+
+  return res.status(200).json({ user: userData });
 });
 
 export const logout = asyncHandler(async (req, res) => {
@@ -117,21 +121,32 @@ export const verifyMagicLink = asyncHandler(async (req, res) => {
   setAccessCookie(res, accessToken);
   setRefreshCookie(res, refreshToken);
 
-  return res.status(200).json({ user, message: 'Logged in successfully' });
+  const userData = user.toObject();
+  // Consistency: add the flag to the initial login response as well
+  userData.needsNameUpdate = user.authProvider === 'email' && user.name === 'New Student';
+
+  return res.status(200).json({ user: userData, message: 'Logged in successfully' });
 });
 
 export const updateOnboardingName = asyncHandler(async (req, res) => {
   const { name } = req.body;
   const userId = req.user.id;
 
-  const user = await User.findByIdAndUpdate(
-    userId,
+  // 1. Prevent users from manually setting their name to the placeholder string
+  if (name.toLowerCase() === 'new student') {
+    throw new AppError("Invalid name. Please provide your actual name.", 400);
+  }
+
+  // 2. Atomic update: only change the name if it is currently the 'New Student' placeholder.
+  // This prevents users from reusing this onboarding endpoint to change their name later.
+  const user = await User.findOneAndUpdate(
+    { _id: userId, name: 'New Student' },
     { name },
     { new: true, runValidators: true }
-  ).select('name email avatar role onboardingComplete');
+  ).select('name email avatar role onboardingComplete authProvider');
 
   if (!user) {
-    throw new AppError('User not found', 404);
+    throw new AppError('Name has already been set or user not found', 400);
   }
 
   return res.status(200).json({ 

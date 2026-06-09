@@ -137,7 +137,7 @@ export const chatSession = asyncHandler(async (req, res) => {
     res.end();
 
     // Cache costly response
-    if (!cachedResponse) await setCached(cacheKey, fullAIResponse, 86400);
+    if (!cachedResponse) await setCached(cacheKey, fullAIResponse, CACHE_TTL.TEACH || 86400);
 
     // 7. Persist conversation after successful stream
     conversation.messages.push(
@@ -227,7 +227,8 @@ export const getWelcomeMessage = asyncHandler(async (req, res) => {
   if (!profile) throw new AppError('Student profile not found', 404);
 
   // Name comes from verifyJWT — no extra DB query needed
-  const firstName = req.user.name?.split(' ')[0] || 'there';
+  const name = req.user.name === 'New Student' ? '' : req.user.name;
+  const firstName = name?.split(' ')[0] || 'there';
 
   const topics = document.topics || [];
   const summary = document.summary || '';
@@ -253,7 +254,7 @@ export const getWelcomeMessage = asyncHandler(async (req, res) => {
     { id: 'chat',       label: 'Quick Insights',        description: 'Get key takeaways and ask specific questions freely.' },
     { id: 'quiz',       label: 'Quiz Me',               description: 'Generate questions to test your knowledge of this document.' },
     { id: 'exam',       label: 'Practice Exam',         description: 'Simulate exam conditions with no hints or encouragement.' },
-    { id: 'chat',       label: 'Ask Anything',          description: 'Free-form chat — ask whatever you want about this material.' },
+    { id: 'ask',        label: 'Ask Anything',          description: 'Free-form chat — ask whatever you want about this material.' },
   ];
 
   res.status(200).json({

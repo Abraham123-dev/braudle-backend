@@ -26,6 +26,9 @@ export const generateQuiz = asyncHandler(async (req, res) => {
   const session = await Session.findOne({ _id: sessionId, userId });
   if (!session) throw new AppError('Session not found or access denied', 404);
 
+  // Fetch document topics for adaptive learning traceability
+  const document = await Document.findById(session.documentId).select('topics');
+
   // Cache-aware profile fetch
   const profile = await ProfileService.getProfile(userId);
   if (!profile) throw new AppError('Student profile not found', 404);
@@ -42,7 +45,12 @@ export const generateQuiz = asyncHandler(async (req, res) => {
   }
 
   // Call the AI service to generate a new quiz
-  const quizData = await QuizService.generateQuiz(session.documentId, profile, 5);
+  const quizData = await QuizService.generateQuiz(
+    session.documentId, 
+    profile, 
+    5, 
+    document?.topics || []
+  );
 
   const questions = quizData.questions || quizData; // Handle if AI returns array or object
 
@@ -89,7 +97,12 @@ export const generateCustomAssessment = asyncHandler(async (req, res) => {
     status: 'active'
   });
 
-  const quizData = await QuizService.generateCustomAssessment(documentId, { format, difficulty, numQuestions });
+  const quizData = await QuizService.generateCustomAssessment(documentId, { 
+    format, 
+    difficulty, 
+    numQuestions,
+    documentTopics: document.topics || []
+  });
   const questions = quizData.questions || quizData;
 
   if (!Array.isArray(questions) || questions.length === 0) {
@@ -169,7 +182,7 @@ export const submitQuiz = asyncHandler(async (req, res) => {
   await quiz.save();
 
   // Handle potential level upgrade and XP
-  const newLevel = await ProfileService.updateProfileAfterQuiz(userId, score);
+  const newLevel = await ProfileService.updateProfileAfterQuiz(userId, score, quiz.questions);
 
   res.status(200).json({
     status: 'success',

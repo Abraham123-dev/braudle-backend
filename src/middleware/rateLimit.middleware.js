@@ -80,4 +80,28 @@ const quizGenerationLimiter = rateLimit({
   statusCode: 429,
 });
 
-export { globalLimiter, uploadPdfLimiter, uploadImageLimiter, sessionChatLimiter, quizLimiter, quizGenerationLimiter };
+/**
+ * Factory function to create dynamic rate limiters with Redis store.
+ * Useful for specific routes like magic link generation.
+ */
+const createRateLimiter = (prefix, max, windowSeconds) => rateLimit({
+  store: new RedisStore({
+    sendCommand: (...args) => redisClient.call(...args),
+    prefix: `rl:${prefix}:`,
+  }),
+  windowMs: windowSeconds * 1000,
+  max,
+  keyGenerator: (req) => req.user?.id || ipKeyGenerator(req),
+  message: 'Too many requests, please try again later.',
+  statusCode: 429,
+});
+
+// Auth rate limiter: 3 magic links per 15 minutes
+const authRateLimiter = createRateLimiter('auth_email', 3, 15 * 60);
+
+export { 
+  globalLimiter, uploadPdfLimiter, uploadImageLimiter, 
+  sessionChatLimiter, quizLimiter, quizGenerationLimiter,
+  authRateLimiter 
+};
+export default createRateLimiter;
