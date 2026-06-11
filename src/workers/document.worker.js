@@ -7,6 +7,7 @@ import { buildDocumentUnderstandingPrompt } from '../utils/promptBuilder.js';
 import pdf from 'pdf-parse/lib/pdf-parse.js';
 import * as AIService from '../services/ai.service.js';
 import { GROQ_MODELS } from '../config/models.js';
+import { parseAIJson } from '../utils/parseAIJson.js';
 
 /**
  * Helper: Update a single stage field atomically.
@@ -88,8 +89,7 @@ const documentWorker = new Worker(
           GROQ_MODELS.smart
         );
 
-        const jsonMatch = aiResponse.match(/\{[\s\S]*\}/);
-        const understanding = jsonMatch ? JSON.parse(jsonMatch[0]) : { topics: [], summary: '' };
+        const understanding = parseAIJson(aiResponse, { topics: [], summary: '' });
 
         topics = Array.isArray(understanding.topics) ? understanding.topics : [];
         summary = typeof understanding.summary === 'string' ? understanding.summary : '';
@@ -110,6 +110,7 @@ const documentWorker = new Worker(
         totalChunks: chunks.length,
         topics,
         summary,
+        misconceptions: [],
         processingStatus: 'ready',
         processingStage: 'ready',
       });

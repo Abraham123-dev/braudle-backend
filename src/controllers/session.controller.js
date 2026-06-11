@@ -174,10 +174,11 @@ export const completeSession = asyncHandler(async (req, res) => {
 
   if (!session) throw new AppError('Session not found', 404);
 
-  // Background task: Extract summary and misconceptions from chat transcript
-  AdaptationService.extractSessionInsights(session._id);
-
+  // Respond immediately to the client
   res.status(200).json({ status: 'success', message: 'Session marked as completed' });
+
+  // Trigger background analysis via service (non-blocking)
+  AdaptationService.extractSessionInsights(session._id);
 });
 
 /**
@@ -247,7 +248,7 @@ export const getWelcomeMessage = asyncHandler(async (req, res) => {
 
   welcomeText += `\n\nWhat would you like to do next?`;
 
-  // The 6 available learning modes
+  // The six available learning modes.
   const learningModes = [
     { id: 'breakdown',  label: 'Break It Down',        description: 'Simplify difficult concepts with analogies and clear language.' },
     { id: 'teach',      label: 'Explain Like I\'m New', description: 'Teach from first principles with step-by-step guidance.' },

@@ -38,9 +38,13 @@ const buildTeachPrompt = (chunk, profile, mode = 'teach') => {
     ? `The student's preferred learning style is: "${profile.learningStyle}". Adapt your delivery to this preference.`
     : '';
 
-  // Weak topics — AI spends more time on these
-  const weakTopicsContext = profile?.weakTopics?.length
-    ? `The student has struggled with these topics before: ${profile.weakTopics.join(', ')}. Pay extra attention if this chunk touches on them.`
+  // Detailed Misconceptions — AI knows exactly what to fix
+  const misconceptionsContext = profile?.misconceptionHistory?.length
+    ? `The student has had specific misunderstandings recently:
+${profile.misconceptionHistory.slice(-5).map(m => `- ${m.topic}: ${m.description}`).join('\n')}
+If the current section relates to these, proactively address the misconceptions and ensure they are cleared up.`
+    : profile?.weakTopics?.length
+    ? `The student has struggled with these general topics before: ${profile.weakTopics.join(', ')}. Pay extra attention if this chunk touches on them.`
     : '';
 
   const studentContext = [
@@ -49,7 +53,7 @@ const buildTeachPrompt = (chunk, profile, mode = 'teach') => {
     goalContext,
     studyLevelContext,
     styleContext,
-    weakTopicsContext,
+    misconceptionsContext,
   ].filter(Boolean).join('\n');
 
   // --- Layer 3: Chunk instruction ---
@@ -58,7 +62,7 @@ const buildTeachPrompt = (chunk, profile, mode = 'teach') => {
     breakdown: `Mode: Break It Down. The student needs a simpler perspective. Use analogies, real-world stories, or visual descriptions. Do not use technical jargon without explaining it. Verify understanding before moving on.`,
     quiz: `Mode: Interactive Quiz. Ask the student a series of questions based ONLY on this section. Do not explain the concept unless they get an answer wrong. Keep the momentum high.`,
     exam: `Mode: Formal Exam. You are an examiner. Ask one rigorous, high-level question about this section. Do not provide hints, feedback, or encouragement during the response. Be professional and strict.`,
-    chat: `Mode: Interactive Discussion. Act as a knowledgeable and supportive study partner. Answer the student's specific questions about this section, provide summaries if requested, and offer insights without forced teaching structures. Let the student lead the conversation.`,
+    chat: `Mode: Interactive Discussion. Act as a knowledgeable study partner. Answer questions about this section using ${levelInstructions.toLowerCase()} and offer insights without forced structures. Let the student lead.`,
     flashcards: `Mode: Flashcard Generation. Extract the most important facts, definitions, and concepts from this section. Present them as a list of "Front: [Question/Term]" and "Back: [Answer/Definition]". Keep them concise and focused on active recall.`,
   };
 
@@ -153,32 +157,43 @@ Do NOT move on. Do NOT be discouraging.`;
 };
 
 /**
- * Builds the prompt for extracting a session summary and misconceptions.
+ * Builds the prompt for extracting a session summary, weak topics, and strong topics from a transcript.
  * @param {Object[]} messages - The conversation history array.
+ * @param {string[]} documentTopics - List of valid topics for this document.
  * @returns {string} Extraction prompt string.
  */
-const buildSessionAnalysisPrompt = (messages) => {
+const buildSessionAnalysisPrompt = (messages, documentTopics = []) => {
+  // Safety: Limit transcript to the last 50 messages to stay within token limits
+  // and focus on the most relevant part of the session.
   const transcript = messages
     .filter(m => m.role !== 'system')
+    .slice(-50) 
     .map(m => `${m.role.toUpperCase()}: ${m.content}`)
     .join('\n\n');
 
+  const topicsNote = documentTopics.length > 0
+    ? `STRICT REQUIREMENT: Map findings to these topics: [${documentTopics.join(', ')}].`
+    : 'Identify specific topics based on the transcript.';
+
   return `You are an expert educational analyst reviewing a completed tutoring session.
 Analyze the following transcript between the AI tutor and the student.
+${topicsNote}
 
-Your task is to generate:
-1. A brief summary of what was covered and how the student performed (2-3 sentences).
-2. A list of specific misconceptions or weak topics the student struggled with.
+Your task is to identify:
+1. weakTopics: An array of topics the student struggled with or got wrong.
+2. strongTopics: An array of topics the student mastered or understood well.
+3. misconceptions: An array of objects with { topic, description } detailing exactly what the student misunderstood.
+4. summary: A brief 2-3 sentence overview of the session performance.
 
-Return ONLY a valid JSON object with the following schema:
+Return ONLY a valid JSON object. No markdown. No preamble. No trailing text. No explanations.
+Schema:
 {
-  "summary": "String describing the session outcome",
+  "weakTopics": ["Topic A", "Topic B"],
+  "strongTopics": ["Topic C"],
   "misconceptions": [
-    {
-      "topic": "String (1-3 words, e.g., 'Mitochondria function')",
-      "description": "String detailing exactly what the student misunderstood"
-    }
-  ]
+    { "topic": "Topic A", "description": "Student believes the mitochondria produces glucose instead of ATP." }
+  ],
+  "summary": "String describing the session outcome"
 }
 
 TRANSCRIPT:

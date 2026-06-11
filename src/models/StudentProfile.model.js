@@ -50,6 +50,14 @@ const studentProfileSchema = new Schema(
     },
     weakTopics: { type: [String], default: [] },
     strongTopics: { type: [String], default: [] },
+    misconceptionHistory: [
+      {
+        topic: { type: String, required: true },
+        description: { type: String, required: true },
+        sessionId: { type: Schema.Types.ObjectId, ref: 'Session' },
+        occurredAt: { type: Date, default: Date.now }
+      }
+    ],
     xp: { type: Number, default: 0, min: 0, validate: { validator: Number.isInteger, message: 'xp must be an integer' } },
     streak: { type: Number, default: 0, min: 0, validate: { validator: Number.isInteger, message: 'streak must be an integer' } },
     longestStreak: { type: Number, default: 0, min: 0, validate: { validator: Number.isInteger, message: 'longestStreak must be an integer' } },

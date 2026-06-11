@@ -49,9 +49,9 @@ This document outlines all **24 REST API endpoints** currently available in the 
 ---
 
 ## 2. Onboarding & Profile (`/api/profile`)
-
+ 
 ### 2.1 `GET /profile`
-- **Logic:** Returns the full `StudentProfile` (Level, XP, Streak, Weak Topics).
+- **Logic:** Returns the full `StudentProfile` (Level, XP, Streak, Weak Topics, Strong Topics, and the new `misconceptionHistory`).
 
 ### 2.2 `POST /profile/setup`
 - **Logic:** Creates the initial student profile. Must be called after first login.
@@ -79,7 +79,7 @@ This document outlines all **24 REST API endpoints** currently available in the 
 - **Response:** `{ "documentId": "123", "status": "pending" }`
 
 ### 3.2 `GET /documents`
-- **Logic:** Fetches all documents for the library. **Crucially**, this returns the `misconceptions` array for each document (populated by Layer 10), so the frontend can display a "What You're Missing" section on the PDF card.
+- **Logic:** Fetches all documents for the library. **Crucially**, this now returns the `misconceptions` array for each document (populated by Layers 4–6 (AIService.analyzeSession, ProfileService.updateProfileAfterSessionAnalysis, AdaptationService orchestration) during session analysis), so the frontend can display a "What You're Missing" section on the PDF card.
 
 ### 3.3 `GET /documents/:id/status`
 - **Logic:** Poll this endpoint after uploading (every 3-5 seconds). Returns a granular `processingStage` so the frontend can display a 6-step progress bar. Once `processingStatus` equals `"ready"`, also returns the AI-extracted `topics` and `summary`.
@@ -180,7 +180,7 @@ This document outlines all **24 REST API endpoints** currently available in the 
 
 ### 5.4 `POST /quiz/:quizId/submit`
 - **Logic:** Grades the quiz using zero-cost Hugging Face math embeddings (saves AI API tokens). Calculates a final score, assigns bonus XP, saves recent score history, and automatically levels up the student if applicable.
-- **Request Body:**
+- **Request Body:** 
   ```json
   {
     "answers": [

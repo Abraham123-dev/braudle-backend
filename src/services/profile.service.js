@@ -94,3 +94,58 @@ export const updateProfileAfterQuiz = async (userId, score, questions = []) => {
 
   return profile.level;
 };
+/**
+ * Updates a student's profile based on insights extracted from a session transcript.
+ * Merges weak and strong topics while ensuring consistency and removing duplicates.
+ * 
+ * @param {string} userId - The user's ID
+ * @param {Object} insights - The analysis results { weakTopics, strongTopics, misconceptions, sessionId }
+ * @returns {Promise<Object|null>} The updated profile
+ */
+export const updateProfileAfterSessionAnalysis = async (userId, { weakTopics = [], strongTopics = [], misconceptions = [], sessionId }) => {
+  const profile = await StudentProfile.findOne({ userId });
+  if (!profile) return null;
+
+  // 1. Process Weak Topics: Add to weak list, ensure removed from strong list
+  weakTopics.forEach((topic) => {
+    const normalized = topic.trim();
+    if (!normalized) return;
+
+    if (!profile.weakTopics.some((t) => t.toLowerCase() === normalized.toLowerCase())) {
+      profile.weakTopics.push(normalized);
+    }
+    profile.strongTopics = profile.strongTopics.filter((t) => t.toLowerCase() !== normalized.toLowerCase());
+  });
+
+  // 2. Process Strong Topics: Add to strong list, ensure removed from weak list
+  strongTopics.forEach((topic) => {
+    const normalized = topic.trim();
+    if (!normalized) return;
+
+    if (!profile.strongTopics.some((t) => t.toLowerCase() === normalized.toLowerCase())) {
+      profile.strongTopics.push(normalized);
+    }
+    profile.weakTopics = profile.weakTopics.filter((t) => t.toLowerCase() !== normalized.toLowerCase());
+  });
+
+  const validEntries = Array.isArray(misconceptions)
+    ? misconceptions.filter(m => m && typeof m.topic === 'string' && m.topic.trim() && typeof m.description === 'string' && m.description.trim())
+    : [];
+
+  if (validEntries.length > 0) {
+    const historyEntries = validEntries.map(m => ({
+      topic: m.topic.trim(),
+      description: m.description.trim(),
+      sessionId,
+      occurredAt: new Date()
+    }));
+    profile.misconceptionHistory.push(...historyEntries);
+  }
+
+  await profile.save();
+
+  // Invalidate cache to reflect changes in high-frequency routes
+  await deleteCached(CACHE_KEYS.PROFILE(userId));
+
+  return profile;
+};

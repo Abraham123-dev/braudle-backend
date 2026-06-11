@@ -1,6 +1,8 @@
 import Groq from 'groq-sdk';
 import { env } from '../config/env.js';
 import { GROQ_MODELS } from '../config/models.js';
+import { buildSessionAnalysisPrompt } from '../utils/promptBuilder.js';
+import { parseAIJson } from '../utils/parseAIJson.js';
 
 const groq = new Groq({ apiKey: env.groq.apiKey });
 
@@ -89,4 +91,29 @@ export const callGroqWithRetry = async (messages, model = GROQ_MODELS.smart, ret
     }
   }
   throw new Error('Groq rate limit exceeded after retries');
+};
+
+/**
+ * Analyzes a completed session transcript to extract learning insights.
+ * 
+ * @param {Object[]} messages - The conversation history array.
+ * @param {string[]} documentTopics - List of valid topics for the document.
+ * @returns {Promise<Object>} Analysis object with weakTopics, strongTopics, and summary.
+ */
+export const analyzeSession = async (messages, documentTopics = []) => {
+  const prompt = buildSessionAnalysisPrompt(messages, documentTopics);
+
+  const response = await callGroqWithRetry(
+    [{ role: 'user', content: prompt }],
+    GROQ_MODELS.smart
+  );
+
+  const analysis = parseAIJson(response, { weakTopics: [], strongTopics: [], summary: '' });
+
+  return {
+    weakTopics: Array.isArray(analysis.weakTopics) ? analysis.weakTopics : [],
+    strongTopics: Array.isArray(analysis.strongTopics) ? analysis.strongTopics : [],
+    misconceptions: Array.isArray(analysis.misconceptions) ? analysis.misconceptions : [],
+    summary: typeof analysis.summary === 'string' ? analysis.summary : ''
+  };
 };

@@ -23,3 +23,43 @@ Core learning loop:
 Upload → Process → Teach → Question → Evaluate → Adapt → Quiz → Update Profile
 
 When implementing features, preserve this learning loop.
+
+
+Think of BRAUDLE as a super-intelligent, personal tutor that lives in your computer. Instead of just reading a textbook alone, you’re studying with a mentor who "reads" your notes with you and changes how they teach based on how you're doing.
+
+Here is the step-by-step journey of how it works for you:
+
+1. Joining the Club (Signing Up)
+You have two easy ways to get in:
+
+The Google Way: If you click "Continue with Google," it’s instant. Since Google already knows your name, BRAUDLE greets you personally right away.
+The Email Way: If you use your email, we send you a Magic Link. You don't need a password; you just click the link in your inbox. Because email addresses don't always have names attached, BRAUDLE will politely ask, "What should I call you?" during your first visit so the tutor can be friendly.
+2. Giving Your Tutor Material (Uploading)
+You don’t just "save" a file; you "give" it to the AI to study.
+
+When you upload a PDF or a photo of your notes, BRAUDLE goes into a 6-step "study mode" in the background.
+It reads the text, identifies the 3 to 8 most important topics, and writes a student-friendly summary.
+You’ll see a progress bar that tells you exactly what the AI is doing (like "Identifying key concepts"). Once it says "Ready," the tutor is "armed" with knowledge.
+3. Your Personalized Welcome
+When you open a document to start studying, the tutor doesn't just say "Hello." It says:
+
+"Hi Daniel! 👋 I've finished studying your Biology notes. I found 4 key topics: Photosynthesis, Cell Structure... What would you like to do next?"
+
+It then offers you 6 different ways to learn, like "Break It Down" (using simple stories and analogies) or "Practice Exam" (where the tutor gets strict and tests you like a real professor).
+
+4. A Tutor That Actually Listens
+While you chat, BRAUDLE is constantly checking your "Student Profile."
+
+The Level Match: If you’re a Beginner, it uses simple words and real-world examples. If you’re Advanced, it uses technical terms and challenges you with harder concepts.
+The "Mentor" Rule: Unlike a basic chatbot, BRAUDLE won't let you just move on if you're confused. If you get an answer wrong, it identifies why you're confused, corrects you kindly, and asks a simpler question to make sure you've got it before moving to the next page.
+5. Quizzes with "Zero-Cost" Grading
+When you take a quiz, BRAUDLE is very smart about how it grades. You don't have to match a word perfectly. It uses "Semantic Mapping"—basically, it checks if the meaning of your answer is correct, even if you used different words than the textbook. This makes grading feel fair and human.
+
+6. The "Background Magic" (Adaptive Learning)
+This is the most powerful part. When you click "Complete Session," an AI Analyst wakes up in the background.
+
+It reads your entire chat transcript.
+It looks for "Misconceptions." For example, if you kept thinking the mitochondria makes glucose instead of energy, it writes that down.
+It updates your Global Profile.
+The result: The next time you study any document, the tutor already knows your "Weak Spots" and will spend a little extra time making sure those specific concepts finally click.
+In short: BRAUDLE learns about YOU while you learn about your SUBJECT.
