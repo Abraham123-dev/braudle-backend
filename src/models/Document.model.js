@@ -76,7 +76,14 @@ const documentSchema = new mongoose.Schema(
         identifiedAt: { type: Date, default: Date.now },
         isResolved: { type: Boolean, default: false }
       }
-    ]
+    ],
+    // Set to true by the worker if Groq fails to extract topics/summary.
+    // The document is still fully usable for teaching — chunks are intact.
+    // Frontend can use this to skip rendering the summary card gracefully.
+    aiUnderstandingFailed: {
+      type: Boolean,
+      default: false,
+    },
   },
   { timestamps: true }
 );

@@ -50,6 +50,9 @@ const studentProfileSchema = new Schema(
     },
     weakTopics: { type: [String], default: [] },
     strongTopics: { type: [String], default: [] },
+    // Tracks last 5 quiz scores for adaptive level-up calculation.
+    // Must be persisted so level upgrades survive server restarts.
+    recentScores: { type: [Number], default: [] },
     misconceptionHistory: [
       {
         topic: { type: String, required: true },

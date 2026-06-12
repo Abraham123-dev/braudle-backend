@@ -143,36 +143,29 @@ export const submitQuiz = asyncHandler(async (req, res) => {
     throw new AppError('Quiz has already been submitted', 400);
   }
 
-  // Grade each answer
-  for (let q of quiz.questions) {
+  // Grade each answer in parallel
+  await Promise.all(quiz.questions.map(async (q) => {
     const studentSubmission = answers.find(a => a.questionId.toString() === q._id.toString());
-    
+
     if (studentSubmission) {
       q.studentAnswer = studentSubmission.answer;
 
+      const similarity = await HuggingFaceService.checkAnswerSimilarity(
+        q.studentAnswer,
+        q.answer
+      );
+
       if (q.type === 'mcq' || q.type === 'true_false') {
-        // String matching or zero-cost semantic similarity
-        // Since MCQs can have slight variations, we'll use HF embeddings
-        const similarity = await HuggingFaceService.checkAnswerSimilarity(
-          q.studentAnswer,
-          q.answer
-        );
         q.isCorrect = similarity === 'correct';
       } else {
-        // Theory short answer -> Semantic similarity via HF embeddings
-        const similarity = await HuggingFaceService.checkAnswerSimilarity(
-          q.studentAnswer,
-          q.answer
-        );
-        // We consider partial as correct enough or mark strictly. Let's mark correct if 'correct' or 'partial' for now, 
-        // or just 'correct' depending on strictness. The guidelines say similarity checks handle this.
-        q.isCorrect = similarity === 'correct' || similarity === 'partial'; 
+        // Theory: mark correct if 'correct' or 'partial'
+        q.isCorrect = similarity === 'correct' || similarity === 'partial';
       }
     } else {
       q.studentAnswer = '';
       q.isCorrect = false;
     }
-  }
+  }));
 
   // Calculate score
   const score = calculateScore(quiz.questions);

@@ -119,36 +119,34 @@ export const chatSession = asyncHandler(async (req, res) => {
       fullAIResponse = cachedResponse;
       res.write(`data: ${JSON.stringify({ token: cachedResponse })}\n\n`);
     } else {
-    // 5. Stream from AI Service (Groq)
-    stream = await AIService.streamGroq(systemPrompt, message, history);
+      stream = await AIService.streamGroq(systemPrompt, message, history);
 
-    for await (const part of stream) {
-      if (isClosed) break;
-      const chunkValue = part.choices[0]?.delta?.content || '';
-      if (chunkValue) {
-        fullAIResponse += chunkValue;
-        res.write(`data: ${JSON.stringify({ token: chunkValue })}\n\n`);
+      for await (const part of stream) {
+        if (isClosed) break;
+        const chunkValue = part.choices[0]?.delta?.content || '';
+        if (chunkValue) {
+          fullAIResponse += chunkValue;
+          res.write(`data: ${JSON.stringify({ token: chunkValue })}\n\n`);
+        }
       }
     }
-    }
 
-    // 6. Signal completion
     res.write('data: [DONE]\n\n');
     res.end();
 
-    // Cache costly response
     if (!cachedResponse) await setCached(cacheKey, fullAIResponse, CACHE_TTL.TEACH || 86400);
 
-    // 7. Persist conversation after successful stream
     conversation.messages.push(
       { role: 'user', content: message },
       { role: 'assistant', content: fullAIResponse }
     );
     await conversation.save();
-    await deleteCached(streamLockKey);
   } catch (error) {
-    res.write(`data: ${JSON.stringify({ error: 'AI Stream interrupted' })}\n\n`);
-    res.end();
+    if (!res.writableEnded) {
+      res.write(`data: ${JSON.stringify({ error: 'AI Stream interrupted' })}\n\n`);
+      res.end();
+    }
+  } finally {
     await deleteCached(streamLockKey);
   }
 });

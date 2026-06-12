@@ -254,8 +254,20 @@ export { buildTeachPrompt, buildQuizPrompt, buildCorrectionPrompt, buildSessionA
  * @returns {string} Document understanding prompt.
  */
 function buildDocumentUnderstandingPrompt(chunks) {
-  // Use first 10 chunks as a representative sample — avoids token overflow on large docs
-  const sample = chunks.slice(0, 10).join('\n\n---\n\n');
+  let sampleChunks = [];
+  const headCount = 5; // Number of chunks to take from the beginning
+  const tailCount = 5; // Number of chunks to take from the end
+  const minChunksForSplit = headCount + tailCount;
+
+  if (chunks.length <= minChunksForSplit) {
+    // If the document is small, use all chunks
+    sampleChunks = chunks;
+  } else {
+    // Take 'headCount' chunks from the beginning and 'tailCount' from the end
+    sampleChunks = chunks.slice(0, headCount).concat(chunks.slice(-tailCount));
+  }
+
+  const sample = sampleChunks.join('\n\n---\n\n');
 
   return `You are an expert curriculum analyst and educational content specialist.
 A student has uploaded a study document to an AI tutoring platform.

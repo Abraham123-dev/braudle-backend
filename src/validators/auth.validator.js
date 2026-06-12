@@ -9,7 +9,9 @@ export const emailLoginSchema = z.object({
 });
 
 export const magicLinkSchema = z.object({
-  token: z.string().min(1, 'Token is required'),
+  // raw token = crypto.randomBytes(32).toString('hex') = always exactly 64 hex chars.
+  // Reject anything outside this range before we touch Redis.
+  token: z.string().length(64, 'Invalid token format'),
 });
 
 export const onboardingSchema = z.object({

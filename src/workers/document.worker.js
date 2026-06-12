@@ -97,13 +97,15 @@ const documentWorker = new Worker(
         // Non-fatal: If AI understanding fails, the document is still usable for teaching.
         // Log the error but continue — chunks are still valid for the tutor.
         console.error(`[WORKER] AI understanding failed for ${documentId}:`, aiErr.message);
-        // Suggestion: Add a metadata flag so the frontend knows the summary is missing
-        await Document.findByIdAndUpdate(documentId, { 
-          $set: { 'metadata.aiUnderstandingFailed': true } 
-        });
+        // Mark in DB so the frontend knows the summary/topics section may be empty
+        await Document.findByIdAndUpdate(documentId, { aiUnderstandingFailed: true });
       }
 
       // ── Stage 5 ─────────────────────────────────────────────────────────────
+      // Signal to the frontend that we are arming the tutor (final save incoming)
+      await setStage(documentId, 'preparing_tutor');
+
+      // ── Stage 6 ─────────────────────────────────────────────────────────────
       await Document.findByIdAndUpdate(documentId, {
         rawText: extractedText,
         chunks,
@@ -115,7 +117,7 @@ const documentWorker = new Worker(
         processingStage: 'ready',
       });
 
-      // ── Stage 6 ─────────────────────────────────────────────────────────────
+      // ── Done ────────────────────────────────────────────────────────────────
       console.log(`[WORKER] Successfully processed document: ${documentId} | Topics: ${topics.join(', ')}`);
       return { success: true, chunks: chunks.length, topics };
 
@@ -125,6 +127,7 @@ const documentWorker = new Worker(
       await Document.findByIdAndUpdate(documentId, {
         processingStatus: 'failed',
         processingStage: 'failed',
+        'metadata.lastError': error.message
       });
 
       throw error; // Let BullMQ handle retry logic
