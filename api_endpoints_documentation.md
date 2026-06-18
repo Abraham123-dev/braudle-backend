@@ -157,7 +157,7 @@ Sets the student's display name during onboarding. Only works while the name is 
 {
   "status": "success",
   "user": { "name": "Daniel", "email": "...", "authProvider": "email", ... },
-  "message": "Name updated successfully. Proceeding with onboarding."
+  "message": "Welcome aboard, Daniel! Let's customize your tutoring profile next."
 }
 ```
 - **Error:** `400 Name has already been set or user not found` if the name was already updated.
@@ -221,27 +221,159 @@ Returns the student's full learning profile. Cached in Redis for 5 minutes.
 
 ## 3. The Library (`/api/documents`)
 
-### 3.1 `POST /documents/upload` (Multipart/Form-Data)
-Uploads a file to Cloudflare R2 and queues it for background AI processing.
+### 3.1 `POST /documents/upload` (Multipart/Form-Data) — [LEGACY / DEPRECATED]
+Uploads a file directly to the backend server, which then transfers it to Cloudflare R2. This is slower for large files and acts as a bottleneck. Use the new Direct S3 Upload endpoints below.
+
+---
+
+### 3.1.1 `POST /documents/presigned-url` (Direct single-file upload)
+Generates a presigned PUT URL so the frontend can upload the file directly to Cloudflare R2, bypassing the backend server bottleneck.
 - **Auth Required:** Yes
-- **Rate Limits:** 2 PDFs per day · 5 images per day (per user)
-- **Max file size:** 50MB
-- **Accepted types:** `application/pdf`, `image/jpeg`, `image/png`
-- **Form Data:**
-  | Field | Required | Description |
-  |---|---|---|
-  | `file` | Yes | The PDF or image file |
-  | `title` | No | Display name (defaults to filename) |
-  | `subject` | No | e.g. `"Biology"` |
-- **Response `202 Accepted`:**
+- **Rate Limits:** Enforces the same daily limits (2 PDFs / 5 images). Checks and locks the upload slot atomically.
+- **Request Body:**
+```json
+{
+  "title": "My Biology Notes",
+  "subject": "Biology",
+  "filename": "biology_notes.pdf",
+  "contentType": "application/pdf"
+}
+```
+- **Response `200 OK`:**
+```json
+{
+  "documentId": "6849a...",
+  "uploadUrl": "https://<r2-bucket-url>/uploads/...?X-Amz-Signature=...",
+  "fileKey": "uploads/user123/123456-biology_notes.pdf",
+  "fileUrl": "https://pub-r2-public-url/uploads/user123/123456-biology_notes.pdf",
+  "message": "Presigned upload URL generated successfully. Upload your file directly to this URL."
+}
+```
+- **Frontend Action:** Perform a `PUT` request directly to the returned `uploadUrl` with the file's binary data as the body (set `Content-Type` exactly as sent in the request). Once successful, call `/documents/confirm-upload`.
+
+---
+
+### 3.1.2 `POST /documents/confirm-upload` (Confirm single-file upload)
+Signals to the backend that the direct single-file upload to R2 has finished. This triggers background worker ingestion.
+- **Auth Required:** Yes
+- **Request Body:**
+```json
+{
+  "documentId": "6849a..."
+}
+```
+- **Response `200 OK`:**
 ```json
 {
   "documentId": "6849a...",
   "status": "pending",
-  "message": "Document received and queued for processing"
+  "message": "Upload confirmed! BRAUDLE is studying your notes in the background now."
 }
 ```
-- **Error:** `429 Daily X upload limit reached (N/day)` if the daily limit is hit.
+
+---
+
+### 3.1.3 `POST /documents/multipart/initiate` (Initiate multipart upload)
+Initiates a multipart upload session for uploading large PDFs/files directly to R2 in chunks.
+- **Auth Required:** Yes
+- **Rate Limits:** Enforces daily limits. Checks and locks the slot atomically.
+- **Request Body:**
+```json
+{
+  "title": "Large Chemistry Book",
+  "subject": "Chemistry",
+  "filename": "chemistry_book.pdf",
+  "contentType": "application/pdf"
+}
+```
+- **Response `200 OK`:**
+```json
+{
+  "documentId": "6849a...",
+  "uploadId": "multipart-upload-id-string-from-r2",
+  "fileKey": "uploads/user123/123456-chemistry_book.pdf",
+  "fileUrl": "https://pub-r2-public-url/uploads/user123/123456-chemistry_book.pdf",
+  "message": "Multipart upload initiated successfully."
+}
+```
+
+---
+
+### 3.1.4 `POST /documents/multipart/presign-parts` (Get signed URLs for parts)
+Generates presigned upload URLs for specific part numbers of an active multipart upload.
+- **Auth Required:** Yes
+- **Request Body:**
+```json
+{
+  "uploadId": "multipart-upload-id-string-from-r2",
+  "fileKey": "uploads/user123/123456-chemistry_book.pdf",
+  "partNumbers": [1, 2, 3, 4]
+}
+```
+- **Response `200 OK`:**
+```json
+{
+  "parts": [
+    {
+      "partNumber": 1,
+      "uploadUrl": "https://<r2-bucket-url>/uploads/...?uploadId=...&partNumber=1&X-Amz-Signature=..."
+    },
+    {
+      "partNumber": 2,
+      "uploadUrl": "https://<r2-bucket-url>/uploads/...?uploadId=...&partNumber=2&X-Amz-Signature=..."
+    }
+  ]
+}
+```
+- **Frontend Action:** Split the file into chunks (typically 5MB–10MB) and upload each chunk to its corresponding `uploadUrl` using `PUT` with the chunk body. Keep track of the `ETag` header returned by each successful chunk upload.
+
+---
+
+### 3.1.5 `POST /documents/multipart/complete` (Complete multipart upload)
+Finalizes the multipart upload with R2. The backend merges all uploaded parts on R2 and queues background processing.
+- **Auth Required:** Yes
+- **Request Body:**
+```json
+{
+  "documentId": "6849a...",
+  "uploadId": "multipart-upload-id-string-from-r2",
+  "fileKey": "uploads/user123/123456-chemistry_book.pdf",
+  "parts": [
+    { "PartNumber": 1, "ETag": "\"etag-string-1\"" },
+    { "PartNumber": 2, "ETag": "\"etag-string-2\"" }
+  ]
+}
+```
+- **Response `200 OK`:**
+```json
+{
+  "documentId": "6849a...",
+  "status": "pending",
+  "fileUrl": "https://pub-r2-public-url/uploads/user123/123456-chemistry_book.pdf",
+  "message": "Multipart upload completed! BRAUDLE is studying your notes in the background now."
+}
+```
+
+---
+
+### 3.1.6 `POST /documents/multipart/abort` (Abort multipart upload)
+Aborts an active multipart upload session, cleans up any uploaded chunks, deletes the MongoDB document, and resets the user's daily limit counter.
+- **Auth Required:** Yes
+- **Request Body:**
+```json
+{
+  "documentId": "6849a...",
+  "uploadId": "multipart-upload-id-string-from-r2",
+  "fileKey": "uploads/user123/123456-chemistry_book.pdf"
+}
+```
+- **Response `200 OK`:**
+```json
+{
+  "success": true,
+  "message": "Multipart upload aborted and resources cleaned up."
+}
+```
 
 ---
 
@@ -310,7 +442,7 @@ Anchors a new study session to a document. Any previous active sessions for the 
 ```json
 { "documentId": "6849a...", "mode": "teach" }
 ```
-- **Valid modes:** `"teach"` `"breakdown"` `"quiz"` `"exam"` `"chat"`
+- **Valid modes:** `"understand"` `"review"` `"practice"` `"prepare"` `"ask"` `"flashcards"`
 - **Error:** `400 Document is still being processed` if `processingStatus !== "ready"`.
 - **Response `201`:**
 ```json
@@ -318,7 +450,7 @@ Anchors a new study session to a document. Any previous active sessions for the 
   "status": "success",
   "sessionId": "...",
   "mode": "teach",
-  "message": "Session started. You can now begin the chat."
+  "message": "Your study session is ready! Let's start learning together."
 }
 ```
 
@@ -338,12 +470,12 @@ Call this right after `POST /sessions/start`. Returns the personalised tutor gre
     "summary": "This document covers how plants convert sunlight into energy...",
     "documentTitle": "Biology Notes",
     "learningModes": [
-      { "id": "breakdown", "label": "Break It Down", "description": "Simplify difficult concepts with analogies and clear language." },
-      { "id": "teach",    "label": "Explain Like I'm New", "description": "Teach from first principles with step-by-step guidance." },
-      { "id": "chat",     "label": "Quick Insights", "description": "Get key takeaways and ask specific questions freely." },
-      { "id": "quiz",     "label": "Quiz Me", "description": "Generate questions to test your knowledge of this document." },
-      { "id": "exam",     "label": "Practice Exam", "description": "Simulate exam conditions with no hints or encouragement." },
-      { "id": "ask",      "label": "Ask Anything", "description": "Free-form chat — ask whatever you want about this material." }
+      { "id": "understand", "label": "Understand", "description": "Receive explanations, examples, and simplified breakdowns." },
+      { "id": "review",     "label": "Review", "description": "Revisit important concepts and summaries of the material." },
+      { "id": "practice",   "label": "Practice", "description": "Answer questions and receive feedback to check your understanding." },
+      { "id": "prepare",    "label": "Prepare", "description": "Study for quizzes, tests, and mock exams under exam conditions." },
+      { "id": "ask",        "label": "Ask Anything", "description": "Ask any question related to the learning material freely." },
+      { "id": "flashcards", "label": "Flashcards", "description": "Generate quick review flashcards from this section." }
     ]
   }
 }
@@ -382,7 +514,7 @@ Returns session metadata plus the full conversation `messages` array. Use this t
 - **Response:**
 ```json
 {
-  "session": { "_id": "...", "mode": "teach", "status": "active", "currentChunkIndex": 2, ... },
+  "session": { "_id": "...", "mode": "understand", "status": "active", "currentChunkIndex": 2, ... },
   "messages": [
     { "role": "user", "content": "...", "timestamp": "..." },
     { "role": "assistant", "content": "...", "timestamp": "..." }
@@ -398,19 +530,19 @@ Marks the session as finished. **Immediately returns** a success response. Then,
 - **Request Body:** Empty
 - **Response `200`:**
 ```json
-{ "status": "success", "message": "Session marked as completed" }
+{ "status": "success", "message": "Awesome job on completing this session! I'm updating your profile strengths and weaknesses now." }
 ```
 > After this call, the document's `misconceptions` array and the profile's `weakTopics`, `strongTopics`, and `misconceptionHistory` will be updated asynchronously (usually within 5–10 seconds).
 
 ---
 
 ### 4.6 `PATCH /sessions/:id/state`
-Updates the current mode or chunk index mid-session. Use this when the student switches learning modes (e.g., from `teach` to `breakdown`) or when the frontend needs to advance to the next chunk.
+Updates the current mode or chunk index mid-session. Use this when the student switches learning modes (e.g., from `understand` to `review`) or when the frontend needs to advance to the next chunk.
 - **Auth Required:** Yes
 - **Request Body (all fields optional):**
 ```json
 {
-  "mode": "breakdown",
+  "mode": "review",
   "currentChunkIndex": 3,
   "mentorSuggestion": "Consider reviewing Cellular Respiration next."
 }
@@ -498,7 +630,7 @@ Retrieves a specific quiz. **Answers are stripped** if the quiz has not yet been
 ---
 
 ### 5.5 `POST /quiz/:quizId/submit`
-Grades the quiz using zero-cost Hugging Face semantic similarity embeddings. Calculates score, awards XP, tracks recent scores for adaptive level-up, and updates the student profile. After submission, the full quiz with correct answers revealed is returned.
+Grades the quiz programmatically (for MCQ / True-False questions) and using Groq Llama 3.1 8B (for short/long theory questions). Calculates score, awards XP, tracks recent scores for adaptive level-up, and updates the student profile. After submission, the full quiz with correct answers revealed is returned.
 - **Auth Required:** Yes (ownership enforced)
 - **Request Body:**
 ```json
@@ -532,6 +664,7 @@ Grades the quiz using zero-cost Hugging Face semantic similarity embeddings. Cal
         "explanation": "Mitochondria are the powerhouse of the cell, generating ATP via oxidative phosphorylation.",
         "studentAnswer": "The mitochondria produces ATP",
         "isCorrect": true,
+        "feedback": "Excellent! Your answer is correct.",
         "topic": "Cell Biology"
       }
     ]

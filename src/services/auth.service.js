@@ -41,7 +41,7 @@ export const rotateRefreshToken = async (rawToken) => {
   const storedToken = await RefreshToken.findOneAndUpdate(
     {
       token: tokenHash,
-      revokedAt: { $exists: false },
+      $or: [{ revokedAt: null }, { revokedAt: { $exists: false } }],
       expiresAt: { $gt: now },
     },
     { $set: { revokedAt: now } },
@@ -53,7 +53,17 @@ export const rotateRefreshToken = async (rawToken) => {
   // Detect Token Reuse (Security best practice)
   const reusedToken = await RefreshToken.findOne({ token: tokenHash });
   if (reusedToken && reusedToken.revokedAt) {
+    // Grace period check: If the token was revoked less than 10 seconds ago,
+    // it might be a concurrent request from the same client.
+    const gracePeriodMs = 10 * 1000;
+    const timeSinceRevocation = now.getTime() - reusedToken.revokedAt.getTime();
+    if (timeSinceRevocation < gracePeriodMs) {
+      console.log(`[AUTH] Allowed concurrent refresh within grace period for user: ${reusedToken.userId}`);
+      return reusedToken; // Return the token to let the refresh succeed
+    }
+
     // Potential reuse attack: Invalidate all sessions for this user
+    console.warn(`[AUTH] Invalidation triggered by token reuse for user: ${reusedToken.userId}`);
     await RefreshToken.deleteMany({ userId: reusedToken.userId });
   }
 

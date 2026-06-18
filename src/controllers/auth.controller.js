@@ -152,6 +152,6 @@ export const updateOnboardingName = asyncHandler(async (req, res) => {
   return res.status(200).json({ 
     status: 'success', 
     user,
-    message: 'Name updated successfully. Proceeding with onboarding.' 
+    message: `Welcome aboard, ${name}! Let's customize your tutoring profile next.` 
   });
 });

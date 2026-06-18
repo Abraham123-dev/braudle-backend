@@ -8,7 +8,8 @@ const questionSchema = new mongoose.Schema({
   answer: { type: String, required: true },
   explanation: { type: String },
   studentAnswer: { type: String, default: '' },
-  isCorrect: { type: Boolean, default: false }
+  isCorrect: { type: Boolean, default: false },
+  feedback: { type: String, default: '' }
 });
 
 const quizSchema = new mongoose.Schema(

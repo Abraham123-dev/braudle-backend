@@ -16,8 +16,8 @@ const sessionSchema = new mongoose.Schema(
     },
     mode: {
       type: String,
-      enum: ['teach', 'breakdown', 'quiz', 'exam', 'chat'],
-      default: 'teach',
+      enum: ['understand', 'review', 'practice', 'prepare', 'ask', 'flashcards'],
+      default: 'understand',
       required: true,
     },
     status: {

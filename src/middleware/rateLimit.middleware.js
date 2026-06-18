@@ -5,14 +5,13 @@ import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import RedisStore from 'rate-limit-redis';
 import { redisClient } from '../config/redis.js';
 
-// Global rate limiter: 100 requests per 15 minutes
+// Global rate limiter: 300 requests per 15 minutes
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
-  max: 100,
+  max: 300,
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true, // Return rate limit info in the `RateLimit-*` headers
   legacyHeaders: false, // Disable the `X-RateLimit-*` headers
-  skip: (req) => req.method === 'GET', // Don't rate limit GET requests
 });
 
 // Upload rate limiter: 2 PDFs per day per user

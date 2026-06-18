@@ -13,15 +13,64 @@ export const sendMagicLink = async (email, token) => {
     // Production: Switch to 'BRAUDLE <auth@braudle.com>' after verifying your domain in Resend
     from: 'BRAUDLE <onboarding@resend.dev>', 
     to: email,
-    subject: 'Your BRAUDLE Magic Login Link',
+    subject: '✨ Your BRAUDLE Magic Login Link',
     html: `
-      <div style="font-family: sans-serif; max-width: 600px; margin: auto; padding: 40px; background-color: #000; color: #fff; border-radius: 12px; text-align: center;">
-        <h1 style="color: #22c55e; font-size: 32px; margin-bottom: 10px; letter-spacing: 2px;">BRAUDLE</h1>
-        <h2 style="font-size: 18px; font-weight: normal; margin-bottom: 30px; color: #eee;">Your Personal AI Tutor</h2>
-        <p style="color: #aaa; line-height: 1.6; margin-bottom: 30px;">Click the button below to log in to your account. This link is valid for 15 minutes and can only be used once.</p>
-        <a href="${loginUrl}" style="background-color: #22c55e; color: #000; padding: 14px 30px; text-decoration: none; border-radius: 8px; font-weight: bold; font-size: 16px; display: inline-block;">Log In to BRAUDLE</a>
-        <p style="margin-top: 40px; font-size: 12px; color: #555; border-top: 1px solid #222; padding-top: 20px;">If you didn't request this, you can safely ignore this email.</p>
-      </div>
+      <!DOCTYPE html>
+      <html>
+        <head>
+          <meta charset="utf-8">
+          <title>Your BRAUDLE Magic Login Link</title>
+        </head>
+        <body style="margin: 0; padding: 0; background-color: #0b0f19; font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif; -webkit-font-smoothing: antialiased;">
+          <table border="0" cellpadding="0" cellspacing="0" width="100%" style="background-color: #0b0f19; padding: 40px 20px;">
+            <tr>
+              <td align="center">
+                <table border="0" cellpadding="0" cellspacing="0" width="100%" style="max-width: 500px; background-color: #111827; border: 1px solid #1f2937; border-radius: 16px; overflow: hidden; box-shadow: 0 10px 25px -5px rgba(0, 0, 0, 0.3);">
+                  <!-- Header -->
+                  <tr>
+                    <td align="center" style="padding: 30px 40px 20px 40px; border-bottom: 1px solid #1f2937;">
+                      <span style="font-size: 24px; font-weight: 800; color: #22c55e; letter-spacing: 3px; font-family: system-ui, sans-serif;">BRAUDLE</span>
+                      <div style="font-size: 13px; color: #9ca3af; margin-top: 5px;">Your Personal AI Tutor</div>
+                    </td>
+                  </tr>
+                  <!-- Body Content -->
+                  <tr>
+                    <td style="padding: 45px 40px 35px 40px; text-align: center;">
+                      <h2 style="font-size: 20px; font-weight: 700; color: #ffffff; margin: 0 0 14px 0;">Verify your login</h2>
+                      <p style="font-size: 14px; line-height: 1.5; color: #9ca3af; margin: 0 0 26px 0;">
+                        Click the button below to finish signing in to your BRAUDLE account.
+                      </p>
+                      <!-- Button -->
+                      <table border="0" cellpadding="0" cellspacing="0" style="margin: 0 auto;">
+                        <tr>
+                          <td align="center" style="border-radius: 8px; background-color: #22c55e;">
+                            <a href="${loginUrl}" target="_blank" style="display: inline-block; padding: 14px 32px; font-size: 15px; font-weight: bold; color: #0b0f19; text-decoration: none; border-radius: 8px;">
+                              Verify and Log In
+                            </a>
+                          </td>
+                        </tr>
+                      </table>
+                    </td>
+                  </tr>
+                  <!-- Footer / Notice -->
+                  <tr>
+                    <td style="padding: 0 40px 30px 40px; text-align: center;">
+                      <p style="font-size: 12px; color: #4b5563; margin: 0 0 16px 0; line-height: 1.4;">
+                        This magic link is valid for 15 minutes and can only be used once.
+                      </p>
+                      <div style="border-top: 1px solid #1f2937; padding-top: 20px;">
+                        <p style="font-size: 11px; color: #4b5563; margin: 0;">
+                          If you didn't request this email, you can safely ignore it.
+                        </p>
+                      </div>
+                    </td>
+                  </tr>
+                </table>
+              </td>
+            </tr>
+          </table>
+        </body>
+      </html>
     `,
   });
-};
+};

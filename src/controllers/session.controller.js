@@ -35,7 +35,7 @@ export const startSession = asyncHandler(async (req, res) => {
   const session = await Session.create({
     userId,
     documentId,
-    mode: mode || 'teach',
+    mode: mode || 'understand',
     currentChunkIndex: 0,
   });
 
@@ -50,7 +50,7 @@ export const startSession = asyncHandler(async (req, res) => {
     status: 'success',
     sessionId: session._id,
     mode: session.mode,
-    message: 'Session started. You can now begin the chat.',
+    message: "Your study session is ready! Let's start learning together.",
   });
 });
 
@@ -173,7 +173,10 @@ export const completeSession = asyncHandler(async (req, res) => {
   if (!session) throw new AppError('Session not found', 404);
 
   // Respond immediately to the client
-  res.status(200).json({ status: 'success', message: 'Session marked as completed' });
+  res.status(200).json({ 
+    status: 'success', 
+    message: "Awesome job on completing this session! I'm updating your profile strengths and weaknesses now." 
+  });
 
   // Trigger background analysis via service (non-blocking)
   AdaptationService.extractSessionInsights(session._id);
@@ -246,14 +249,14 @@ export const getWelcomeMessage = asyncHandler(async (req, res) => {
 
   welcomeText += `\n\nWhat would you like to do next?`;
 
-  // The six available learning modes.
+  // The six available learning modes aligned with the PRD goals.
   const learningModes = [
-    { id: 'breakdown',  label: 'Break It Down',        description: 'Simplify difficult concepts with analogies and clear language.' },
-    { id: 'teach',      label: 'Explain Like I\'m New', description: 'Teach from first principles with step-by-step guidance.' },
-    { id: 'chat',       label: 'Quick Insights',        description: 'Get key takeaways and ask specific questions freely.' },
-    { id: 'quiz',       label: 'Quiz Me',               description: 'Generate questions to test your knowledge of this document.' },
-    { id: 'exam',       label: 'Practice Exam',         description: 'Simulate exam conditions with no hints or encouragement.' },
-    { id: 'ask',        label: 'Ask Anything',          description: 'Free-form chat — ask whatever you want about this material.' },
+    { id: 'understand', label: 'Understand',       description: 'Receive explanations, examples, and simplified breakdowns.' },
+    { id: 'review',     label: 'Review',           description: 'Revisit important concepts and summaries of the material.' },
+    { id: 'practice',   label: 'Practice',         description: 'Answer questions and receive feedback to check your understanding.' },
+    { id: 'prepare',    label: 'Prepare',          description: 'Study for quizzes, tests, and mock exams under exam conditions.' },
+    { id: 'ask',        label: 'Ask Anything',     description: 'Ask any question related to the learning material freely.' },
+    { id: 'flashcards', label: 'Flashcards',       description: 'Generate quick review flashcards from this section.' },
   ];
 
   res.status(200).json({

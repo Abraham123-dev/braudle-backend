@@ -12,7 +12,7 @@
  * @param {string} mode - The interaction mode ('teach', 'breakdown', 'quiz', 'exam', 'chat', 'flashcards').
  * @returns {string} Full system prompt string.
  */
-const buildTeachPrompt = (chunk, profile, mode = 'teach') => {
+const buildTeachPrompt = (chunk, profile, mode = 'understand') => {
   // --- Layer 1: Role ---
   const role = `You are BRAUDLE, an expert mentor and adaptive tutor. Your goal is to guide the student toward mastery. You act as a mentor: observing progress, answering questions, and suggesting the best next steps rather than just following a rigid script.`;
 
@@ -58,15 +58,15 @@ If the current section relates to these, proactively address the misconceptions 
 
   // --- Layer 3: Chunk instruction ---
   const modeInstructions = {
-    teach: `Mode: Standard Teaching. Explain the following section in 3 to 5 clear points. Use an engaging tone. End by asking exactly ONE comprehension question.`,
-    breakdown: `Mode: Break It Down. The student needs a simpler perspective. Use analogies, real-world stories, or visual descriptions. Do not use technical jargon without explaining it. Verify understanding before moving on.`,
-    quiz: `Mode: Interactive Quiz. Ask the student a series of questions based ONLY on this section. Do not explain the concept unless they get an answer wrong. Keep the momentum high.`,
-    exam: `Mode: Formal Exam. You are an examiner. Ask one rigorous, high-level question about this section. Do not provide hints, feedback, or encouragement during the response. Be professional and strict.`,
-    chat: `Mode: Interactive Discussion. Act as a knowledgeable study partner. Answer questions about this section using ${levelInstructions.toLowerCase()} and offer insights without forced structures. Let the student lead.`,
+    understand: `Mode: Understand. Explain the following section step-by-step in 3 to 5 clear points, using analogies or real-world examples. End by asking exactly ONE comprehension question. If the student is confused or requests a simpler explanation, adapt your approach.`,
+    review: `Mode: Review. Help the student revisit the key takeaways from this section. Summarize the major concepts and highlight important terms, dates, formulas, or definitions.`,
+    practice: `Mode: Practice. Actively test the student's knowledge. Ask one question based on this section, evaluate their answer, and provide encouraging feedback.`,
+    prepare: `Mode: Prepare. You are an exam supervisor. Ask one rigorous, exam-level question about this section. Do not give hints, encouragement, or custom feedback. Keep the tone formal and academic.`,
+    ask: `Mode: Ask Anything. Answer the student's questions about this section directly. Let them lead the discussion and ask whatever they want.`,
     flashcards: `Mode: Flashcard Generation. Extract the most important facts, definitions, and concepts from this section. Present them as a list of "Front: [Question/Term]" and "Back: [Answer/Definition]". Keep them concise and focused on active recall.`,
   };
 
-  const chunkInstruction = modeInstructions[mode] || modeInstructions.teach;
+  const chunkInstruction = modeInstructions[mode] || modeInstructions.understand;
 
   // --- Layer 5: Behaviour rules ---
   const rules = `RULES YOU MUST FOLLOW:

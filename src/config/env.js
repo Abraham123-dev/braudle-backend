@@ -10,7 +10,6 @@ const requiredEnvVars = [
   'GOOGLE_CLIENT_SECRET',
   'GOOGLE_CALLBACK_URL',
   'GROQ_API_KEY',
-  'HUGGINGFACE_API_KEY',
   'RESEND_API_KEY',
   'CF_ACCOUNT_ID',
   'CF_R2_ACCESS_KEY',
@@ -50,9 +49,6 @@ export const env = {
     apiKey: process.env.GROQ_API_KEY,
   },
   
-  huggingface: {
-    apiKey: process.env.HUGGINGFACE_API_KEY,
-  },
   
   cfR2: {
     accountId: process.env.CF_ACCOUNT_ID,

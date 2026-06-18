@@ -1,4 +1,14 @@
-import { S3Client, PutObjectCommand, GetObjectCommand, DeleteObjectCommand } from '@aws-sdk/client-s3';
+import {
+  S3Client,
+  PutObjectCommand,
+  GetObjectCommand,
+  DeleteObjectCommand,
+  CreateMultipartUploadCommand,
+  UploadPartCommand,
+  CompleteMultipartUploadCommand,
+  AbortMultipartUploadCommand,
+} from '@aws-sdk/client-s3';
+import { getSignedUrl } from '@aws-sdk/s3-request-presigner';
 import { env } from '../config/env.js';
 
 const s3Client = new S3Client({
@@ -62,6 +72,83 @@ export const deleteFromR2 = async (key) => {
   const command = new DeleteObjectCommand({
     Bucket: env.cfR2.bucket,
     Key: key,
+  });
+
+  await s3Client.send(command);
+};
+
+/**
+ * Generates a presigned URL for uploading a single file directly to R2
+ */
+export const getPresignedPutUrl = async (key, contentType) => {
+  const command = new PutObjectCommand({
+    Bucket: env.cfR2.bucket,
+    Key: key,
+    ContentType: contentType,
+  });
+
+  // Signed URL expires in 15 minutes (900 seconds)
+  const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 900 });
+  return uploadUrl;
+};
+
+/**
+ * Initiates a multipart upload on R2
+ */
+export const initiateMultipartUpload = async (key, contentType) => {
+  const command = new CreateMultipartUploadCommand({
+    Bucket: env.cfR2.bucket,
+    Key: key,
+    ContentType: contentType,
+  });
+
+  const response = await s3Client.send(command);
+  return response.UploadId;
+};
+
+/**
+ * Generates a presigned URL for a specific part of a multipart upload
+ */
+export const getPresignedUploadPartUrl = async (key, uploadId, partNumber) => {
+  const command = new UploadPartCommand({
+    Bucket: env.cfR2.bucket,
+    Key: key,
+    UploadId: uploadId,
+    PartNumber: partNumber,
+  });
+
+  // Signed URL expires in 15 minutes (900 seconds)
+  const uploadUrl = await getSignedUrl(s3Client, command, { expiresIn: 900 });
+  return uploadUrl;
+};
+
+/**
+ * Completes a multipart upload on R2
+ */
+export const completeMultipartUpload = async (key, uploadId, parts) => {
+  const command = new CompleteMultipartUploadCommand({
+    Bucket: env.cfR2.bucket,
+    Key: key,
+    UploadId: uploadId,
+    MultipartUpload: {
+      Parts: parts, // Array of { PartNumber, ETag }
+    },
+  });
+
+  const response = await s3Client.send(command);
+  
+  const publicDomain = env.cfR2.publicUrl.replace(/^https?:\/\//, '');
+  return `https://${publicDomain}/${key}`;
+};
+
+/**
+ * Aborts a multipart upload on R2
+ */
+export const abortMultipartUpload = async (key, uploadId) => {
+  const command = new AbortMultipartUploadCommand({
+    Bucket: env.cfR2.bucket,
+    Key: key,
+    UploadId: uploadId,
   });
 
   await s3Client.send(command);

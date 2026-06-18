@@ -37,7 +37,7 @@ export const streamGroq = async (systemPrompt, userMessage, history = []) => {
 /**
  * Transcribes handwritten text from an image using Groq Vision.
  */
-export const transcribeImage = async (imageBase64) => {
+export const transcribeImage = async (imageBase64, mimeType = 'image/jpeg') => {
   const response = await groq.chat.completions.create({
     model: GROQ_MODELS.vision,
     messages: [
@@ -50,7 +50,7 @@ export const transcribeImage = async (imageBase64) => {
           },
           {
             type: 'image_url',
-            image_url: { url: `data:image/jpeg;base64,${imageBase64}` },
+            image_url: { url: `data:${mimeType};base64,${imageBase64}` },
           },
         ],
       },
@@ -105,7 +105,7 @@ export const analyzeSession = async (messages, documentTopics = []) => {
 
   const response = await callGroqWithRetry(
     [{ role: 'user', content: prompt }],
-    GROQ_MODELS.smart
+    GROQ_MODELS.fast
   );
 
   const analysis = parseAIJson(response, { weakTopics: [], strongTopics: [], summary: '' });
@@ -116,4 +116,67 @@ export const analyzeSession = async (messages, documentTopics = []) => {
     misconceptions: Array.isArray(analysis.misconceptions) ? analysis.misconceptions : [],
     summary: typeof analysis.summary === 'string' ? analysis.summary : ''
   };
+};
+
+/**
+ * Evaluates a student's short/long theory answer against the correct answer.
+ * Uses Llama 3.1 8B (fast model).
+ * 
+ * @param {string} question - The question asked
+ * @param {string} studentAnswer - The answer provided by the student
+ * @param {string} correctAnswer - The expected correct answer
+ * @returns {Promise<'correct' | 'partial' | 'wrong'>} The evaluation result
+ */
+export const evaluateTheoryAnswer = async (question, studentAnswer, correctAnswer) => {
+  if (!studentAnswer || studentAnswer.trim().length === 0) {
+    return {
+      evaluation: 'wrong',
+      feedback: 'No answer was provided.',
+    };
+  }
+
+  const prompt = `You are an educational evaluator grading a student's answer to a short theory question.
+Compare the student's answer with the expected correct answer and determine if it is correct, partially correct, or incorrect. Also provide a direct, helpful, and friendly sentence explaining why it was graded this way.
+
+QUESTION: "${question}"
+EXPECTED ANSWER: "${correctAnswer}"
+STUDENT'S ANSWER: "${studentAnswer}"
+
+Rules:
+- Mark as "correct" if the student's answer is accurate, complete, and covers the key points of the expected answer (even if phrased differently).
+- Mark as "partial" if the student's answer is on the right track or has some correct elements, but is incomplete, slightly inaccurate, or missing details.
+- Mark as "incorrect" if the student's answer is wrong, irrelevant, or fails to demonstrate understanding of the concept.
+
+Return ONLY a JSON object with the following schema:
+{
+  "evaluation": "correct" | "partial" | "incorrect",
+  "feedback": "Friendly feedback explaining exactly what they did well, what they missed, and how to improve."
+}
+Do NOT include markdown, backticks, or any explanation. Return only the raw JSON.`;
+
+  try {
+    const response = await callGroqWithRetry(
+      [{ role: 'user', content: prompt }],
+      GROQ_MODELS.fast
+    );
+
+    const parsed = parseAIJson(response, { evaluation: 'incorrect', feedback: 'Could not generate feedback.' });
+    let evaluation = (parsed.evaluation || 'incorrect').toLowerCase().trim();
+    const feedback = parsed.feedback || 'Your answer was evaluated.';
+
+    if (evaluation === 'incorrect') evaluation = 'wrong';
+    else if (evaluation !== 'correct' && evaluation !== 'partial') {
+      if (evaluation.includes('correct')) evaluation = 'correct';
+      else if (evaluation.includes('partial')) evaluation = 'partial';
+      else evaluation = 'wrong';
+    }
+
+    return { evaluation, feedback };
+  } catch (err) {
+    console.error('[AI SERVICE] Theory evaluation failed:', err.message);
+    return {
+      evaluation: 'wrong',
+      feedback: 'An error occurred while evaluating your answer.',
+    };
+  }
 };

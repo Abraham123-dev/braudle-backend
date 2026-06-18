@@ -1,13 +1,18 @@
 import { Worker } from 'bullmq';
 import { redisClient } from '../config/redis.js';
+import { connectDB } from '../config/db.js';
 import Document from '../models/Document.model.js';
 import * as StorageService from '../services/storage.service.js';
 import { splitIntoChunks } from '../utils/chunker.js';
 import { buildDocumentUnderstandingPrompt } from '../utils/promptBuilder.js';
-import pdf from 'pdf-parse/lib/pdf-parse.js';
+import { PDFParse } from 'pdf-parse';
 import * as AIService from '../services/ai.service.js';
 import { GROQ_MODELS } from '../config/models.js';
 import { parseAIJson } from '../utils/parseAIJson.js';
+
+// Connect to MongoDB
+await connectDB();
+
 
 /**
  * Helper: Update a single stage field atomically.
@@ -58,11 +63,18 @@ const documentWorker = new Worker(
       let extractedText = '';
 
       if (doc.type === 'pdf') {
-        const data = await pdf(fileBuffer);
+        const parser = new PDFParse({ data: fileBuffer });
+        const data = await parser.getText();
         extractedText = data.text;
+        await parser.destroy();
       } else {
         const base64 = fileBuffer.toString('base64');
-        extractedText = await AIService.transcribeImage(base64);
+        const extension = fileKey.split('.').pop().toLowerCase();
+        let mimeType = 'image/jpeg';
+        if (extension === 'png') mimeType = 'image/png';
+        else if (extension === 'webp') mimeType = 'image/webp';
+        
+        extractedText = await AIService.transcribeImage(base64, mimeType);
       }
 
       if (!extractedText || extractedText.trim().length === 0) {
@@ -86,7 +98,7 @@ const documentWorker = new Worker(
         const understandingPrompt = buildDocumentUnderstandingPrompt(chunks);
         const aiResponse = await AIService.callGroqWithRetry(
           [{ role: 'user', content: understandingPrompt }],
-          GROQ_MODELS.smart
+          GROQ_MODELS.fast
         );
 
         const understanding = parseAIJson(aiResponse, { topics: [], summary: '' });

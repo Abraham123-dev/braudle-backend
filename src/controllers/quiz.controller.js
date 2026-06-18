@@ -4,7 +4,7 @@ import Quiz from '../models/Quiz.model.js';
 import Session from '../models/Session.model.js';
 import Document from '../models/Document.model.js';
 import * as QuizService from '../services/quiz.service.js';
-import * as HuggingFaceService from '../services/huggingface.service.js';
+import * as AIService from '../services/ai.service.js';
 import * as ProfileService from '../services/profile.service.js';
 import { calculateScore } from '../utils/scoreCalculator.js';
 
@@ -93,7 +93,7 @@ export const generateCustomAssessment = asyncHandler(async (req, res) => {
   const session = await Session.create({
     userId,
     documentId,
-    mode: format === 'theory' || difficulty === 'expert' ? 'exam' : 'quiz',
+    mode: format === 'theory' || difficulty === 'expert' ? 'prepare' : 'practice',
     status: 'active'
   });
 
@@ -143,6 +143,38 @@ export const submitQuiz = asyncHandler(async (req, res) => {
     throw new AppError('Quiz has already been submitted', 400);
   }
 
+  // Helper for fast programmatic grading of MCQ/TrueFalse questions
+  const gradeMcqOrTrueFalse = (studentAns, correctAns) => {
+    if (!studentAns || !correctAns) return false;
+    const cleanStudent = studentAns.trim().toLowerCase();
+    const cleanCorrect = correctAns.trim().toLowerCase();
+
+    if (cleanStudent === cleanCorrect) return true;
+
+    if (cleanCorrect === 'true' || cleanCorrect === 'false') {
+      if (cleanStudent === 't' && cleanCorrect === 'true') return true;
+      if (cleanStudent === 'f' && cleanCorrect === 'false') return true;
+      return false;
+    }
+
+    const getLetterPrefix = (str) => {
+      const match = str.match(/^([a-d])\s*[\.\)]/i);
+      return match ? match[1].toLowerCase() : null;
+    };
+
+    const studentPrefix = getLetterPrefix(studentAns);
+    const correctPrefix = getLetterPrefix(correctAns);
+
+    if (studentPrefix && correctPrefix && studentPrefix === correctPrefix) return true;
+    if (studentAns.length === 1 && correctPrefix && cleanStudent === correctPrefix) return true;
+    if (correctAns.length === 1 && studentPrefix && cleanCorrect === studentPrefix) return true;
+
+    const stripPrefix = (str) => str.replace(/^([a-d])\s*[\.\)]\s*/i, '').trim().toLowerCase();
+    if (stripPrefix(studentAns) === stripPrefix(correctAns)) return true;
+
+    return false;
+  };
+
   // Grade each answer in parallel
   await Promise.all(quiz.questions.map(async (q) => {
     const studentSubmission = answers.find(a => a.questionId.toString() === q._id.toString());
@@ -150,20 +182,24 @@ export const submitQuiz = asyncHandler(async (req, res) => {
     if (studentSubmission) {
       q.studentAnswer = studentSubmission.answer;
 
-      const similarity = await HuggingFaceService.checkAnswerSimilarity(
-        q.studentAnswer,
-        q.answer
-      );
-
       if (q.type === 'mcq' || q.type === 'true_false') {
-        q.isCorrect = similarity === 'correct';
+        q.isCorrect = gradeMcqOrTrueFalse(q.studentAnswer, q.answer);
+        q.feedback = q.isCorrect 
+          ? "Excellent! Your answer is correct." 
+          : `Incorrect. The correct option was: ${q.answer}.`;
       } else {
-        // Theory: mark correct if 'correct' or 'partial'
-        q.isCorrect = similarity === 'correct' || similarity === 'partial';
+        const result = await AIService.evaluateTheoryAnswer(
+          q.question,
+          q.studentAnswer,
+          q.answer
+        );
+        q.isCorrect = result.evaluation === 'correct' || result.evaluation === 'partial';
+        q.feedback = result.feedback;
       }
     } else {
       q.studentAnswer = '';
       q.isCorrect = false;
+      q.feedback = 'No answer was submitted for this question.';
     }
   }));
 
