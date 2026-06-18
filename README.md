@@ -1,430 +1,282 @@
-# BRAUDLE Backend
+# BRAUDLE Backend 🚀
 
-AI-powered personal tutor web application. Transforms uploaded study materials into interactive, adaptive learning experiences.
+BRAUDLE is an AI-powered personal tutor web application that transforms uploaded study materials (PDFs, notes, images) into interactive, adaptive learning experiences. It teaches, questions, evaluates, and personalizes lessons for every student — acting as a 24/7 private tutor that lives inside your notes.
 
-## What is BRAUDLE?
+This repository hosts the Node.js / Express backend API, database adapters, Redis caching systems, and the background document ingestion pipeline.
 
-BRAUDLE is an educational platform that:
-- Accepts PDF and image uploads of study materials
-- Uses AI (Groq) to teach content step-by-step
-- Generates quizzes from uploaded documents
-- Evaluates student answers intelligently
-- Adapts difficulty based on student performance
-- Tracks learning progress and weak/strong topics
+---
 
-## Tech Stack
+## ⚡ Tech Stack & Architecture
 
-Backend: Node.js + Express.js (JavaScript)
-Database: MongoDB + Mongoose
-Caching & Queues: Redis + BullMQ
-AI Models: Groq (teaching) + Hugging Face (evaluation)
-Auth: Google OAuth 2.0 + JWT
-File Storage: AWS S3 or Cloudflare R2
-Containerization: Docker + Docker Compose
+* **Runtime & Framework**: Node.js (ES Modules) + Express.js
+* **Database**: MongoDB Atlas + Mongoose
+* **Caching & Queue**: Redis (ioredis) + BullMQ (For background extraction & processing)
+* **File Storage**: Cloudflare R2 (S3-compatible Object Storage) with **Direct-to-Storage presigned PUT & Multipart Uploads**
+* **AI Models (Groq Cloud)**:
+  * **Groq Smart** (`llama-3.3-70b-versatile`): High-reasoning chat completions, exam evaluation, advanced tutoring, and flashcard generation.
+  * **Groq Fast** (`llama-3.1-8b-instant`): High-speed teaching, summary generation, intent classification, active recall check questions, and theory quiz grading.
+  * **Groq Vision** (`qwen/qwen3.6-27b`): Handwriting/Image transcription and OCR.
+  * *Note: Hugging Face inference has been fully retired in favor of local scoring and high-performance Groq completions.*
 
-## Project Structure
+### AI Model Routing Configuration
+The backend routes specialized tasks to the most efficient model matching the complexity:
+* **Groq Smart (`llama-3.3-70b-versatile`)**: `teachChunk`, `correctMisconception`, `generateQuiz`, `flashcards`.
+* **Groq Fast (`llama-3.1-8b-instant`)**: `detectConfusion`, `generateCheckQuestion`, `sessionSummary`, `evaluateAnswer`, `classifyIntent`.
+* **Groq Vision (`qwen/qwen3.6-27b`)**: `transcribeHandwriting`.
 
+---
+
+## 📁 Project Structure
+
+```text
+braudle-backend/
+├── server.js                 # ⭐ Entry point — starts server and establishes DB connections
+├── src/
+│   ├── app.js              # Express app configuration, security middleware, and routes setup
+│   ├── config/             # Environment, Database, Redis, and Model configurations
+│   ├── controllers/        # HTTP request handlers (auth, documents, sessions, quizzes, dashboard)
+│   ├── middleware/         # Auth verification, rate limiting, error handlers, and schemas validation
+│   ├── models/             # MongoDB Mongoose schemas (User, StudentProfile, Document, Session, Quiz, etc.)
+│   ├── queues/             # BullMQ queue definitions
+│   ├── routes/             # REST route definitions
+│   ├── services/           # Isolated business logic (AI client, storage helpers, email template)
+│   ├── utils/              # Helper functions, custom error classes, caching coalescing wrapper
+│   ├── validators/         # Zod schemas for input validation
+│   ├── workers/            # BullMQ background workers (Document text & OCR parser worker)
+│   └── types/              # JSDoc type definitions
+├── docs/                   # Architectural guides and reference documentation
+├── api_endpoints_documentation.md # Single source of truth for REST endpoints
+└── README.md               # This README
 ```
-src/
-  config/          Environment variables, DB, Redis setup
-  models/          MongoDB schemas (User, StudentProfile, Document, etc)
-  services/        Business logic (AI, quiz, ingestion, profile management)
-  controllers/     HTTP request handlers
-  routes/          API endpoint definitions
-  middleware/      Authentication, validation, rate limiting, error handling
-  utils/           Reusable functions (cache, prompt builder, chunker, scoring)
-  workers/         Background job processors (PDF extraction)
-  queues/          BullMQ queue definitions
-  validators/      Zod schemas for input validation
-  types/           JSDoc type definitions
+
+---
+
+## 🐳 Docker Architecture & Setup
+
+The project includes Docker files optimized for both local development and production-ready deployments.
+
+### Services Configuration (`docker-compose.yml`)
+1. **`backend`**: Node.js app built from the local `Dockerfile`.
+   - Exposes port `5000`.
+   - Mounts `/app/src` to `./src` for local hot-reloading.
+   - Automatically loads environments from `.env` via `env_file`.
+   - Depends on `mongo` and `redis` services.
+2. **`mongo`**: Official MongoDB image `mongo:7`.
+   - Exposes port `27017`.
+   - Persists data locally on a named volume `mongo_data`.
+3. **`redis`**: High-performance Redis container `redis:7-alpine`.
+   - Exposes port `6379`.
+   - Persists key data on a named volume `redis_data`.
+
+### Run via Docker Compose
+To build and spin up the complete backend stack (API server, MongoDB, and Redis) locally:
+```bash
+docker-compose up --build
+```
+*To run in the background (detached mode):*
+```bash
+docker-compose up -d
+```
+*To stop the containers and keep data volumes intact:*
+```bash
+docker-compose down
 ```
 
-## Setup Instructions
+### Production Docker Image Building
+The `Dockerfile` is built using a secure multi-stage-like approach with a non-privileged user:
+1. Base Image: `node:20-alpine` (lightweight, secure).
+2. Sets `ENV NODE_ENV=production`.
+3. Installs only production dependencies using `npm ci --only=production` to keep the image slim.
+4. Creates a custom, unprivileged user `braudle` to run the server (mitigating container breakout risks).
+```bash
+docker build -t braudle-backend:latest .
+```
 
-### Prerequisites
+---
 
-- Node.js 18+ installed
-- MongoDB running locally or Atlas URL
-- Redis running locally or cloud Redis URL
-- Docker Desktop (optional, for containerization)
+## 🗄️ Database Collections & Schemas
+
+The application database is built on MongoDB Atlas. Schemas are defined using Mongoose:
+
+### 1. User (`User.model.js`)
+Stores user authentication profile data and tracks upload quotas.
+* `googleId` (String, unique, sparse index): Unique identifier from Google OAuth.
+* `name` (String, required): Display name of the user.
+* `email` (String, required, unique, index): Lowercase email address.
+* `avatar` (String): URL of the user's profile image.
+* `authProvider` (String): `'google'` or `'email'`.
+* `role` (String): `'student'` or `'admin'` (defaults to `'student'`).
+* `uploadCount` (Object): Subfields `{ pdf: Number, image: Number }` to track daily usage quotas.
+* `lastUploadDate` (Date): Tracks the date of the user's last uploaded document for daily quota resets.
+* `onboardingComplete` (Boolean): Flag representing whether the user has finished profile configuration.
+
+### 2. StudentProfile (`StudentProfile.model.js`)
+Maintains the student's learning history, strengths, weaknesses, and gaming attributes.
+* `userId` (ObjectId, ref: 'User', unique, required): Reference to the owner.
+* `level` (String): `'beginner'`, `'intermediate'`, or `'advanced'`.
+* `studyLevel` (String): Academic grade or level (e.g. "University Year 1").
+* `learningStyle` (String): Chosen tutoring delivery method (e.g. `'explain_first'`).
+* `goal` (String): Target goal or exam.
+* `weakTopics` (Array of Strings): Topics the AI analyst determined the student struggles with.
+* `strongTopics` (Array of Strings): Topics the student has demonstrated competence in.
+* `recentScores` (Array of Numbers): Last 5 quiz scores for level updates.
+* `misconceptionHistory` (Array of Objects): Details of student mistakes, linking to `Session`.
+* `xp` (Number): Gamified Experience Points earned by answering questions.
+* `streak` & `longestStreak` (Numbers): Active consecutive daily study count.
+* `learningHistory` (Array of Objects): Snapshot logs of past session outcomes.
+
+### 3. Document (`Document.model.js`)
+Represents uploaded study materials and their AI-extracted semantic details.
+* `userId` (ObjectId, ref: 'User', index): Document owner.
+* `title` (String, required): User-facing filename or label.
+* `subject` (String): Subject category.
+* `type` (String): `'pdf'` or `'image'`.
+* `fileUrl` (String): Final URL location of the file in Cloudflare R2.
+* `fileKey` (String): R2 object identifier key.
+* `processingStatus` (String): `'pending'`, `'processing'`, `'ready'`, or `'failed'`.
+* `processingStage` (String): Granular stages (`'file_received'`, `'extracting_content'`, `'identifying_concepts'`, `'building_learning_map'`, `'preparing_tutor'`, `'ready'`, `'failed'`).
+* `rawText` (String): Whole text extracted from the document.
+* `chunks` (Array of Strings): Slide-window text segments optimized for AI tutoring context.
+* `topics` (Array of Strings): Primary topics extracted from the document.
+* `summary` (String): General summary of the document.
+* `misconceptions` (Array of Objects): Unresolved misconceptions attached to this specific material.
+* `aiUnderstandingFailed` (Boolean): Set to `true` if AI summary fails, keeping the text chunks functional for chat tutoring.
+
+### 4. Session (`Session.model.js`)
+Represents an active or historical study engagement between the tutor and the student.
+* `userId` (ObjectId, ref: 'User'): Participant.
+* `documentId` (ObjectId, ref: 'Document'): Material being studied.
+* `mode` (String): Active learning action (`'understand'`, `'review'`, `'practice'`, `'prepare'`, `'ask'`, `'flashcards'`).
+* `status` (String): `'active'`, `'completed'`, or `'abandoned'`.
+* `currentChunkIndex` (Number): Index of the chunk currently being focused on.
+* `score` (Number): Latest score attained in this session.
+* `summary` (String): AI-generated post-session summary.
+* `mentorSuggestions` (Array of Strings): Actionable learning directions suggested by the AI tutor.
+
+### 5. Quiz (`Quiz.model.js`)
+Maintains quizzes generated for study materials and student submission reviews.
+* `sessionId` (ObjectId, ref: 'Session'): Associated study session.
+* `documentId` (ObjectId, ref: 'Document'): Material source.
+* `questions` (Array of Objects): Array containing:
+  - `topic` (String)
+  - `question` (String)
+  - `type` (`'mcq'`, `'true_false'`, or `'theory'`)
+  - `options` (Array of Strings - MCQ only)
+  - `answer` (String - hidden until submission)
+  - `explanation` (String - hidden until submission)
+  - `studentAnswer` (String)
+  - `isCorrect` (Boolean)
+  - `feedback` (String)
+* `totalQuestions` (Number): Length of the quiz.
+* `score` (Number): Final score achieved (out of 100).
+
+### 6. Conversation (`Conversation.model.js`)
+Saves chat history for restoring the frontend chat user interface.
+* `sessionId` (ObjectId, ref: 'Session'): Connected session.
+* `userId` (ObjectId, ref: 'User'): Student.
+* `messages` (Array of Objects): Array of `{ role: 'user'|'assistant'|'system', content: String, timestamp: Date }`.
+
+### 7. RefreshToken (`RefreshToken.model.js`)
+Tracks rotated refresh tokens to securely persist login sessions.
+* `userId` (ObjectId, ref: 'User'): Token owner.
+* `token` (String, unique): Token value.
+* `expiresAt` (Date): Absolute expiration time.
+* `revokedAt` (Date): Time token was manually invalidated or rotated out.
+
+---
+
+## 🛠️ Getting Started (Bare Metal Setup)
 
 ### 1. Install Dependencies
-
 ```bash
 npm install
 ```
 
 ### 2. Configure Environment Variables
-
-Create a `.env` file in the root directory:
-
-```env
-# Server
-PORT=5000
-NODE_ENV=development
-
-# Database
-MONGODB_URI=mongodb://localhost:27017/braudle
-
-# Redis
-REDIS_URL=redis://localhost:6379
-
-# JWT
-JWT_SECRET=your_jwt_secret_here_at_least_32_chars
-
-# AI APIs
-GROQ_API_KEY=gsk_your_groq_key_here
-HUGGINGFACE_API_KEY=hf_your_hugging_face_token_here
-
-# Auth (Google OAuth)
-GOOGLE_CLIENT_ID=your_google_client_id_here
-GOOGLE_CLIENT_SECRET=your_google_client_secret_here
-
-# File Storage
-AWS_ACCESS_KEY_ID=your_aws_key_here
-AWS_SECRET_ACCESS_KEY=your_aws_secret_here
-AWS_S3_BUCKET=braudle-documents
-AWS_REGION=us-east-1
-
-# Frontend URL
-FRONTEND_URL=http://localhost:3000
-```
-
-### 3. Get API Keys
-
-#### Groq API Key
-1. Go to https://console.groq.com
-2. Sign up or login
-3. Create new API key
-4. Copy key (starts with gsk_)
-
-#### Hugging Face API Token
-1. Go to https://huggingface.co
-2. Sign up or login
-3. Go to Settings > Access Tokens
-4. Create new token (type: read)
-5. Copy token (starts with hf_)
-
-#### Google OAuth Credentials
-1. Go to https://console.cloud.google.com
-2. Create new project
-3. Create OAuth 2.0 Client ID (Web Application)
-4. Add authorized redirect URIs:
-   - http://localhost:3000/api/auth/callback/google
-   - http://localhost:5000/api/auth/google/callback
-5. Copy Client ID and Client Secret
-
-### 4. Run the Application
-
-Option A: Local development (requires MongoDB and Redis running)
-```bash
-npm run dev
-```
-
-Option B: Docker (includes MongoDB and Redis)
-```bash
-docker-compose up
-```
-
-Server will start on http://localhost:5000
-Health check endpoint: GET http://localhost:5000/api/health
-
-## Key Systems Explained
-
-### Authentication
-- Google OAuth 2.0 only (no passwords)
-- JWT stored in httpOnly cookies (secure, XSS-proof)
-- All protected routes require valid JWT
-
-### File Processing Pipeline
-1. Student uploads PDF/image (max 50MB)
-2. Multer validates file type and size
-3. File stored in AWS S3 or Cloudflare R2
-4. BullMQ background job created
-5. PDF text extracted (pdf-parse library)
-6. Text split into chunks (~500 tokens each)
-7. Chunks stored in MongoDB Document
-8. Student can start learning immediately
-
-### Adaptive Learning
-- Tracks student level: beginner, intermediate, advanced
-- Records weak and strong topics
-- Calculates average quiz score
-- Automatically upgrades level when avg score >= 80% over 3+ sessions
-- Future lessons adapt based on current level
-
-### AI Teaching Flow
-1. Student selects learning mode (Teach, Quiz, Breakdown)
-2. Backend builds 5-layer prompt:
-   - Role: "You are a kind tutor"
-   - Student context: Current level and learning mode
-   - Content: Document chunk to teach
-   - History: Last 8 exchanges (conversation context)
-   - Rules: Specific instructions for the mode
-3. Prompt sent to Groq API
-4. Response streamed back to student via SSE
-5. Conversation history saved in MongoDB
-
-### Answer Evaluation
-- Simple answers: Hugging Face embeddings (fast, free)
-  - Compare student answer to correct answer
-  - Similarity score 0-1
-  - Threshold: 0.85 = correct, 0.60-0.85 = partial, <0.60 = wrong
-- Complex answers: Groq LLM (when needed)
-- Result: 90% cost reduction by avoiding LLM calls
-
-### Rate Limiting
-- Global: 100 requests per 15 minutes
-- Per-feature: 2 PDF uploads per day, 5 image uploads per day
-- Tracked in Redis and MongoDB User.uploadCount
-
-### Caching Strategy
-- Document chunks cached in Redis (1 hour expiry)
-- Conversation state cached
-- Cache invalidation on document updates
-- Zero-cache fallback to MongoDB
-
-### Background Processing
-- BullMQ workers process heavy tasks asynchronously
-- PDF extraction doesn't block HTTP response
-- Student gets job ID immediately
-- Poll status endpoint for completion
-- Results available once processing done
-
-## API Endpoints Overview
-
-### Authentication
-- POST /api/auth/google - Google OAuth callback
-- POST /api/auth/logout - Logout
-
-### Documents
-- GET /api/documents - List user's documents
-- POST /api/documents - Upload new document
-- GET /api/documents/:id - Get document details
-- GET /api/documents/:id/status - Check processing status
-- DELETE /api/documents/:id - Delete document
-
-### Teaching
-- POST /api/teach/start - Start teaching session
-- POST /api/teach/stream - Stream AI response
-- POST /api/teach/answer - Student submits answer
-
-### Quiz
-- POST /api/quiz/generate - Generate quiz from document
-- POST /api/quiz/submit - Submit quiz answers
-- GET /api/quiz/results/:sessionId - Get quiz results
-
-### Student Profile
-- GET /api/profile - Get student profile
-- PATCH /api/profile - Update profile settings
-- GET /api/profile/progress - Get learning progress
-
-### Health
-- GET /api/health - Health check
-
-## Error Handling
-
-All errors follow a consistent format:
-```json
-{
-  "success": false,
-  "error": "Error message here",
-  "statusCode": 400
-}
-```
-
-Status codes:
-- 200: Success
-- 400: Bad request (validation failed)
-- 401: Unauthorized (missing/invalid JWT)
-- 403: Forbidden (not allowed)
-- 404: Not found
-- 429: Too many requests (rate limited)
-- 500: Server error
-
-Development mode shows full stack traces. Production mode shows generic messages.
-
-## Development
-
-### Running Tests
-```bash
-npm test
-```
-
-### Linting
-```bash
-npm run lint
-```
-
-### Building for Production
-```bash
-npm run build
-```
-
-### Production Start
-```bash
-npm start
-```
-
-## Database Collections
-
-### User
-- googleId (unique)
-- name
-- email
-- avatar
-- role (student, admin, teacher)
-- uploadCount (tracks daily uploads)
-- createdAt, updatedAt
-
-### StudentProfile
-- userId (reference to User)
-- level (beginner, intermediate, advanced)
-- weakTopics (array)
-- strongTopics (array)
-- totalSessions
-- averageScore
-- learningHistory (array of session results)
-- createdAt
-
-### Document
-- userId (owner)
-- title
-- type (pdf, image, audio, text)
-- fileUrl (S3 location)
-- rawText (extracted text)
-- chunks (array of text segments)
-- processingStatus (pending, processing, ready, failed)
-- subject (optional)
-- createdAt
-
-### Conversation
-- userId
-- documentId
-- messages (array of {role, content})
-- sessionId
-- createdAt, updatedAt
-
-### Quiz
-- userId
-- documentId
-- questions (array of question objects)
-- studentAnswers (array of responses)
-- score (0-100)
-- createdAt
-
-### Session
-- userId
-- documentId
-- mode (teach, quiz, breakdown)
-- startedAt
-- endedAt
-- score
-- topicsLearned
-- misconceptionsDetected
-
-## Docker Deployment
-
-The project includes Docker configuration for local development and production.
-
-### Local Development with Docker
-```bash
-docker-compose up
-```
-
-This starts:
-- Backend service (port 5000)
-- MongoDB service (port 27017)
-- Redis service (port 6379)
-
-### Production Deployment
-1. Build image: `docker build -t braudle-backend:latest .`
-2. Tag for registry: `docker tag braudle-backend:latest your-registry/braudle-backend:latest`
-3. Push to registry: `docker push your-registry/braudle-backend:latest`
-4. Deploy using docker-compose or Kubernetes
-
-## Security Considerations
-
-- All API keys stored in environment variables, never hardcoded
-- JWT tokens in httpOnly cookies only (not localStorage)
-- Input validation on all POST/PATCH routes using Zod
-- MongoDB injection prevention via express-mongo-sanitize
-- Rate limiting on all user-action endpoints
-- CORS enabled only for frontend URL
-- Helmet middleware for HTTP security headers
-- No stack traces exposed in production
-
-## Performance Optimization
-
-- Redis caching for frequently accessed data
-- BullMQ for background processing to prevent timeouts
-- Hugging Face for cheap answer evaluation (no LLM calls)
-- Conversation history trimmed to 8 exchanges
-- Document chunks (~500 tokens) optimized for LLM processing
-- Connection pooling for MongoDB and Redis
-
-## Troubleshooting
-
-### MongoDB Connection Failed
-- Ensure MongoDB is running: `mongod`
-- Check MONGODB_URI in .env
-- If using MongoDB Atlas, whitelist your IP
-
-### Redis Connection Failed
-- Ensure Redis is running: `redis-server`
-- Check REDIS_URL in .env
-- If using cloud Redis, check connection string
-
-### Groq API Key Invalid
-- Verify key starts with `gsk_`
-- Check key is not expired
-- Regenerate key if needed
-
-### Background Jobs Not Processing
-- Check Redis is running
-- Verify BullMQ can connect to Redis
-- Check worker logs for errors
-
-### File Upload Fails
-- Check AWS S3 credentials
-- Verify bucket exists and is accessible
-- Check file size doesn't exceed 50MB
-
-## Contributing
-
-1. Follow the folder structure conventions
-2. Place business logic in services, not controllers
-3. Use Zod for input validation
-4. Use AppError for expected errors
-5. Use asyncHandler for all async routes
-6. Write clear commit messages
-7. Test locally before pushing
-
-## License
-
-Proprietary - BRAUDLE
-
-## Support
-
-For issues or questions, contact the development team or check documentation in the docs/ folder.
-
-## MVP Scope
-
-Phase 1 includes:
-- Google OAuth login
-- PDF and image upload
-- AI teaching with multiple modes
-- Quiz generation and evaluation
-- Adaptive level management
-- Session tracking and progress
-
-Phase 2 (future):
-- Voice tutor
-- Collaborative study rooms
-- Study pack marketplace
-- Advanced analytics dashboard
+Create a local `.env` file (copied from `.env.example`) and supply values for:
+* Database (`MONGODB_URI` and `REDIS_URL`)
+* Session Encryption (`JWT_SECRET`)
+* Google OAuth (`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`, and `GOOGLE_CALLBACK_URL`)
+* Cloudflare R2 Credentials (`CF_ACCOUNT_ID`, `CF_R2_ACCESS_KEY`, etc.)
+* Resend Mailer API (`RESEND_API_KEY`)
+* Groq API (`GROQ_API_KEY`)
+
+### 3. Run the Backend Stack
+You **must** start both the Express REST server and the BullMQ worker in separate terminals:
+* **Terminal 1 - REST server (Development mode with nodemon)**:
+  ```bash
+  npm run dev
+  ```
+* **Terminal 2 - Ingestion Worker (Processes background tasks)**:
+  ```bash
+  npm run worker
+  ```
 
 ---
 
-Last Updated: May 2026
-Version: 1.0
+## 🧠 Key Features & Systems
+
+### 1. Direct-to-Storage R2 Ingestion
+To prevent server bottlenecks, BRAUDLE bypasses the backend for file transfers.
+* **PUT Uploads**: Standard files (<10MB) request a presigned R2 PUT URL, upload directly, and confirm.
+* **Multipart Chunked Uploads**: Large PDFs (>10MB) are split on the client and uploaded in parallel using chunk-specific presigned URLs before being assembled.
+* **Rate Limits**: Rate limits (2 PDFs and 5 images per day) are enforced atomically in MongoDB to prevent TOCTOU races.
+* **Storage Cleanup**: Deleting a document calls a background hook to delete the resource from R2 and removes the database entries.
+
+### 2. Production-Grade Caching & Resiliency
+Redis is leveraged to store active streams, student profiles, generated quizzes, and tutor explanations.
+* **Promise Coalescing**: Uses a `getOrSet` wrapper to prevent cache stampedes. Overlapping requests for un-cached keys share a single flight promise.
+* **Circuit Breaker**: If Redis connection failures consecutive cross 5, a circuit breaker trips, bypassing Redis cache for 30s to keep HTTP latency low.
+* **Key Namespacing**: Keys are versioned with a `v1:` namespace to prevent stale schema crashes on redeploy.
+* **Timeout Protection**: `commandTimeout` and `connectTimeout` are set to `5000ms` to avoid startup hangs.
+
+### 3. Adaptive Learning & Goal Realignment
+Sessions are anchored to 6 distinct learning modes aligned with the student's level (`beginner`, `intermediate`, `advanced`):
+1. `understand` (breaks down complex concepts and details)
+2. `review` (summarizes notes and concepts)
+3. `practice` (asks active recall questions with feedback)
+4. `prepare` (runs simulated mock exams)
+5. `ask` (direct Q&A tutor chat)
+6. `flashcards` (quick review deck revisions, maximum of 5 cards per session)
+
+### 4. Smart Quiz Evaluation
+* **MCQs / True-False**: Graded instantly on the backend for zero token cost, returning friendly, positive feedback.
+* **Theory Questions**: Evaluated by Groq Llama 3.1 8B, returning a graded score along with non-generic, student-facing feedback explaining the reasoning behind the grade.
+
+---
+
+## 📄 API & System Documentation
+
+* **Detailed REST Contracts**: Detailed specifications for all 27+ endpoints are available in [api_endpoints_documentation.md](api_endpoints_documentation.md).
+* **Upload Ingestion Architectures**: Direct-to-Storage integration contracts are outlined in [docs/upload_system_architecture.md](docs/upload_system_architecture.md).
+
+---
+
+## 🔒 Security & Best Practices
+
+* **JWT Cookies**: Authentication uses `httpOnly` secure cookies (`braudle_token` and `braudle_refresh`) to prevent XSS attacks.
+* **Ownership Checks**: Enforced at the route controller level for all document, session, and quiz operations.
+* **Rate Limiting**: Rate limits are enforced on critical paths (e.g. Magic Link requests, AI generation, and quiz completions).
+* **Sanitization**: All inputs are checked using `zod` validation schemas, and MongoDB parameters are sanitized with `express-mongo-sanitize`.
+
+---
+
+## 🔧 Troubleshooting
+
+### MongoDB Connection Failures
+* Ensure MongoDB is running locally or check your `MONGODB_URI` string.
+* **IP Whitelisting**: If using MongoDB Atlas, make sure your current external IP is added in the Network Access tab of your Atlas cluster.
+
+### Redis Connection Timed Out
+* Ensure Redis is active: `redis-server`.
+* If Redis goes offline, the backend circuit breaker will trip, and server will fall back to querying MongoDB directly to preserve uptime.
+
+### Ingestion Worker Hanging in Pending Stage
+* The ingestion worker runs as a separate process. Make sure `npm run worker` is active.
+* **Mongoose Buffering**: Mongoose buffers commands when disconnected. Adding top-level `await connectDB()` in the worker ensures background tasks do not hang indefinitely waiting for database connection resolution.
+
+---
+
+*Last Updated: June 2026*  
+*Version: 1.1.0*  
+*License: Proprietary - BRAUDLE*

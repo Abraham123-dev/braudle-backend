@@ -1,4 +1,4 @@
-import { redisClient } from '../config/redis.js';
+import { redisClient, isRedisHealthy } from '../config/redis.js';
 
 /**
  * Sets a value in Redis with an optional TTL
@@ -7,6 +7,9 @@ import { redisClient } from '../config/redis.js';
  * @param {number} ttl - Time to live in seconds (default 24h)
  */
 export const setCached = async (key, value, ttl = 86400) => {
+  if (!isRedisHealthy()) {
+    return;
+  }
   try {
     const stringValue = typeof value === 'string' ? value : JSON.stringify(value);
     await redisClient.set(key, stringValue, 'EX', ttl);
@@ -21,6 +24,9 @@ export const setCached = async (key, value, ttl = 86400) => {
  * @returns {any|null}
  */
 export const getCached = async (key) => {
+  if (!isRedisHealthy()) {
+    return null;
+  }
   try {
     const value = await redisClient.get(key);
     if (!value) return null;
@@ -36,7 +42,14 @@ export const getCached = async (key) => {
   }
 };
 
+/**
+ * Deletes a value from Redis
+ * @param {string} key 
+ */
 export const deleteCached = async (key) => {
+  if (!isRedisHealthy()) {
+    return;
+  }
   try {
     await redisClient.del(key);
   } catch (err) {
@@ -44,13 +57,53 @@ export const deleteCached = async (key) => {
   }
 };
 
+// Map to track in-flight fetch promises (Promise Coalescing)
+const activeRequests = new Map();
+
+/**
+ * Promise Coalescing Wrapper (Cache Stampede / Thundering Herd Prevention)
+ * If multiple concurrent requests ask for the same key, they await the same promise
+ * instead of invoking fetchFn() multiple times.
+ */
+export const getOrSet = async (key, fetchFn, ttl = 86400) => {
+  // 1. Check if the key is already warm in Redis
+  const cached = await getCached(key);
+  if (cached !== null) {
+    return cached;
+  }
+
+  // 2. Check if there's already an active database/LLM operation in-flight
+  if (activeRequests.has(key)) {
+    console.log(`[CACHE] Stampede prevented. Coalescing request for key: ${key}`);
+    return activeRequests.get(key);
+  }
+
+  // 3. Initiate single-flight request
+  const requestPromise = (async () => {
+    try {
+      const freshValue = await fetchFn();
+      if (freshValue !== null && freshValue !== undefined) {
+        await setCached(key, freshValue, ttl);
+      }
+      return freshValue;
+    } finally {
+      activeRequests.delete(key);
+    }
+  })();
+
+  activeRequests.set(key, requestPromise);
+  return requestPromise;
+};
+
 export const CACHE_KEYS = {
-  TEACH:                (docId, chunkIdx, level) => `teach:${docId}:${chunkIdx}:${level}`,
-  QUIZ:                 (documentId) => `quiz:${documentId}`,
-  PROFILE:             (userId) => `profile:${userId}`,
-  EMBED:               (docId, chunkIdx) => `embed:${docId}:${chunkIdx}`,
-  ACTIVE_STREAM:       (userId) => `ai:stream:${userId}`,
-  DASHBOARD_PERF:      (userId) => `dashboard:perf:${userId}`,
+  TEACH:                (docId, chunkIdx, level) => `v1:teach:${docId}:${chunkIdx}:${level}`,
+  QUIZ:                 (documentId) => `v1:quiz:${documentId}`,
+  QUIZ_GENERATED:       (documentId, level, count) => `v1:quiz:${documentId}:${level}:${count}`,
+  QUIZ_CUSTOM:          (documentId, difficulty, format, numQuestions) => `v1:custom_quiz:${documentId}:${difficulty}:${format}:${numQuestions}`,
+  PROFILE:             (userId) => `v1:profile:${userId}`,
+  EMBED:               (docId, chunkIdx) => `v1:embed:${docId}:${chunkIdx}`,
+  ACTIVE_STREAM:       (userId) => `v1:ai:stream:${userId}`,
+  DASHBOARD_PERF:      (userId) => `v1:dashboard:perf:${userId}`,
 };
 
 // Centralised TTL constants (seconds) — change once, applied everywhere
@@ -60,4 +113,4 @@ export const CACHE_TTL = {
   PROFILE:    300,     // 5min — profile changes after quiz/XP, stale-safe window
   DASHBOARD:  300,     // 5min — aggregation is expensive, fine to lag slightly
   STREAM:     300,     // 5min — safety TTL on the stream concurrency lock
-};
+};

@@ -12,68 +12,68 @@ import { GROQ_MODELS } from '../config/models.js';
  * @param {number} count - Question count
  */
 export const generateQuiz = async (documentId, profile, count = 5) => {
-  // 1. Generate a stable cache key
-  // Quiz content depends on: Document + Student Level + Question Count
-  const cacheKey = `quiz:${documentId}:${profile.level}:${count}`;
+  // 1. Generate a versioned cache key
+  const cacheKey = Cache.CACHE_KEYS.QUIZ_GENERATED(documentId, profile.level, count);
 
-  // 2. Try to hit cache first
-  const cachedQuiz = await Cache.getCached(cacheKey);
-  if (cachedQuiz) {
-    return cachedQuiz;
-  }
+  // 2. Wrap quiz generation in getOrSet for coalesced, cached retrieval
+  return await Cache.getOrSet(
+    cacheKey,
+    async () => {
+      const document = await Document.findById(documentId);
+      if (!document || !document.chunks || document.chunks.length === 0) {
+        throw new AppError('Document content not ready for quiz generation', 400);
+      }
 
-  // 3. Fetch document content
-  const document = await Document.findById(documentId);
-  if (!document || !document.chunks || document.chunks.length === 0) {
-    throw new AppError('Document content not ready for quiz generation', 400);
-  }
+      const prompt = buildQuizPrompt(document.chunks, profile, count);
+      const messages = [{ role: 'system', content: prompt }];
+      const response = await AIService.callGroqWithRetry(messages, GROQ_MODELS.smart);
 
-  // 4. Build prompt and call Groq (using the Smart model for deep reasoning)
-  const prompt = buildQuizPrompt(document.chunks, profile, count);
-  const messages = [{ role: 'system', content: prompt }];
-
-  const response = await AIService.callGroqWithRetry(messages, GROQ_MODELS.smart);
-
-  try {
-    // 5. Clean AI response and parse JSON (strips potential markdown backticks)
-    const cleanJson = response.replace(/```json|```/g, '').trim();
-    const quizData = JSON.parse(cleanJson);
-
-    // 6. Cache the result for 24 hours (86400 seconds)
-    await Cache.setCached(cacheKey, quizData, 86400);
-
-    return quizData;
-  } catch (err) {
-    console.error('[QUIZ] Generation/Parse error:', err.message);
-    throw new AppError('Failed to generate a valid quiz. Please try again.', 500);
-  }
+      try {
+        const cleanJson = response.replace(/```json|```/g, '').trim();
+        return JSON.parse(cleanJson);
+      } catch (err) {
+        console.error('[QUIZ] Generation/Parse error:', err.message);
+        throw new AppError('Failed to generate a valid quiz. Please try again.', 500);
+      }
+    },
+    Cache.CACHE_TTL.QUIZ
+  );
 };
 
 /**
  * Generates a custom practice exam/quiz with specific parameters
  */
 export const generateCustomAssessment = async (documentId, options) => {
-  // Using a hash-like key since it has multiple parameters
-  const cacheKey = `custom_quiz:${documentId}:${options.difficulty}:${options.format}:${options.numQuestions}`;
+  const cacheKey = Cache.CACHE_KEYS.QUIZ_CUSTOM(
+    documentId,
+    options.difficulty,
+    options.format,
+    options.numQuestions
+  );
   
-  const cachedQuiz = await Cache.getCached(cacheKey);
-  if (cachedQuiz) return cachedQuiz;
+  return await Cache.getOrSet(
+    cacheKey,
+    async () => {
+      const document = await Document.findById(documentId);
+      if (!document || !document.chunks || document.chunks.length === 0) {
+        throw new AppError('Document content not ready for quiz generation', 400);
+      }
 
-  const document = await Document.findById(documentId);
-  if (!document || !document.chunks || document.chunks.length === 0) {
-    throw new AppError('Document content not ready for quiz generation', 400);
-  }
+      const prompt = buildCustomAssessmentPrompt(document.chunks, options);
+      const response = await AIService.callGroqWithRetry(
+        [{ role: 'system', content: prompt }],
+        GROQ_MODELS.smart
+      );
 
-  const prompt = buildCustomAssessmentPrompt(document.chunks, options);
-  const response = await AIService.callGroqWithRetry([{ role: 'system', content: prompt }], GROQ_MODELS.smart);
-
-  try {
-    const cleanJson = response.replace(/```json|```/g, '').trim();
-    const quizData = JSON.parse(cleanJson);
-    await Cache.setCached(cacheKey, quizData, 86400);
-    return quizData;
-  } catch (err) {
-    console.error('[CUSTOM QUIZ] Generation/Parse error:', err.message);
-    throw new AppError('Failed to generate a valid custom assessment. Please try again.', 500);
-  }
+      try {
+        const cleanJson = response.replace(/```json|```/g, '').trim();
+        return JSON.parse(cleanJson);
+      } catch (err) {
+        console.error('[CUSTOM QUIZ] Generation/Parse error:', err.message);
+        throw new AppError('Failed to generate a valid custom assessment. Please try again.', 500);
+      }
+    },
+    Cache.CACHE_TTL.QUIZ
+  );
 };
+

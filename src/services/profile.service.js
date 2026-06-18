@@ -1,6 +1,6 @@
 import StudentProfile from '../models/StudentProfile.model.js';
 import { calculateXP, shouldUpgradeLevel } from '../utils/scoreCalculator.js';
-import { getCached, setCached, deleteCached, CACHE_KEYS, CACHE_TTL } from '../utils/cache.js';
+import { getOrSet, deleteCached, CACHE_KEYS, CACHE_TTL } from '../utils/cache.js';
 
 /**
  * Fetches a student's profile, checking Redis cache first.
@@ -16,19 +16,16 @@ import { getCached, setCached, deleteCached, CACHE_KEYS, CACHE_TTL } from '../ut
 export const getProfile = async (userId) => {
   const cacheKey = CACHE_KEYS.PROFILE(userId);
 
-  // 1. Try cache first
-  const cached = await getCached(cacheKey);
-  if (cached) return cached;
-
-  // 2. Miss — fetch from MongoDB
-  const profile = await StudentProfile.findOne({ userId }).lean();
-  if (!profile) return null;
-
-  // 3. Populate cache for next request
-  await setCached(cacheKey, profile, CACHE_TTL.PROFILE);
-
-  return profile;
+  return await getOrSet(
+    cacheKey,
+    async () => {
+      const profile = await StudentProfile.findOne({ userId }).lean();
+      return profile || null;
+    },
+    CACHE_TTL.PROFILE
+  );
 };
+
 
 /**
  * Updates a student's profile after they submit a quiz.
