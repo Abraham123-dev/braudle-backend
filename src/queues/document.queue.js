@@ -1,11 +1,18 @@
 import { Queue } from 'bullmq';
-import { redisClient } from '../config/redis.js';
+import Redis from 'ioredis';
+import { env } from '../config/env.js';
+
+// Dedicated connection for BullMQ (no commandTimeout to allow blocking long-polls)
+const queueConnection = new Redis(env.redisUrl, {
+  maxRetriesPerRequest: null,
+  enableReadyCheck: false,
+});
 
 /**
  * BullMQ Queue for background document processing (OCR, AI extraction, chunking)
  */
 export const documentQueue = new Queue('document-processing', {
-  connection: redisClient,
+  connection: queueConnection,
   defaultJobOptions: {
     attempts: 3,
     backoff: {

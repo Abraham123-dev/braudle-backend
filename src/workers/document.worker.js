@@ -1,5 +1,6 @@
 import { Worker } from 'bullmq';
-import { redisClient } from '../config/redis.js';
+import Redis from 'ioredis';
+import { env } from '../config/env.js';
 import { connectDB } from '../config/db.js';
 import Document from '../models/Document.model.js';
 import * as StorageService from '../services/storage.service.js';
@@ -12,6 +13,12 @@ import { parseAIJson } from '../utils/parseAIJson.js';
 
 // Connect to MongoDB
 await connectDB();
+
+// Dedicated connection for BullMQ Worker (no commandTimeout to allow long blocking pop)
+const workerConnection = new Redis(env.redisUrl, {
+  maxRetriesPerRequest: null,
+  enableReadyCheck: false,
+});
 
 /**
  * Cleans raw text extracted from PDFs and OCR.
@@ -48,14 +55,6 @@ const setStage = (documentId, stage) =>
 /**
  * The Document Worker processes background jobs for file extraction and AI understanding.
  * It walks the document through 6 named stages so the frontend can display rich progress.
- *
- * Stages:
- *   1. file_received       — Job picked up, starting
- *   2. extracting_content  — Downloading from R2, parsing PDF/image
- *   3. identifying_concepts — Chunking extracted text
- *   4. building_learning_map — Sending to AI for topic + summary extraction
- *   5. preparing_tutor     — Saving all data to MongoDB
- *   6. ready               — Complete. AI tutor is armed.
  */
 const documentWorker = new Worker(
   'document-processing',
@@ -115,7 +114,6 @@ const documentWorker = new Worker(
 
       // ── Stage 4 ─────────────────────────────────────────────────────────────
       // AI Document Understanding: Extract topics and a student-facing summary.
-      // This is what transforms the document from a file into a learning resource.
       await setStage(documentId, 'building_learning_map');
 
       let topics = [];
@@ -134,14 +132,12 @@ const documentWorker = new Worker(
         summary = typeof understanding.summary === 'string' ? understanding.summary : '';
       } catch (aiErr) {
         // Non-fatal: If AI understanding fails, the document is still usable for teaching.
-        // Log the error but continue — chunks are still valid for the tutor.
         console.error(`[WORKER] AI understanding failed for ${documentId}:`, aiErr.message);
         // Mark in DB so the frontend knows the summary/topics section may be empty
         await Document.findByIdAndUpdate(documentId, { aiUnderstandingFailed: true });
       }
 
       // ── Stage 5 ─────────────────────────────────────────────────────────────
-      // Signal to the frontend that we are arming the tutor (final save incoming)
       await setStage(documentId, 'preparing_tutor');
 
       // ── Stage 6 ─────────────────────────────────────────────────────────────
@@ -173,9 +169,7 @@ const documentWorker = new Worker(
     }
   },
   {
-    connection: redisClient,
-    // Increased from 2 → 4: each job is I/O-bound (R2 download + Groq API), not CPU-bound.
-    // Higher concurrency improves throughput for concurrent uploads without overloading.
+    connection: workerConnection,
     concurrency: 4,
   }
 );
