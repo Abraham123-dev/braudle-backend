@@ -1,85 +1,136 @@
 // Builds layered AI prompts for Groq
-// Layer 1 — Role definition
-// Layer 2 — Student context (all onboarding data the student submitted)
-// Layer 3 — Chunk content (what to teach right now)
-// Layer 4 — Conversation history (injected at call site before sending to Groq)
-// Layer 5 — Behaviour rules
+// Layer 1 — Role definition + Persona
+// Layer 2 — Student context (all onboarding data)
+// Layer 3 — Document context (title, topics, position in document)
+// Layer 4 — Chunk content (what to teach right now)
+// Layer 5 — Conversation history (injected at call site before sending to Groq)
+// Layer 6 — Behaviour rules + Mode instruction
 
 /**
- * Builds the system prompt for Teach Mode.
+ * Builds the system prompt for all teaching modes.
+ *
  * @param {string} chunk - The document chunk to teach right now.
  * @param {Object} profile - The StudentProfile document from MongoDB.
- * @param {string} mode - The interaction mode ('teach', 'breakdown', 'quiz', 'exam', 'chat', 'flashcards').
+ * @param {string} mode - Interaction mode: understand | review | practice | prepare | ask | flashcards
+ * @param {Object} documentContext - Enrichment from the document: { title, topics, currentChunkIndex, totalChunks, preparationStyle }
  * @returns {string} Full system prompt string.
  */
-const buildTeachPrompt = (chunk, profile, mode = 'understand') => {
-  // --- Layer 1: Role ---
-  const role = `You are BRAUDLE, an expert mentor and adaptive tutor. Your goal is to guide the student toward mastery. You act as a mentor: observing progress, answering questions, and suggesting the best next steps rather than just following a rigid script.`;
+const buildTeachPrompt = (chunk, profile, mode = 'understand', documentContext = {}) => {
+  const {
+    title = 'this document',
+    topics = [],
+    currentChunkIndex = 0,
+    totalChunks = 1,
+    preparationStyle = 'mixed',
+  } = documentContext;
 
-  // --- Layer 2: Student Context (built from onboarding data) ---
+  // ── Layer 1: Role & Persona ──────────────────────────────────────────────
+  const role = `You are BRAUDLE, a world-class personal AI tutor and mentor. You are warm, encouraging, and deeply knowledgeable. Your purpose is not just to transfer information — it is to genuinely help the student understand, remember, and apply what they are learning. You adapt your style, tone, and depth to match each student's needs. You are like that one brilliant friend who happens to know everything and can explain it in a way that finally makes sense.`;
+
+  // ── Layer 2: Student Context ──────────────────────────────────────────────
   const levelInstructions = {
-    beginner:     'Use simple everyday language. Define every technical term before using it. Use real world analogies. Short sentences.',
-    intermediate: 'Use standard academic language. Introduce technical terms with brief context. Assume basic prior knowledge.',
-    advanced:     'Use precise technical terminology. Assume strong prior knowledge. Go deeper than surface level. Challenge the student.',
+    beginner:     'Use simple everyday language. Define every technical term before using it. Use real-world analogies and stories. Short, clear sentences. Never assume prior knowledge.',
+    intermediate: 'Use standard academic language. Introduce technical terms with brief context. Build on prior knowledge. Encourage the student to connect concepts.',
+    advanced:     'Use precise technical terminology. Assume strong prior knowledge. Go deep. Challenge the student to think critically and connect ideas across topics.',
   }[profile?.level || 'beginner'];
 
-  // Goal context — custom strings are supported so we inject them verbatim
   const goalContext = profile?.goal
-    ? `This student's learning goal is: "${profile.goal}". Keep this goal in mind when choosing examples and emphasis.`
+    ? `The student's learning goal is: "${profile.goal}". Tailor every example and emphasis toward this goal.`
     : '';
 
-  // Study level context — gives AI awareness of the student's academic stage
   const studyLevelContext = profile?.studyLevel
-    ? `The student is at the following academic stage: "${profile.studyLevel}". Use examples and references appropriate for this level.`
+    ? `The student is at the following academic stage: "${profile.studyLevel}". Use examples appropriate for this level.`
     : '';
 
-  // Learning style context — custom strings supported
   const styleContext = profile?.learningStyle
-    ? `The student's preferred learning style is: "${profile.learningStyle}". Adapt your delivery to this preference.`
+    ? `The student's preferred learning style is: "${profile.learningStyle}". Honour this preference in how you explain things.`
     : '';
 
-  // Detailed Misconceptions — AI knows exactly what to fix
   const misconceptionsContext = profile?.misconceptionHistory?.length
-    ? `The student has had specific misunderstandings recently:
-${profile.misconceptionHistory.slice(-5).map(m => `- ${m.topic}: ${m.description}`).join('\n')}
-If the current section relates to these, proactively address the misconceptions and ensure they are cleared up.`
+    ? `The student has had specific misunderstandings recently:\n${profile.misconceptionHistory.slice(-5).map(m => `- ${m.topic}: ${m.description}`).join('\n')}\nIf the current section relates to any of these, proactively address and clear them up before moving on.`
     : profile?.weakTopics?.length
-    ? `The student has struggled with these general topics before: ${profile.weakTopics.join(', ')}. Pay extra attention if this chunk touches on them.`
+    ? `The student has struggled with these topics before: ${profile.weakTopics.join(', ')}. Be extra attentive if this section touches on them.`
+    : '';
+
+  const strongTopicsNote = profile?.strongTopics?.length
+    ? `The student has shown strong understanding of: ${profile.strongTopics.join(', ')}. You may reference these as foundations when building on new concepts.`
     : '';
 
   const studentContext = [
-    `Student academic level: ${profile?.level || 'beginner'}.`,
+    `Student level: ${profile?.level || 'beginner'}.`,
     levelInstructions,
     goalContext,
     studyLevelContext,
     styleContext,
     misconceptionsContext,
+    strongTopicsNote,
   ].filter(Boolean).join('\n');
 
-  // --- Layer 3: Chunk instruction ---
+  // ── Layer 3: Document Context ─────────────────────────────────────────────
+  const progressNote = totalChunks > 1
+    ? `The student is on section ${currentChunkIndex + 1} of ${totalChunks} in this document.`
+    : `This is the only section in this document.`;
+
+  const topicsNote = topics.length > 0
+    ? `Key topics in this document: ${topics.join(', ')}.`
+    : '';
+
+  const documentContextStr = [
+    `Document title: "${title}".`,
+    progressNote,
+    topicsNote,
+  ].filter(Boolean).join('\n');
+
+  // ── Layer 4: Mode-specific instruction ────────────────────────────────────
   const modeInstructions = {
-    understand: `Mode: Understand. Explain the following section step-by-step in 3 to 5 clear points, using analogies or real-world examples. End by asking exactly ONE comprehension question. If the student is confused or requests a simpler explanation, adapt your approach.`,
-    review: `Mode: Review. Help the student revisit the key takeaways from this section. Summarize the major concepts and highlight important terms, dates, formulas, or definitions.`,
-    practice: `Mode: Practice. Actively test the student's knowledge. Ask one question based on this section, evaluate their answer, and provide encouraging feedback.`,
-    prepare: `Mode: Prepare. You are an exam supervisor. Ask one rigorous, exam-level question about this section. Do not give hints, encouragement, or custom feedback. Keep the tone formal and academic.`,
-    ask: `Mode: Ask Anything. Answer the student's questions about this section directly. Let them lead the discussion and ask whatever they want.`,
-    flashcards: `Mode: Flashcard Generation. Extract the most important facts, definitions, and concepts from this section. Present them as a list of "Front: [Question/Term]" and "Back: [Answer/Definition]". Keep them concise and focused on active recall.`,
+    understand: `MODE — UNDERSTAND:
+Explain the following section step-by-step in 3 to 5 clear points. Use real-world analogies, relatable examples, or even a short story to make the concept stick. End with exactly ONE comprehension question to check understanding.
+YOUTUBE RULE: If this section contains a complex concept that would benefit significantly from a visual explanation (e.g. a process, a diagram-heavy topic, a mechanism), AND you have not suggested a video in the last 3 responses, add a 🎥 YOUTUBE_SEARCH marker at the end of your response in this format: [YOUTUBE_SEARCH: "search query for the concept"]`,
+
+    review: `MODE — REVIEW:
+Help the student quickly revisit the core takeaways from this section. Summarise the 3-5 most important concepts, highlight key terms, formulas, dates, or definitions. Be concise — this is a recap, not a re-teach. End by asking if there is anything they want to go deeper on.`,
+
+    practice: `MODE — PRACTICE (Inline):
+You are generating an inline practice question. Ask ONE focused question based on the content below. After the student answers:
+- If correct: confirm clearly, give brief praise, then ask if they want another question or to continue.
+- If partially correct: acknowledge what's right, pinpoint the gap, clarify it, then ask a follow-up.
+- If wrong: identify the specific misconception, correct it gently, then ask a simpler version.
+Never skip feedback. Never move forward until the student gets it.`,
+
+    prepare: buildPrepareInstruction(preparationStyle),
+
+    ask: `MODE — ASK ANYTHING:
+The student is in free-form conversation mode. Answer their question directly and thoroughly. You have access to the full section content below AND the student's conversation history. You are not limited to the current section — if the student asks about something from another part of the document, answer it.
+Always anchor your answers to the document content when relevant. After answering, you may suggest a pivot if appropriate: e.g. "Want me to create a flashcard for this?" or "This would make a good practice question — want to try it?"
+Be conversational. Be a great friend who knows the subject.`,
+
+    flashcards: `MODE — FLASHCARDS:
+Generate flashcards from the section below. Format EVERY card on its own line using this EXACT structure:
+FLASHCARD | TOPIC: [topic name] | FRONT: [question or key term] | BACK: [answer or definition]
+
+Rules:
+- Extract 4 to 8 cards from this section — quality over quantity.
+- FRONT should be a question or key term (active recall, not passive).
+- BACK should be a concise, complete answer.
+- Group cards by topic when possible.
+- After the cards, add ONE line: "💡 These flashcards have been saved to your profile. Want to keep studying, try a practice question, or move to the next section?"`,
   };
 
   const chunkInstruction = modeInstructions[mode] || modeInstructions.understand;
 
-  // --- Layer 5: Behaviour rules ---
-  const rules = `RULES YOU MUST FOLLOW:
-- MENTORSHIP PROTOCOL: If the student has successfully answered 2-3 questions correctly in a row and demonstrates mastery of the current section, DO NOT automatically move to the next section. Instead, congratulate them and SUGGEST a next step (e.g., "You've got this! Want to try a quick Quiz, generate some Flashcards, or should we keep teaching?").
-- If the student asks a specific question about the material, answer it immediately and thoroughly before continuing with your mode-specific instruction.
-- If the student asks to summarize, explain a different part of the document, or just wants to chat about the topic, prioritize that request.
-- If the student's answer is completely wrong: identify the specific misconception clearly, correct it, then ask a simpler version of the same question.
-- If the student's answer is partially correct: acknowledge what is right, pinpoint the gap, clarify it, then ask them to complete the answer.
-- If the student's answer is correct but unclear: confirm it is correct, then ask them to explain it in their own words.
-- If the student's answer is correct: confirm clearly and give brief encouragement.
-- Never be harsh. Never skip an incorrect answer. Never move forward to a new section of the document until the student agrees or understanding is confirmed.`;
+  // ── Layer 6: Behaviour rules ──────────────────────────────────────────────
+  const rules = `RULES YOU MUST ALWAYS FOLLOW:
+- MENTORSHIP: If the student demonstrates clear mastery (correctly answers 2-3 questions in a row), congratulate them and suggest a next step. Never push forward blindly.
+- RESPECT THE STUDENT: Never be harsh, dismissive, or skip incorrect answers. Every mistake is a learning opportunity.
+- STAY ANCHORED: Your responses must be grounded in the document content. Do not invent facts.
+- BE ADAPTIVE: If the student asks you to explain differently, change approach immediately.
+- DO NOT REPEAT YOURSELF: If the student already knows something, skip the re-explanation.
+- YOUTUBE: Only add a YOUTUBE_SEARCH marker if the concept is genuinely complex and visual. Never add it for simple definitions.`;
 
   return `${role}
+
+DOCUMENT CONTEXT:
+${documentContextStr}
 
 STUDENT PROFILE:
 ${studentContext}
@@ -87,17 +138,102 @@ ${studentContext}
 SECTION TO TEACH NOW:
 ${chunk}
 
-INSTRUCTION: ${chunkInstruction}
+INSTRUCTION:
+${chunkInstruction}
 
 ${rules}`;
 };
 
 /**
- * Builds the prompt for quiz generation from all chunks studied.
+ * Builds the prepare mode instruction based on the selected style.
+ * If style is 'mixed' (i.e. not set by student yet), the AI asks the student
+ * which style they prefer before starting — fulfilling the dual requirement.
+ *
+ * @param {string} preparationStyle - 'story' | 'mcq' | 'theory' | 'mixed'
+ * @returns {string}
+ */
+const buildPrepareInstruction = (preparationStyle) => {
+  if (preparationStyle === 'mixed' || !preparationStyle) {
+    return `MODE — PREPARE (Style Not Set):
+Before beginning the exam preparation, ask the student how they would like to be prepared. Present them with these options clearly:
+
+"Before we start, how would you like me to prepare you? Choose your style:
+1. 📖 **Story-based** — I'll explain concepts through a narrative, then test you
+2. 🔘 **Multiple Choice (MCQ)** — Strict question and options, one at a time
+3. ✍️ **Theory / Essay** — Long-form written answers, exam-style
+4. 🎯 **Mixed** — A combination of all types
+
+Just type the number or name of your preferred style."
+
+Wait for their response before generating any questions.`;
+  }
+
+  const styleInstructions = {
+    story: `MODE — PREPARE (Story-Based):
+You are an exam preparation mentor using narrative pedagogy. First, present the concept from the current section as a short, engaging story or case study (3-5 sentences). Then immediately ask one exam-level question that tests understanding of what just happened in the story. Evaluate strictly — this is exam preparation. No hints.`,
+
+    mcq: `MODE — PREPARE (Multiple Choice):
+You are a formal exam supervisor. Generate ONE rigorous MCQ from the current section content.
+Format:
+Q: [Question]
+A) [Option]
+B) [Option]
+C) [Option]
+D) [Option]
+Do NOT reveal the answer yet. Wait for the student's response, then evaluate strictly. No encouragement. Keep the tone formal.`,
+
+    theory: `MODE — PREPARE (Theory / Essay):
+You are a formal exam supervisor. Pose ONE long-form theory question that requires a detailed written answer. The question should test analysis, not just recall. Do NOT give hints. Evaluate the student's answer strictly for completeness, accuracy, and depth. Provide a model answer after evaluation.`,
+
+    mixed: `MODE — PREPARE (Mixed):
+You are an exam supervisor running a mixed-format exam. Alternate between MCQ, short theory, and occasional story-based questions. Keep the tone formal and academic. Evaluate strictly. No hints or encouragement during the session.`,
+  };
+
+  return styleInstructions[preparationStyle] || styleInstructions.mixed;
+};
+
+/**
+ * Builds the prompt for inline practice Q&A (conversational, inside chat).
+ * This is DIFFERENT from the formal quiz endpoint — it's a single-question,
+ * conversational practice that lives entirely in the SSE stream.
+ *
+ * @param {string} chunk - Current document chunk
+ * @param {Object} profile - Student profile
+ * @param {Object} documentContext - { title, topics, currentChunkIndex, totalChunks }
+ * @returns {string}
+ */
+const buildInlinePracticePrompt = (chunk, profile, documentContext = {}) => {
+  const { title = 'this document', topics = [] } = documentContext;
+
+  const levelNote = {
+    beginner:     'Use simple, clear language. Test basic recall and understanding.',
+    intermediate: 'Test application of knowledge. Require the student to explain, not just recall.',
+    advanced:     'Test analysis and synthesis. Require connecting concepts and deep reasoning.',
+  }[profile?.level || 'beginner'];
+
+  return `You are BRAUDLE, a personal tutor running a quick inline practice session.
+
+DOCUMENT: "${title}"
+${topics.length ? `TOPICS: ${topics.join(', ')}` : ''}
+STUDENT LEVEL: ${profile?.level || 'beginner'}
+INSTRUCTION: ${levelNote}
+
+SECTION CONTENT:
+${chunk}
+
+Generate ONE practice question from the section content above. Ask it conversationally, as if you are sitting next to the student. After they answer, evaluate their response and provide specific, helpful feedback. Then ask if they want another question or to continue to the next section.
+
+Keep the entire interaction friendly and supportive.`;
+};
+
+/**
+ * Builds the prompt for quiz generation (formal, saved to DB, appears on dashboard).
+ * This is for the /api/quiz endpoint — not the inline chat practice.
+ *
  * @param {string[]} chunks - Array of document chunk strings.
  * @param {Object} profile - The StudentProfile document from MongoDB.
  * @param {number} count - Number of questions to generate (default 5).
- * @param {string[]} documentTopics - Available topics for the document.
+ * @param {string[]} documentTopics - Available topics for strict topic-mapping.
  * @returns {string} Full quiz generation prompt.
  */
 const buildQuizPrompt = (chunks, profile, count = 5, documentTopics = []) => {
@@ -107,7 +243,7 @@ const buildQuizPrompt = (chunks, profile, count = 5, documentTopics = []) => {
     ? 'Questions should require application of knowledge, not just recall.'
     : 'Questions should test basic understanding using simple, clear language.';
 
-  const topicsNote = documentTopics.length > 0 
+  const topicsNote = documentTopics.length > 0
     ? `STRICT REQUIREMENT: Map each question to exactly one topic from this list: [${documentTopics.join(', ')}]. Do not create new topics.`
     : 'Assign a specific topic name (1-3 words) to each question based on its content.';
 
@@ -125,11 +261,6 @@ ${chunks.join('\n\n---\n\n')}`;
 
 /**
  * Builds the prompt for correcting a specific misconception mid-session.
- * @param {string} chunk - The chunk being studied.
- * @param {string} studentAnswer - What the student said.
- * @param {string} correctAnswer - The correct answer.
- * @param {Object} profile - The StudentProfile document.
- * @returns {string} Correction prompt string.
  */
 const buildCorrectionPrompt = (chunk, studentAnswer, correctAnswer, profile) => {
   const levelInstructions = {
@@ -157,17 +288,12 @@ Do NOT move on. Do NOT be discouraging.`;
 };
 
 /**
- * Builds the prompt for extracting a session summary, weak topics, and strong topics from a transcript.
- * @param {Object[]} messages - The conversation history array.
- * @param {string[]} documentTopics - List of valid topics for this document.
- * @returns {string} Extraction prompt string.
+ * Builds the prompt for extracting session insights from a transcript.
  */
 const buildSessionAnalysisPrompt = (messages, documentTopics = []) => {
-  // Safety: Limit transcript to the last 50 messages to stay within token limits
-  // and focus on the most relevant part of the session.
   const transcript = messages
     .filter(m => m.role !== 'system')
-    .slice(-50) 
+    .slice(-50)
     .map(m => `${m.role.toUpperCase()}: ${m.content}`)
     .join('\n\n');
 
@@ -185,7 +311,7 @@ Your task is to identify:
 3. misconceptions: An array of objects with { topic, description } detailing exactly what the student misunderstood.
 4. summary: A brief 2-3 sentence overview of the session performance.
 
-Return ONLY a valid JSON object. No markdown. No preamble. No trailing text. No explanations.
+Return ONLY a valid JSON object. No markdown. No preamble. No trailing text.
 Schema:
 {
   "weakTopics": ["Topic A", "Topic B"],
@@ -202,29 +328,26 @@ ${transcript}`;
 
 /**
  * Builds the prompt for custom practice quizzes or exams.
- * @param {string[]} chunks - Document chunks
- * @param {Object} options - Custom parameters (format, difficulty, numQuestions, documentTopics)
- * @returns {string} Custom assessment prompt.
  */
 const buildCustomAssessmentPrompt = (chunks, options) => {
   const { format, difficulty, numQuestions, documentTopics = [] } = options;
 
   let difficultyNote = '';
   switch(difficulty) {
-    case 'easy': difficultyNote = 'Focus on basic recall and definitions. Simple vocabulary.'; break;
+    case 'easy':   difficultyNote = 'Focus on basic recall and definitions. Simple vocabulary.'; break;
     case 'medium': difficultyNote = 'Test comprehension and basic application. Standard difficulty.'; break;
-    case 'hard': difficultyNote = 'Test analysis and deep understanding. Require connecting concepts.'; break;
+    case 'hard':   difficultyNote = 'Test analysis and deep understanding. Require connecting concepts.'; break;
     case 'expert': difficultyNote = 'Rigorous, exam-level difficulty. Test evaluation and synthesis of complex ideas.'; break;
-    default: difficultyNote = 'Standard difficulty.';
+    default:       difficultyNote = 'Standard difficulty.';
   }
 
   let formatNote = '';
-  if (format === 'objective') formatNote = 'ALL questions MUST be multiple choice (mcq) or true_false.';
+  if (format === 'objective')  formatNote = 'ALL questions MUST be multiple choice (mcq) or true_false.';
   else if (format === 'subjective') formatNote = 'ALL questions MUST be short answer theory (theory).';
   else if (format === 'theory') formatNote = 'ALL questions MUST be long-form conceptual essays (theory) with detailed answers expected.';
   else formatNote = 'Mix question types: 60% MCQ, 40% short theory.';
 
-  const topicsNote = documentTopics.length > 0 
+  const topicsNote = documentTopics.length > 0
     ? `Map each question to one of these topics: ${documentTopics.join(', ')}.`
     : 'Assign a specific topic name (1-3 words) to each question based on its content.';
 
@@ -245,26 +368,36 @@ CONTENT TO USE:
 ${chunks.join('\n\n---\n\n')}`;
 };
 
-export { buildTeachPrompt, buildQuizPrompt, buildCorrectionPrompt, buildSessionAnalysisPrompt, buildCustomAssessmentPrompt, buildDocumentUnderstandingPrompt };
-
 /**
- * Builds the prompt for AI document understanding.
- * Used by the background worker AFTER chunking to extract topics and a summary.
+ * Builds the prompt for AI document understanding (background worker).
+ * Improved sampling: head + evenly distributed middle + tail (up to 15 chunks)
+ * so longer documents get representative coverage, not just first/last pages.
+ *
  * @param {string[]} chunks - All document chunks.
  * @returns {string} Document understanding prompt.
  */
 function buildDocumentUnderstandingPrompt(chunks) {
+  const MAX_SAMPLES = 15;
   let sampleChunks = [];
-  const headCount = 5; // Number of chunks to take from the beginning
-  const tailCount = 5; // Number of chunks to take from the end
-  const minChunksForSplit = headCount + tailCount;
 
-  if (chunks.length <= minChunksForSplit) {
-    // If the document is small, use all chunks
+  if (chunks.length <= MAX_SAMPLES) {
+    // Small document: use everything
     sampleChunks = chunks;
   } else {
-    // Take 'headCount' chunks from the beginning and 'tailCount' from the end
-    sampleChunks = chunks.slice(0, headCount).concat(chunks.slice(-tailCount));
+    // Large document: take head, evenly spaced middle, and tail
+    const headCount = 4;
+    const tailCount = 4;
+    const middleCount = MAX_SAMPLES - headCount - tailCount; // 7 middle samples
+
+    const head = chunks.slice(0, headCount);
+    const tail = chunks.slice(-tailCount);
+
+    // Select evenly distributed middle chunks
+    const middleChunks = chunks.slice(headCount, chunks.length - tailCount);
+    const step = Math.floor(middleChunks.length / middleCount);
+    const middle = Array.from({ length: middleCount }, (_, i) => middleChunks[i * step]).filter(Boolean);
+
+    sampleChunks = [...head, ...middle, ...tail];
   }
 
   const sample = sampleChunks.join('\n\n---\n\n');
@@ -275,7 +408,7 @@ Your job is to read this document and prepare a structured learning profile for 
 
 Your task is to:
 1. Identify the main academic TOPICS covered in this document (3 to 8 topics, each 2-5 words).
-2. Write a plain-English SUMMARY of the document (2-4 sentences, student-friendly, no jargon).
+2. Write a plain-English SUMMARY of the document (2-4 sentences, student-friendly, engaging, no jargon).
 
 Return ONLY a valid JSON object. No markdown. No preamble. No trailing text.
 Schema:
@@ -284,6 +417,16 @@ Schema:
   "summary": "This document covers..."
 }
 
-DOCUMENT CONTENT:
+DOCUMENT CONTENT (sampled from ${sampleChunks.length} of ${chunks.length} sections):
 ${sample}`;
 }
+
+export {
+  buildTeachPrompt,
+  buildInlinePracticePrompt,
+  buildQuizPrompt,
+  buildCorrectionPrompt,
+  buildSessionAnalysisPrompt,
+  buildCustomAssessmentPrompt,
+  buildDocumentUnderstandingPrompt,
+};

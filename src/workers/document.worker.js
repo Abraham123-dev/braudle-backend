@@ -13,6 +13,30 @@ import { parseAIJson } from '../utils/parseAIJson.js';
 // Connect to MongoDB
 await connectDB();
 
+/**
+ * Cleans raw text extracted from PDFs and OCR.
+ * PDFs frequently produce: hyphenated line-breaks ("com-\nputer"), excessive whitespace,
+ * null bytes, and ligature artifacts. Fixing these before chunking produces much better
+ * AI context windows and improves quiz/topic quality significantly.
+ *
+ * @param {string} text - Raw extracted text
+ * @returns {string} Cleaned text
+ */
+const cleanExtractedText = (text) => {
+  if (!text) return '';
+  return text
+    // Fix hyphenated line breaks: "hyphen-\nated" → "hyphenated"
+    .replace(/-\n(\w)/g, '$1')
+    // Collapse multiple blank lines to a maximum of 2 (paragraph separator)
+    .replace(/\n{3,}/g, '\n\n')
+    // Remove null bytes and non-printable control characters (except \n and \t)
+    .replace(/[\x00-\x08\x0B\x0C\x0E-\x1F\x7F]/g, '')
+    // Collapse excessive spaces within lines (e.g. from PDF column layout)
+    .replace(/[ \t]{3,}/g, '  ')
+    // Remove trailing spaces from each line
+    .replace(/[ \t]+\n/g, '\n')
+    .trim();
+};
 
 /**
  * Helper: Update a single stage field atomically.
@@ -73,13 +97,16 @@ const documentWorker = new Worker(
         let mimeType = 'image/jpeg';
         if (extension === 'png') mimeType = 'image/png';
         else if (extension === 'webp') mimeType = 'image/webp';
-        
+
         extractedText = await AIService.transcribeImage(base64, mimeType);
       }
 
       if (!extractedText || extractedText.trim().length === 0) {
         throw new Error('Failed to extract text from document');
       }
+
+      // Clean raw text: fix PDF layout artifacts, hyphenation, excessive whitespace
+      extractedText = cleanExtractedText(extractedText);
 
       // ── Stage 3 ─────────────────────────────────────────────────────────────
       await setStage(documentId, 'identifying_concepts');
@@ -147,7 +174,9 @@ const documentWorker = new Worker(
   },
   {
     connection: redisClient,
-    concurrency: 2,
+    // Increased from 2 → 4: each job is I/O-bound (R2 download + Groq API), not CPU-bound.
+    // Higher concurrency improves throughput for concurrent uploads without overloading.
+    concurrency: 4,
   }
 );
 

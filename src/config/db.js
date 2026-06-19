@@ -6,9 +6,9 @@ const connectDB = async () => {
     await mongoose.connect(env.mongoUri, {
       serverSelectionTimeoutMS: 5000,
     });
-    console.log('✅ MongoDB connected successfully');
+    console.log(' MongoDB connected successfully');
   } catch (error) {
-    console.warn('⚠️  MongoDB connection failed:', error.message);
+    console.warn(' MongoDB connection failed:', error.message);
     console.warn('Server will continue without database — add MongoDB connection when ready');
   }
 };

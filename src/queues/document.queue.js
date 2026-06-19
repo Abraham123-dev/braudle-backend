@@ -12,6 +12,9 @@ export const documentQueue = new Queue('document-processing', {
       type: 'exponential',
       delay: 1000,
     },
-    removeOnComplete: true,
+    // Keep the last 10 completed jobs for status checks, then discard
+    removeOnComplete: { count: 10 },
+    // Keep the last 5 failed jobs for debugging post-mortems
+    removeOnFail: { count: 5 },
   },
 });

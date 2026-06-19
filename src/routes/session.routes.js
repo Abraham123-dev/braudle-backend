@@ -9,12 +9,17 @@ import {
   completeSession,
   updateSessionState,
   getWelcomeMessage,
+  getMyFlashcards,
 } from '../controllers/session.controller.js';
 
 const router = Router();
 
 // All session routes require authentication
 router.post('/start', verifyJWT, validate(startSessionSchema), startSession);
+
+// Flashcard library — all saved flashcards grouped by document + topic
+router.get('/flashcards', verifyJWT, getMyFlashcards);
+
 router.get('/:id', verifyJWT, getSession);
 router.get('/:id/welcome', verifyJWT, getWelcomeMessage);
 router.post('/:id/chat', verifyJWT, validate(chatSchema), chatSession);

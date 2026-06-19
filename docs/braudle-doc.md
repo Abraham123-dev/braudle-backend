@@ -1,541 +1,136 @@
-# BRAUDLE V1 Product Requirements Document
+# BRAUDLE — The AI Tutor In Your Notes 📚✨
 
-## Vision
+BRAUDLE is an AI-powered personal tutor web application that turns your study materials (lecture slides, notes, readings, and handwritten photos) into an interactive, highly personalized learning experience. 
 
-BRAUDLE is an AI tutor that lives inside your notes.
-
-Students upload their learning materials, study with an AI tutor, and receive personalized help that adapts to how they learn over time.
-
-Unlike a general chatbot, BRAUDLE learns from the student's materials and remembers the student's learning journey.
-
-The goal is simple:
-
-Help students understand difficult concepts faster and retain knowledge better.
+Unlike generic chatbots, BRAUDLE studies your materials, remembers your learning patterns, and acts as a supportive private tutor available 24/7. It is designed to help students understand difficult concepts faster and build lasting confidence.
 
 ---
 
-# Core Product Promise
+## 🌟 The Core Promise
 
-Upload your notes.
-
-Study with an AI tutor.
-
-The more you learn, the better your tutor understands you.
-
----
-
-# Target Users
-
-* University students
-* College students
-* High school students
-* Self-learners
-* Professionals studying new subjects
+* **Consolidate**: Upload your notes, slides, and readings in one place.
+* **Understand**: When something doesn't click, the AI tutor breaks it down using analogies and simple steps.
+* **Practice**: Check your knowledge with adaptive quizzes and interactive check-ins.
+* **Grow**: The more you learn, the better your tutor understands your strengths, weaknesses, and learning speed.
 
 ---
 
-# The BRAUDLE Experience
+## 🛠️ How It Works (How Your Notes Are Studied & Saved)
 
-BRAUDLE should feel like a personal tutor rather than a chatbot.
+When you upload your notes, BRAUDLE handles all the heavy lifting behind the scenes so you can focus entirely on studying:
 
-The tutor should:
+1. **Your Notes Are Safely Saved**:
+   The moment you drop your PDFs, lecture slides, or study notes into the library, they are immediately backed up in our secure cloud storage. This means you will never lose your files and can access them from anywhere.
+2. **The AI Tutor Studies Your Notes**:
+   Once saved, your personal tutor reads through the entire material. If you upload a photo of handwritten notes or a screenshot, the AI reads your handwriting and transcribes it into clean study text.
+3. **Your Personalized Lesson Plan Is Created**:
+   The AI splits the notes into short, easy-to-read segments, pulls out the most important topics, and writes a friendly summary. Your tutor is now fully prepared to teach you, quiz you, and track your progress.
 
-* Teach concepts clearly
-* Answer questions
-* Adapt explanations
-* Remember previous struggles
-* Encourage understanding before moving forward
-
-Students should feel that BRAUDLE knows them personally.
-
----
-
-# User Journey
-
-## Step 1: Sign Up
-
-Students can:
-
-* Continue with Google
-* Continue with Email
-
-If a student signs in with Google:
-
-* Name is automatically available
-
-If a student signs in with Email:
-
-* BRAUDLE asks for their preferred name
+Everything happens silently in the background, ensuring your learning materials and study history are 100% saved and ready whenever you log back in.
 
 ---
 
-## Step 2: Onboarding
+## 🚀 The Student Journey
 
-BRAUDLE learns basic information about the student.
+### Step 1: Secure Sign In
+Students can join in seconds using either:
+* **Continue with Google**: Instantly sets up their account, pulling their name and profile picture.
+* **Email Magic Link**: Sending a secure login link straight to their inbox—no passwords to remember.
 
-Examples:
+### Step 2: Personal Onboarding
+Before the AI begins teaching, it conducts a quick onboarding check-in to configure the initial study profile:
+* What is your current level (Beginner, Intermediate, or Advanced)?
+* What is your study goal (e.g., "Pass JAMB Biology" or "Prepare for Midterms")?
+* What is your preferred learning style (e.g., "Explain step-by-step first")?
 
-* What are you studying?
-* What level are you currently at?
-* What are your learning goals?
-* How confident do you feel in this subject?
+### Step 3: Material Upload (The Library)
+Students can drag and drop their study materials:
+* Lecture slides and PDF files.
+* Textbooks, syllabus papers, and research documents.
+* Images of printed notes or photos of handwriting.
 
-This creates the student's initial learning profile.
+*No waiting required:* As soon as the file is dropped, the student gets an instant confirmation and can continue navigating. The AI tutor studies the notes in the background.
 
----
-
-## Step 3: Upload Learning Materials
-
-Students can upload:
-
-* PDFs
-* Lecture notes
-* Slides
-* Handwritten notes
-* Images
-
-BRAUDLE studies the material in the background.
-
-The student sees progress updates while this happens.
-
-When finished, BRAUDLE identifies:
-
-* Main topics
-* Key concepts
-* Important ideas
+### Step 4: Meeting the Tutor
+Once the tutor finishes reading the document, it introduces itself with a personalized greeting:
+```text
+"Hi Daniel! 👋
+I've finished studying your Biology notes. 
+I found 4 key topics: Photosynthesis, Cell Structure, Respiration, and Plant Nutrition. 
+What would you like to focus on today?"
+```
 
 ---
 
-## Step 4: Start Learning
+## 🧠 The Six Learning Modes
 
-Once the material is ready, BRAUDLE introduces it.
+Rather than forcing technical configurations, BRAUDLE focuses entirely on what the student wants to achieve during their study session:
 
-Example:
+### 1. 🔍 Understand
+Perfect for first-time reading. The AI tutor breaks down complex topics into simple, step-by-step explanations. It uses analogies, real-world examples, and easy-to-digest language.
 
-"Hi Daniel 👋
+### 2. 📝 Review
+Great for quick revision before class or exams. The AI tutor provides summaries, lists key takeaways, and refreshes the student on concepts they have previously covered.
 
-I've reviewed your Biology notes and found 5 important topics.
+### 3. 🎯 Practice
+Active recall check-ins. The AI tutor asks the student specific questions about their notes, reads their answers, grades them, and gives detailed, friendly feedback explaining any mistakes.
 
-What would you like help with today?"
+### 4. 🏆 Prepare
+Simulated mock exams. The student can generate mock assessments under test conditions to practice high-pressure evaluation.
 
----
+### 5. 💬 Ask Anything
+A free-form Q&A space. The student can type any question, and the tutor answers it immediately, prioritizing information directly from the uploaded notes.
 
-# Braudle Tutor
-
-Braudle Tutor is the main AI teacher inside BRAUDLE.
-
-Students can ask questions naturally.
-
-Examples:
-
-* Explain this concept
-* Why does this happen?
-* Give me an example
-* Simplify this topic
-* Help me understand this page
-* Test my knowledge
-
-Braudle Tutor should always teach from the uploaded material whenever possible.
+### 6. 🗂️ Flashcards
+Quick-fire revision decks. The AI automatically extracts key definitions, formulas, and vocabulary terms into clean revision cards (limited to 5 cards at a time to prevent overwhelming the student).
 
 ---
 
-# Learning Actions
+## 🎮 Gamification & Active Learning Profile
 
-Instead of exposing technical modes, BRAUDLE focuses on student goals.
+As the student studies, their personal **Learning Profile** grows and adapts:
 
-Students can choose to:
-
-## Understand
-
-BRAUDLE explains concepts clearly and simply.
-
-It can:
-
-* Simplify difficult ideas
-* Use analogies
-* Use examples
-* Explain step-by-step
+* **Strengths & Weaknesses**: The backend automatically tracks which topics the student excels at and which ones they struggle with.
+* **Misconception Detection**: If the student answers a question incorrectly due to a fundamental misunderstanding (e.g. confusing ATP production with glucose production), the AI flags this misconception and saves it to their profile.
+* **Study Recommendations**: The dashboard suggests personalized revision areas based on recent performance (e.g. *"Review Plant Nutrition - You struggled with this in your last quiz"*).
+* **XP & Streaks**: Students earn Experience Points (XP) for completing lessons and quizzes, building study streaks to establish consistent daily habits.
 
 ---
 
-## Review
+## 🔄 Adaptive Learning (How the Tutor Grows With You)
 
-BRAUDLE helps students revisit important concepts.
-
-It can:
-
-* Summarize topics
-* Highlight key points
-* Refresh previous lessons
+As you spend more time studying with BRAUDLE, your AI tutor gets to know you personally and adapts its teaching style to match your progress:
+* **Tailored Explanations**: The tutor automatically adjusts its explanations to match your level. If you are starting out, it uses simple analogies. As you build confidence, it introduces more advanced insights.
+* **Dynamic Quiz Scaling**: The difficulty of practice questions automatically adjusts based on your recent quiz scores. If you do well, you are challenged with more advanced tests; if you struggle, the tutor steps back to help you rebuild your foundations.
+* **Smart Learning Memory**: The tutor remembers what you struggled with in past sessions and gently weaves those concepts back into your chats to make sure you never forget them.
 
 ---
 
-## Practice
+## 🎨 Visual Learning
 
-BRAUDLE tests understanding through questions.
-
-It can:
-
-* Ask questions
-* Provide feedback
-* Explain mistakes
+When concepts are particularly complex or difficult to grasp via text alone, BRAUDLE supports visual explanations. The system is designed to provide clear breakdowns, including:
+* **Concept Maps**: Visualizing connections and hierarchies between different topics.
+* **Process Diagrams**: Outlining step-by-step pathways (e.g., how energy flows or processes cycle).
+* **Flow Explanations**: Showing clear cause-and-effect lines.
+* **Graphical Visualizations**: Representing trends, formulas, and curves visually for intuitive understanding.
 
 ---
 
-## Prepare
+## 📈 Success Criteria
 
-BRAUDLE helps students prepare for assessments.
-
-It can:
-
-* Generate practice questions
-* Create mock exams
-* Simulate test conditions
-
----
-
-## Ask
-
-Students can ask anything related to their materials.
-
-BRAUDLE provides contextual answers.
+The success of BRAUDLE is measured entirely by the student's study experience. We succeed when students feel:
+* **"My tutor understands my materials."** — The AI answers are accurate, contextual, and pull directly from their uploaded files.
+* **"My tutor understands me."** — The tutoring explanations match their level, speed, and learning style.
+* **"Learning feels easier."** — Difficult concepts are simplified without being watered down.
+* **"Studying feels less overwhelming."** — Heavy textbooks and folders are chunked into manageable, bite-sized study steps.
+* **"I know what to focus on next."** — The student gets a clear dashboard checklist to target their weak spots.
 
 ---
 
-# Student Profile
+## 💎 The BRAUDLE Difference
 
-Every student has a personal learning profile.
+Most AI study tools only look at the document. 
 
-The profile evolves over time.
+**BRAUDLE looks at both: the document and you.**
 
-BRAUDLE remembers:
-
-* Subjects studied
-* Learning history
-* Strong topics
-* Weak topics
-* Study activity
-* Previous sessions
-
-The goal is to make every future learning session more personalized.
-
----
-
-# Learning Memory
-
-BRAUDLE should remember important learning patterns.
-
-Examples:
-
-* Concepts the student struggles with
-* Topics that require extra review
-* Areas where confidence is low
-
-Future sessions should use this information to provide better support.
-
----
-
-# Visual Learning
-
-When students struggle with a concept, BRAUDLE can provide visual explanations.
-
-Examples:
-
-* Diagrams
-* Concept maps
-* Process breakdowns
-* Graphs
-* Visual summaries
-
-The purpose is understanding, not image generation.
-
----
-
-# Session Completion
-
-At the end of a learning session, BRAUDLE updates the student's profile.
-
-The tutor reflects on:
-
-* What was learned
-* What remains difficult
-* What should be reviewed next
-
-This allows future sessions to become more personalized.
-
----
-
-# Success Criteria
-
-Students should feel:
-
-* My tutor understands my materials.
-* My tutor understands me.
-* Learning feels easier.
-* Studying feels less overwhelming.
-* I know what to focus on next.
-
-If students consistently feel these things, BRAUDLE is succeeding.
-
-
-# How BRAUDLE Works
-
-## What is BRAUDLE?
-
-BRAUDLE is an AI-powered personal tutor that lives inside your notes.
-
-Instead of studying alone, students learn alongside an AI tutor that studies their materials and adapts to how they learn over time.
-
-BRAUDLE is designed to help students understand concepts, practice what they learn, and build confidence through personalized learning.
-
----
-
-# Step 1: Create an Account
-
-Students can join BRAUDLE using:
-
-* Continue with Google
-* Continue with Email
-
-### Google Sign In
-
-If a student signs in with Google:
-
-* BRAUDLE automatically receives their name, email, and profile picture.
-* The student is not asked for their name during onboarding.
-
-### Email Sign In
-
-If a student signs in with Email:
-
-* A verification email is sent.
-* After verification, BRAUDLE asks for the student's preferred name.
-* The student then continues onboarding.
-
-BRAUDLE remembers the student after account creation.
-
-Students do not need to repeatedly set up their profile.
-
----
-
-# Step 2: Personal Onboarding
-
-BRAUDLE learns about the student before teaching.
-
-The onboarding process may ask questions such as:
-
-* What are you studying?
-* What is your current level?
-* What are your learning goals?
-* What subjects are you focusing on?
-
-These answers help create the student's learning profile.
-
-The learning profile helps BRAUDLE personalize future learning sessions.
-
----
-
-# Step 3: Dashboard
-
-After onboarding, students enter the BRAUDLE Dashboard.
-
-The dashboard acts as the student's learning home.
-
-Students can:
-
-* Upload learning materials
-* Continue previous study sessions
-* Review learning progress
-* Access recent documents
-* Resume learning with Braudle Tutor
-
-The dashboard should feel simple and focused on learning.
-
----
-
-# Step 4: Upload Learning Materials
-
-Students can upload:
-
-* PDFs
-* Lecture notes
-* Study materials
-* Slides
-* Handwritten notes
-* Images
-
-BRAUDLE immediately confirms the upload.
-
-Students should never wait for AI processing before continuing.
-
-Example:
-
-✓ Upload Complete
-
-BRAUDLE is studying your notes...
-
----
-
-# Step 5: BRAUDLE Studies the Material
-
-After upload, BRAUDLE begins studying the material in the background.
-
-BRAUDLE:
-
-* Reads the content
-* Understands the topics
-* Identifies important concepts
-* Creates a learning summary
-* Prepares itself to teach
-
-When complete, the material becomes ready for learning.
-
----
-
-# Step 6: Meet Braudle Tutor
-
-Braudle Tutor is the AI teacher inside BRAUDLE.
-
-When a document is ready, Braudle Tutor introduces it.
-
-Example:
-
-"Hi Daniel 👋
-
-I've finished reviewing your Biology notes.
-
-I found 5 important topics that we can work through together.
-
-What would you like help with today?"
-
-The tutor becomes the student's learning companion throughout the session.
-
----
-
-# Step 7: Learn With Braudle Tutor
-
-Students can interact naturally with the tutor.
-
-Examples:
-
-* Explain this concept
-* Simplify this topic
-* Give me an example
-* Help me understand this page
-* Test my understanding
-* Help me prepare for an exam
-
-Braudle Tutor always prioritizes information from the student's uploaded materials.
-
----
-
-# Step 8: Learning Experiences
-
-BRAUDLE focuses on what students want to achieve.
-
-Students can:
-
-### Understand
-
-Receive explanations, examples, and simplified breakdowns.
-
-### Review
-
-Revisit important concepts and summaries.
-
-### Practice
-
-Answer questions and receive feedback.
-
-### Prepare
-
-Study for quizzes, tests, and exams.
-
-### Ask
-
-Ask any question related to the learning material.
-
----
-
-# Step 9: Visual Learning
-
-When students need additional help, BRAUDLE can provide visual explanations.
-
-Examples include:
-
-* Concept maps
-* Topic relationships
-* Process diagrams
-* Flow explanations
-* Mathematical visualizations
-
-The goal is to help students understand concepts more clearly.
-
----
-
-# Step 10: Learning Profile Updates
-
-While the student learns, BRAUDLE learns too.
-
-After each study session, BRAUDLE updates the student's learning profile.
-
-BRAUDLE tracks:
-
-* Topics studied
-* Learning progress
-* Strong areas
-* Areas needing improvement
-* Study history
-
-This allows future sessions to become more personalized.
-
----
-
-# Step 11: Adaptive Learning
-
-Over time, BRAUDLE becomes a more effective tutor.
-
-The system gradually understands:
-
-* What the student knows
-* What the student struggles with
-* Which explanations work best
-* Which topics require more attention
-
-This helps BRAUDLE provide better support in every future learning session.
-
----
-
-# The BRAUDLE Difference
-
-Most AI study tools only learn the document.
-
-BRAUDLE learns:
-
-1. The student's materials.
-2. The student.
-
-This creates a tutor that becomes more helpful every time the student studies.
-
-BRAUDLE is not just an AI that answers questions.
-
-BRAUDLE is a tutor that grows with the student.
-### Flashcards
-
-For concepts that require memorization, students can generate flashcards directly from their learning materials.
-
-BRAUDLE automatically identifies important definitions, facts, formulas, and key concepts from the uploaded notes.
-
-To keep the experience focused and avoid overwhelming students, BRAUDLE generates a maximum of 5 flashcards at a time.
-
-Examples:
-
-* Definitions
-* Formulas
-* Vocabulary
-* Important dates
-* Key concepts
-
-The purpose of flashcards is quick review and long-term retention of important information.
-
-Students can generate new flashcards whenever they need additional practice.
+By combining the content of your study materials with your unique learning profile, BRAUDLE delivers a tailored learning companion that grows smarter, more personalized, and more helpful every time you study.

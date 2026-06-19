@@ -69,6 +69,24 @@ const studentProfileSchema = new Schema(
     averageScore: { type: Number, default: 0, min: 0, max: 100 },
     weeklyChallenge: { type: weeklyChallengeSchema, default: () => ({}) },
     learningHistory: { type: [learningHistoryItemSchema], default: [] },
+    /**
+     * Flashcards generated during study sessions.
+     * Auto-saved when generated in flashcard mode.
+     * Organized by documentId + topic so the frontend can render a proper flashcard library.
+     */
+    savedFlashcards: {
+      type: [
+        {
+          documentId: { type: Schema.Types.ObjectId, ref: 'Document', required: true },
+          documentTitle: { type: String, required: true },
+          topic: { type: String, required: true, trim: true },
+          front: { type: String, required: true, trim: true },
+          back: { type: String, required: true, trim: true },
+          savedAt: { type: Date, default: Date.now },
+        },
+      ],
+      default: [],
+    },
   },
   { timestamps: true }
 );

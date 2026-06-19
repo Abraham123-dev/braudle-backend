@@ -92,6 +92,18 @@ export const refreshSession = asyncHandler(async (req, res) => {
 export const startEmailLogin = asyncHandler(async (req, res) => {
   const { email } = req.body;
 
+  // Guard: If this email is already registered with Google OAuth only,
+  // sending them a magic link creates confusion (they'd log in but authProvider
+  // stays 'google'). Return a clear message directing them to Google Sign-In.
+  const existingUser = await User.findOne({ email }).select('authProvider googleId');
+  if (existingUser && existingUser.authProvider === 'google' && existingUser.googleId) {
+    return res.status(409).json({
+      status: 'error',
+      code: 'GOOGLE_ACCOUNT_EXISTS',
+      message: 'This email is linked to a Google account. Please sign in with Google instead.',
+    });
+  }
+
   const token = await AuthService.generateMagicToken(email);
   await EmailService.sendMagicLink(email, token);
 

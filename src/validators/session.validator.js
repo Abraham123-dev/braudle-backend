@@ -27,4 +27,7 @@ export const updateStateSchema = z.object({
     .optional(),
   currentChunkIndex: z.number().min(0).optional(),
   mentorSuggestion: z.string().optional(),
+  // Set by frontend when student selects a preparation style from the UI options.
+  // The AI will also ask in-chat if this is not set (i.e. still 'mixed').
+  preparationStyle: z.enum(['story', 'mcq', 'theory', 'mixed']).optional(),
 });

@@ -7,11 +7,12 @@ import { GROQ_MODELS } from '../config/models.js';
 
 /**
  * Generates a quiz from document chunks, using cache to save tokens.
- * @param {string} documentId 
+ * @param {string} documentId
  * @param {Object} profile - Student profile for level-based questions
  * @param {number} count - Question count
+ * @param {string[]} documentTopics - Known topics for strict topic-mapping in the prompt
  */
-export const generateQuiz = async (documentId, profile, count = 5) => {
+export const generateQuiz = async (documentId, profile, count = 5, documentTopics = []) => {
   // 1. Generate a versioned cache key
   const cacheKey = Cache.CACHE_KEYS.QUIZ_GENERATED(documentId, profile.level, count);
 
@@ -24,7 +25,8 @@ export const generateQuiz = async (documentId, profile, count = 5) => {
         throw new AppError('Document content not ready for quiz generation', 400);
       }
 
-      const prompt = buildQuizPrompt(document.chunks, profile, count);
+      // Pass documentTopics so the prompt enforces strict topic-mapping
+      const prompt = buildQuizPrompt(document.chunks, profile, count, documentTopics);
       const messages = [{ role: 'system', content: prompt }];
       const response = await AIService.callGroqWithRetry(messages, GROQ_MODELS.smart);
 

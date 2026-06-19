@@ -98,7 +98,7 @@ Returns the current logged-in user's data. Use this on app load to check auth st
 ---
 
 ### 1.6 `POST /auth/email/start`
-**Email Magic Link — Step 1.** Generates a secure, single-use token and emails a login link to the user. The response is always generic to prevent email enumeration attacks.
+**Email Magic Link — Step 1.** Generates a secure, single-use token and emails a login link to the user.
 - **Auth Required:** No
 - **Rate Limit:** 3 requests per 15 minutes per IP
 - **Request Body:**
@@ -106,10 +106,19 @@ Returns the current logged-in user's data. Use this on app load to check auth st
 { "email": "student@example.com" }
 ```
 - **Validation:** `email` must be a valid email address format.
-- **Response (always 200, regardless of whether the email exists):**
+- **Response (Standard success - 200 OK):**
 ```json
 {
   "message": "If an account exists with that email, a magic login link has been sent to your inbox."
+}
+```
+- **Response (Google Account Guard - 409 Conflict):**
+Returned if the email address is already registered via Google Sign-In only, to prevent authentication conflicts:
+```json
+{
+  "status": "error",
+  "code": "GOOGLE_ACCOUNT_EXISTS",
+  "message": "This email is linked to a Google account. Please sign in with Google instead."
 }
 ```
 - **Token:** Valid for **15 minutes**, single-use. The token is hashed before being stored in Redis — the raw token travels only via email.
@@ -205,6 +214,16 @@ Returns the student's full learning profile. Cached in Redis for 5 minutes.
       "description": "Student confused ATP production with glucose production.",
       "sessionId": "...",
       "occurredAt": "2026-06-12T10:00:00Z"
+    }
+  ],
+  "savedFlashcards": [
+    {
+      "_id": "card123",
+      "documentId": "doc5566",
+      "topic": "Photosynthesis",
+      "front": "What organelle performs photosynthesis?",
+      "back": "Chloroplasts",
+      "createdAt": "2026-06-19T09:12:00Z"
     }
   ],
   "xp": 245,
@@ -537,21 +556,54 @@ Marks the session as finished. **Immediately returns** a success response. Then,
 ---
 
 ### 4.6 `PATCH /sessions/:id/state`
-Updates the current mode or chunk index mid-session. Use this when the student switches learning modes (e.g., from `understand` to `review`) or when the frontend needs to advance to the next chunk.
+Updates the current mode, chunk index, or preparation style mid-session. Use this when the student switches learning modes (e.g., from `understand` to `review`), when advancing to the next chunk, or when selecting a preparation style.
 - **Auth Required:** Yes
 - **Request Body (all fields optional):**
 ```json
 {
   "mode": "review",
   "currentChunkIndex": 3,
-  "mentorSuggestion": "Consider reviewing Cellular Respiration next."
+  "mentorSuggestion": "Consider reviewing Cellular Respiration next.",
+  "preparationStyle": "story"
 }
 ```
+- **`preparationStyle` options:** `"story"` (narrative pedagogy) · `"mcq"` (multiple choice) · `"theory"` (essay response) · `"mixed"` (default)
 - **Response:**
 ```json
 { "status": "success", "session": { ...updated session... } }
 ```
 - **Error:** `404 Active session not found` if the session doesn't exist, doesn't belong to the user, or is not `"active"`.
+
+---
+
+### 4.7 `GET /sessions/flashcards`
+Retrieves the student's personal flashcard library, aggregating all saved flashcards across all documents and grouping them by document then topic.
+- **Auth Required:** Yes
+- **Response `200 OK`:**
+```json
+{
+  "status": "success",
+  "total": 1,
+  "library": [
+    {
+      "documentId": "doc5566",
+      "documentTitle": "Biology Notes",
+      "topics": [
+        {
+          "topic": "Photosynthesis",
+          "cards": [
+            {
+              "front": "What organelle performs photosynthesis?",
+              "back": "Chloroplasts",
+              "savedAt": "2026-06-19T09:12:00Z"
+            }
+          ]
+        }
+      ]
+    }
+  ]
+}
+```
 
 ---
 

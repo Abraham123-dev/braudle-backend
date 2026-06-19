@@ -121,6 +121,7 @@ Maintains the student's learning history, strengths, weaknesses, and gaming attr
 * `strongTopics` (Array of Strings): Topics the student has demonstrated competence in.
 * `recentScores` (Array of Numbers): Last 5 quiz scores for level updates.
 * `misconceptionHistory` (Array of Objects): Details of student mistakes, linking to `Session`.
+* `savedFlashcards` (Array of Objects): Structured library of flashcards generated in sessions, grouped by `documentId` and `topic` containing `front` (question) and `back` (answer).
 * `xp` (Number): Gamified Experience Points earned by answering questions.
 * `streak` & `longestStreak` (Numbers): Active consecutive daily study count.
 * `learningHistory` (Array of Objects): Snapshot logs of past session outcomes.
@@ -149,6 +150,7 @@ Represents an active or historical study engagement between the tutor and the st
 * `mode` (String): Active learning action (`'understand'`, `'review'`, `'practice'`, `'prepare'`, `'ask'`, `'flashcards'`).
 * `status` (String): `'active'`, `'completed'`, or `'abandoned'`.
 * `currentChunkIndex` (Number): Index of the chunk currently being focused on.
+* `preparationStyle` (String): Chosen exam preparation style (`'mixed'`, `'story'`, `'mcq'`, or `'theory'`).
 * `score` (Number): Latest score attained in this session.
 * `summary` (String): AI-generated post-session summary.
 * `mentorSuggestions` (Array of Strings): Actionable learning directions suggested by the AI tutor.
@@ -232,12 +234,12 @@ Redis is leveraged to store active streams, student profiles, generated quizzes,
 
 ### 3. Adaptive Learning & Goal Realignment
 Sessions are anchored to 6 distinct learning modes aligned with the student's level (`beginner`, `intermediate`, `advanced`):
-1. `understand` (breaks down complex concepts and details)
-2. `review` (summarizes notes and concepts)
-3. `practice` (asks active recall questions with feedback)
-4. `prepare` (runs simulated mock exams)
-5. `ask` (direct Q&A tutor chat)
-6. `flashcards` (quick review deck revisions, maximum of 5 cards per session)
+1. `understand` (breaks down complex concepts and details with step-by-step explanations, analogies, and optional YouTube visual recommendations)
+2. `review` (quick key points summary and recap of the material)
+3. `practice` (conversational inline practice questions in chat with active recall checking and targeted, misconception-aware feedback)
+4. `prepare` (runs simulated mock exams matching the student's preference: story-based narrative pedagogy, MCQs, theory/essays, or mixed)
+5. `ask` (free-form chat anchored to document concepts with contextual pivot suggestions)
+6. `flashcards` (generates structured active recall cards that are automatically parsed, sorted, and saved to the student's library)
 
 ### 4. Smart Quiz Evaluation
 * **MCQs / True-False**: Graded instantly on the backend for zero token cost, returning friendly, positive feedback.

@@ -63,4 +63,10 @@ export const env = {
   resend: {
     apiKey: process.env.RESEND_API_KEY,
   },
+
+  // Optional: YouTube Data API v3 key for real video suggestions in tutoring.
+  // If not set, the AI will skip YouTube suggestions gracefully.
+  youtube: {
+    apiKey: process.env.YOUTUBE_API_KEY || null,
+  },
 };

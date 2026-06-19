@@ -40,6 +40,17 @@ const sessionSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    /**
+     * Preparation style for 'prepare' mode.
+     * Set by the frontend via PATCH /:id/state OR chosen conversationally via AI.
+     * 'mixed' is the default — AI will ask the student what style they prefer
+     * if this is still 'mixed' when prepare mode is first entered.
+     */
+    preparationStyle: {
+      type: String,
+      enum: ['story', 'mcq', 'theory', 'mixed'],
+      default: 'mixed',
+    },
     startedAt: {
       type: Date,
       default: Date.now,
