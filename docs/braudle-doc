@@ -2,9 +2,17 @@ BRAUDLE
 AI-Powered Personal Learning Platform
 
 Full Product & Technical Documentation
-Version 1.0  |  Stack: Next.js (TS) · Node.js (JS) · Express · MongoDB · Docker
+Version 1.1 (Phase 2 Updates)  |  Stack: Next.js (TS) · Node.js (JS) · Express · MongoDB · Docker
 
-Author: Abraham (Jide)  |  May 2026
+Author: Abraham (Jide)  |  June 2026
+
+LATEST UPDATES:
+1. Google OAuth Guard: Intercepts email magic link requests from Google-registered accounts (returns 409) to prevent provider conflicts.
+2. Ingestion Optimization: Concurrency increased to 4 parallel workers. Text post-processing cleanups implemented to scrub non-printable artifacts.
+3. YouTube Integration Service: Graceful video suggestions powered by YouTube Data API v3 key configuration.
+4. Flexible Exam Preparation: Dual prepare flow allowing MCQ, story/scenario, theory/essay, or mixed styles (AI prompts student in-chat if not pre-configured).
+5. Auto-saved Flashcards: Generated cards automatically parsed and stored in the student profile's library, organized by document and topic.
+
 
 WHAT IS BRAUDLE?	BRAUDLE is an AI-powered personal tutor web app that transforms uploaded study materials (PDFs, notes) into interactive, adaptive learning experiences. It teaches, questions, evaluates, and personalises lessons for every student — acting as a 24/7 private tutor.
 

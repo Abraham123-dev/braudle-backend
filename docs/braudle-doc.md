@@ -6,6 +6,23 @@ Unlike generic chatbots, BRAUDLE studies your materials, remembers your learning
 
 ---
 
+## 🚀 What's New in BRAUDLE (Latest Updates)
+
+We have recently upgraded your personal AI tutor to make your learning experience even smoother, smarter, and more interactive:
+
+* **No More Account Confusion**: If you originally signed up using **Google**, we make sure you don't accidentally try to log in using an email magic link. The app will gently remind you to sign in with Google so that all your study sessions and documents stay safe under one single account.
+* **Handy YouTube Video Suggestions**: Sometimes, reading isn't enough to understand a tricky concept. Now, when the AI tutor notices a complex topic, it will suggest a real, high-quality educational YouTube video directly in the chat to help you visualize the concept.
+* **Choose Your Exam Prep Style**: When you switch to **Prepare Mode** to get ready for exams, you can now choose exactly how you want to be quizzed:
+  * 📖 **Story-based**: The AI explains a concept through a relatable story or real-world scenario, then asks you questions based on it.
+  * 🔘 **Multiple Choice (MCQ)**: Classic test-style questions with options, one at a time.
+  * ✍️ **Theory / Essay**: Practice writing out long-form answers and receive detailed grading.
+  * 🎯 **Mixed**: A balanced combination of all the above.
+  * *Don't worry if you don't choose a style—your AI tutor will friendly ask you what you prefer in chat before you start!*
+* **Auto-saved Flashcard Library**: Any flashcard your tutor creates during your sessions is now automatically saved and organized by subject and topic under your profile. You can visit your library anytime to revise them without losing your progress.
+* **Smarter & Faster Document Reading**: When you upload a new document, the system reads and analyzes the topics even faster in the background, providing you with a clean study guide and topic teaser list as soon as you open your chat.
+
+---
+
 ## 🌟 The Core Promise
 
 * **Consolidate**: Upload your notes, slides, and readings in one place.
