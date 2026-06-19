@@ -37,7 +37,7 @@ export const handleGoogleCallback = asyncHandler(async (req, res) => {
   setAccessCookie(res, accessToken);
   setRefreshCookie(res, refreshToken);
 
-  return res.redirect(env.frontendUrl);
+  return res.redirect(`${env.frontendUrl}/auth/callback`);
 });
 
 export const getMe = asyncHandler(async (req, res) => {
