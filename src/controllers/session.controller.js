@@ -70,6 +70,66 @@ const resolveYouTubeMarker = async (text) => {
   return text.replace(markerRegex, '');
 };
 
+
+/**
+ * Helper to generate a personalized AI welcome message.
+ */
+export const generateWelcomeText = (document, profile, name) => {
+  const firstName = name?.split(' ')[0] || 'there';
+
+  const topics = document.topics || [];
+  const summary = document.summary || '';
+  const weakTopics = profile.weakTopics || [];
+  const strongTopics = profile.strongTopics || [];
+  const totalChunks = document.totalChunks || 1;
+
+  // ── Richer, personalised welcome ──────────────────────────────────────────
+  let welcomeText = `Hey ${firstName}! 👋 I've finished reading your **${document.title}** notes and I'm ready to teach you.`;
+
+  if (totalChunks > 1) {
+    welcomeText += `\n\nThis document has **${totalChunks} sections** — we'll work through them together at your pace.`;
+  }
+
+  if (summary) {
+    welcomeText += `\n\n📖 **What this is about:**\n${summary}`;
+  }
+
+  if (topics.length > 0) {
+    welcomeText += `\n\n🗂️ **${topics.length} key topic${topics.length > 1 ? 's' : ''} I found:**`;
+    topics.forEach((t, i) => {
+      welcomeText += `\n${i + 1}. ${t}`;
+    });
+  }
+
+  // Personalise based on profile history
+  const relevantWeakTopics = weakTopics.filter(w =>
+    topics.some(t => t.toLowerCase().includes(w.toLowerCase()) || w.toLowerCase().includes(t.toLowerCase()))
+  );
+
+  if (relevantWeakTopics.length > 0) {
+    welcomeText += `\n\n⚠️ **Heads up:** Based on your past sessions, you've found **${relevantWeakTopics.join(', ')}** tricky before. I'll make sure we give those extra attention today.`;
+  }
+
+  if (strongTopics.length > 0) {
+    const relevantStrong = strongTopics.filter(s =>
+      topics.some(t => t.toLowerCase().includes(s.toLowerCase()) || s.toLowerCase().includes(t.toLowerCase()))
+    );
+    if (relevantStrong.length > 0) {
+      welcomeText += `\n\n✅ You've already shown strong understanding of **${relevantStrong.join(', ')}** — we'll build on that.`;
+    }
+  }
+
+  welcomeText += `\n\n**How would you like to start?**`;
+  welcomeText += `\n\nChoose one of the learning modes to begin:`;
+  welcomeText += `\n1. **📚 Understand**: Receive explanations, simplified breakdowns & examples.`;
+  welcomeText += `\n2. **🔄 Review**: Quick recap of key points and summaries.`;
+  welcomeText += `\n3. **✏️ Practice**: Answer tutor questions inline with instant feedback.`;
+  welcomeText += `\n4. **🎯 Prepare**: Exam simulation prep (story, MCQ, theory, or mixed).`;
+  welcomeText += `\n5. **💬 Ask Anything**: Free-form discussion/chat about the material.`;
+
+  return welcomeText;
+};
+
 /**
  * Starts a new learning session for a specific document
  */
@@ -85,26 +145,40 @@ export const startSession = asyncHandler(async (req, res) => {
     throw new AppError('Document is still being processed. Please wait.', 400);
   }
 
-  // 2. Mark any other active sessions for this document as 'abandoned'
-  await Session.updateMany(
-    { userId, documentId, status: 'active' },
-    { status: 'abandoned' }
-  );
+  // 2. Check if there is already an active session for this document
+  let session = await Session.findOne({ userId, documentId, status: 'active' });
 
-  // 3. Create the session
-  const session = await Session.create({
-    userId,
-    documentId,
-    mode: mode || 'understand',
-    currentChunkIndex: 0,
-  });
+  if (session) {
+    if (mode) {
+      session.mode = mode;
+      await session.save();
+    }
+  } else {
+    // 3. Create the session
+    session = await Session.create({
+      userId,
+      documentId,
+      mode: mode || 'understand',
+      currentChunkIndex: 0,
+    });
 
-  // 4. Initialize empty conversation
-  await Conversation.create({
-    sessionId: session._id,
-    userId,
-    messages: [],
-  });
+    const profile = await ProfileService.getProfile(userId);
+    const name = req.user.name === 'New Student' ? '' : req.user.name;
+    const welcomeText = generateWelcomeText(document, profile || { weakTopics: [], strongTopics: [] }, name);
+
+    // 4. Initialize conversation with the welcome message
+    await Conversation.create({
+      sessionId: session._id,
+      userId,
+      messages: [
+        {
+          role: 'assistant',
+          content: welcomeText,
+          timestamp: new Date()
+        }
+      ],
+    });
+  }
 
   res.status(201).json({
     status: 'success',
@@ -400,51 +474,7 @@ export const getWelcomeMessage = asyncHandler(async (req, res) => {
   if (!profile) throw new AppError('Student profile not found', 404);
 
   const name = req.user.name === 'New Student' ? '' : req.user.name;
-  const firstName = name?.split(' ')[0] || 'there';
-
-  const topics = document.topics || [];
-  const summary = document.summary || '';
-  const weakTopics = profile.weakTopics || [];
-  const strongTopics = profile.strongTopics || [];
-  const totalChunks = document.totalChunks || 1;
-
-  // ── Richer, personalised welcome ──────────────────────────────────────────
-  let welcomeText = `Hey ${firstName}! 👋 I've finished reading your **${document.title}** notes and I'm ready to teach you.`;
-
-  if (totalChunks > 1) {
-    welcomeText += `\n\nThis document has **${totalChunks} sections** — we'll work through them together at your pace.`;
-  }
-
-  if (summary) {
-    welcomeText += `\n\n📖 **What this is about:**\n${summary}`;
-  }
-
-  if (topics.length > 0) {
-    welcomeText += `\n\n🗂️ **${topics.length} key topic${topics.length > 1 ? 's' : ''} I found:**`;
-    topics.forEach((t, i) => {
-      welcomeText += `\n${i + 1}. ${t}`;
-    });
-  }
-
-  // Personalise based on profile history
-  const relevantWeakTopics = weakTopics.filter(w =>
-    topics.some(t => t.toLowerCase().includes(w.toLowerCase()) || w.toLowerCase().includes(t.toLowerCase()))
-  );
-
-  if (relevantWeakTopics.length > 0) {
-    welcomeText += `\n\n⚠️ **Heads up:** Based on your past sessions, you've found **${relevantWeakTopics.join(', ')}** tricky before. I'll make sure we give those extra attention today.`;
-  }
-
-  if (strongTopics.length > 0) {
-    const relevantStrong = strongTopics.filter(s =>
-      topics.some(t => t.toLowerCase().includes(s.toLowerCase()) || s.toLowerCase().includes(t.toLowerCase()))
-    );
-    if (relevantStrong.length > 0) {
-      welcomeText += `\n\n✅ You've already shown strong understanding of **${relevantStrong.join(', ')}** — we'll build on that.`;
-    }
-  }
-
-  welcomeText += `\n\n**How would you like to start?**`;
+  const welcomeText = generateWelcomeText(document, profile, name);
 
   const learningModes = [
     { id: 'understand', label: '📚 Understand',    description: 'I explain each section step-by-step with examples. Best for first-time learning.' },
@@ -459,10 +489,10 @@ export const getWelcomeMessage = asyncHandler(async (req, res) => {
     status: 'success',
     welcome: {
       message: welcomeText,
-      topics,
-      summary,
+      topics: document.topics || [],
+      summary: document.summary || '',
       documentTitle: document.title,
-      totalChunks,
+      totalChunks: document.totalChunks || 1,
       learningModes,
     },
   });

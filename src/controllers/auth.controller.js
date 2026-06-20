@@ -60,7 +60,13 @@ export const getMe = asyncHandler(async (req, res) => {
 export const logout = asyncHandler(async (req, res) => {
   const refreshToken = req.cookies?.[REFRESH_COOKIE];
 
-  await AuthService.revokeToken(refreshToken);
+  if (refreshToken) {
+    try {
+      await AuthService.revokeToken(refreshToken);
+    } catch (err) {
+      console.error('[AUTH] Failed to revoke refresh token in database during logout:', err);
+    }
+  }
 
   res.clearCookie(ACCESS_COOKIE, COOKIE_OPTIONS);
   res.clearCookie(REFRESH_COOKIE, COOKIE_OPTIONS);
@@ -144,8 +150,10 @@ export const updateOnboardingName = asyncHandler(async (req, res) => {
   const { name } = req.body;
   const userId = req.user.id;
 
+  const singleName = name.trim().split(/\s+/)[0];
+
   // 1. Prevent users from manually setting their name to the placeholder string
-  if (name.toLowerCase() === 'new student') {
+  if (singleName.toLowerCase() === 'new student') {
     throw new AppError("Invalid name. Please provide your actual name.", 400);
   }
 
@@ -153,7 +161,7 @@ export const updateOnboardingName = asyncHandler(async (req, res) => {
   // This prevents users from reusing this onboarding endpoint to change their name later.
   const user = await User.findOneAndUpdate(
     { _id: userId, name: 'New Student' },
-    { name },
+    { name: singleName },
     { new: true, runValidators: true }
   ).select('name email avatar role onboardingComplete authProvider');
 

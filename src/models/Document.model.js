@@ -85,7 +85,11 @@ const documentSchema = new mongoose.Schema(
       default: false,
     },
   },
-  { timestamps: true }
+  { 
+    timestamps: true,
+    toJSON: { virtuals: true },
+    toObject: { virtuals: true }
+  }
 );
 
 // Indexes to speed up common queries
