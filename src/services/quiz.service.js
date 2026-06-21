@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import * as AIService from './ai.service.js';
 import * as Cache from '../utils/cache.js';
 import { buildQuizPrompt, buildCustomAssessmentPrompt } from '../utils/promptBuilder.js';
@@ -46,11 +47,12 @@ export const generateQuiz = async (documentId, profile, count = 5, documentTopic
  * Generates a custom practice exam/quiz with specific parameters
  */
 export const generateCustomAssessment = async (documentId, options) => {
+  const instructionsHash = options.instructions ? crypto.createHash('md5').update(options.instructions).digest('hex') : 'none';
   const cacheKey = Cache.CACHE_KEYS.QUIZ_CUSTOM(
     documentId,
     options.difficulty,
     options.format,
-    options.numQuestions
+    `${options.numQuestions}_${instructionsHash}`
   );
   
   return await Cache.getOrSet(

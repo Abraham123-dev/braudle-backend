@@ -82,6 +82,7 @@ export const generateQuiz = asyncHandler(async (req, res) => {
   const quiz = await Quiz.create({
     sessionId: session._id,
     documentId: session.documentId,
+    isExam: false,
     questions: normalizedQuestions,
     totalQuestions: normalizedQuestions.length,
   });
@@ -102,25 +103,34 @@ export const generateQuiz = asyncHandler(async (req, res) => {
  * Generate a custom practice assessment (exam/quiz)
  */
 export const generateCustomAssessment = asyncHandler(async (req, res) => {
-  const { documentId, format, difficulty, numQuestions } = req.body;
+  const { documentId, sessionId, format, difficulty, numQuestions, isExam, instructions } = req.body;
   const userId = req.user.id;
 
   const document = await Document.findOne({ _id: documentId, userId });
   if (!document) throw new AppError('Document not found or access denied', 404);
 
-  // We need to anchor this to a session for history and grading.
-  // Create a fast, background 'exam' session.
-  const session = await Session.create({
-    userId,
-    documentId,
-    mode: format === 'theory' || difficulty === 'expert' ? 'prepare' : 'practice',
-    status: 'active'
-  });
+  let activeSessionId;
+  if (sessionId) {
+    const session = await Session.findOne({ _id: sessionId, userId, documentId });
+    if (!session) throw new AppError('Session not found or access denied', 404);
+    activeSessionId = session._id;
+  } else {
+    // We need to anchor this to a session for history and grading.
+    // Create a fast, background 'exam' session.
+    const session = await Session.create({
+      userId,
+      documentId,
+      mode: format === 'theory' || difficulty === 'expert' ? 'prepare' : 'practice',
+      status: 'active'
+    });
+    activeSessionId = session._id;
+  }
 
   const quizData = await QuizService.generateCustomAssessment(documentId, { 
     format, 
     difficulty, 
     numQuestions,
+    instructions,
     documentTopics: document.topics || []
   });
   const questions = quizData.questions || quizData;
@@ -132,8 +142,9 @@ export const generateCustomAssessment = asyncHandler(async (req, res) => {
   const normalizedQuestions = normalizeQuestions(questions);
 
   const quiz = await Quiz.create({
-    sessionId: session._id,
+    sessionId: activeSessionId,
     documentId: documentId,
+    isExam: !!isExam,
     questions: normalizedQuestions,
     totalQuestions: normalizedQuestions.length,
   });
@@ -146,6 +157,38 @@ export const generateCustomAssessment = asyncHandler(async (req, res) => {
     },
   });
 });
+
+// Helper for fast programmatic grading of MCQ/TrueFalse questions
+const gradeMcqOrTrueFalse = (studentAns, correctAns) => {
+  if (!studentAns || !correctAns) return false;
+  const cleanStudent = studentAns.trim().toLowerCase();
+  const cleanCorrect = correctAns.trim().toLowerCase();
+
+  if (cleanStudent === cleanCorrect) return true;
+
+  if (cleanCorrect === 'true' || cleanCorrect === 'false') {
+    if (cleanStudent === 't' && cleanCorrect === 'true') return true;
+    if (cleanStudent === 'f' && cleanCorrect === 'false') return true;
+    return false;
+  }
+
+  const getLetterPrefix = (str) => {
+    const match = str.match(/^([a-d])\s*[\.\)]/i);
+    return match ? match[1].toLowerCase() : null;
+  };
+
+  const studentPrefix = getLetterPrefix(studentAns);
+  const correctPrefix = getLetterPrefix(correctAns);
+
+  if (studentPrefix && correctPrefix && studentPrefix === correctPrefix) return true;
+  if (studentAns.length === 1 && correctPrefix && cleanStudent === correctPrefix) return true;
+  if (correctAns.length === 1 && studentPrefix && cleanCorrect === studentPrefix) return true;
+
+  const stripPrefix = (str) => str.replace(/^([a-d])\s*[\.\)]\s*/i, '').trim().toLowerCase();
+  if (stripPrefix(studentAns) === stripPrefix(correctAns)) return true;
+
+  return false;
+};
 
 /**
  * Submit answers and grade the quiz using zero-cost embeddings
@@ -164,38 +207,6 @@ export const submitQuiz = asyncHandler(async (req, res) => {
   if (quiz.score !== undefined) {
     throw new AppError('Quiz has already been submitted', 400);
   }
-
-  // Helper for fast programmatic grading of MCQ/TrueFalse questions
-  const gradeMcqOrTrueFalse = (studentAns, correctAns) => {
-    if (!studentAns || !correctAns) return false;
-    const cleanStudent = studentAns.trim().toLowerCase();
-    const cleanCorrect = correctAns.trim().toLowerCase();
-
-    if (cleanStudent === cleanCorrect) return true;
-
-    if (cleanCorrect === 'true' || cleanCorrect === 'false') {
-      if (cleanStudent === 't' && cleanCorrect === 'true') return true;
-      if (cleanStudent === 'f' && cleanCorrect === 'false') return true;
-      return false;
-    }
-
-    const getLetterPrefix = (str) => {
-      const match = str.match(/^([a-d])\s*[\.\)]/i);
-      return match ? match[1].toLowerCase() : null;
-    };
-
-    const studentPrefix = getLetterPrefix(studentAns);
-    const correctPrefix = getLetterPrefix(correctAns);
-
-    if (studentPrefix && correctPrefix && studentPrefix === correctPrefix) return true;
-    if (studentAns.length === 1 && correctPrefix && cleanStudent === correctPrefix) return true;
-    if (correctAns.length === 1 && studentPrefix && cleanCorrect === studentPrefix) return true;
-
-    const stripPrefix = (str) => str.replace(/^([a-d])\s*[\.\)]\s*/i, '').trim().toLowerCase();
-    if (stripPrefix(studentAns) === stripPrefix(correctAns)) return true;
-
-    return false;
-  };
 
   // Grade each answer in parallel
   await Promise.all(quiz.questions.map(async (q) => {
@@ -244,6 +255,69 @@ export const submitQuiz = asyncHandler(async (req, res) => {
 });
 
 /**
+ * Grade a single question in real-time
+ */
+export const gradeQuestion = asyncHandler(async (req, res) => {
+  const { quizId } = req.params;
+  const { questionId, answer } = req.body;
+  const userId = req.user.id;
+
+  const quiz = await Quiz.findById(quizId).populate('sessionId');
+  if (!quiz) throw new AppError('Quiz not found', 404);
+  if (quiz.sessionId.userId.toString() !== userId) {
+    throw new AppError('Forbidden: Access denied', 403);
+  }
+
+  const question = quiz.questions.id(questionId);
+  if (!question) throw new AppError('Question not found in this quiz', 404);
+
+  let isCorrect = false;
+  let feedback = '';
+
+  if (question.type === 'mcq' || question.type === 'true_false') {
+    isCorrect = gradeMcqOrTrueFalse(answer, question.answer);
+    feedback = isCorrect 
+      ? "Excellent! Your answer is correct." 
+      : `Incorrect. The correct option was: ${question.answer}.`;
+  } else {
+    const result = await AIService.evaluateTheoryAnswer(
+      question.question,
+      answer,
+      question.answer
+    );
+    isCorrect = result.evaluation === 'correct' || result.evaluation === 'partial';
+    feedback = result.feedback;
+  }
+
+  // Update question values
+  question.studentAnswer = answer;
+  question.isCorrect = isCorrect;
+  question.feedback = feedback;
+
+  // Check if all questions are answered, if so calculate and save score
+  const allAnswered = quiz.questions.every(q => q.studentAnswer && q.studentAnswer.trim().length > 0);
+  let newLevel = null;
+  if (allAnswered) {
+    const score = calculateScore(quiz.questions);
+    quiz.score = score;
+    quiz.submittedAt = new Date();
+    newLevel = await ProfileService.updateProfileAfterQuiz(userId, score, quiz.questions);
+  }
+
+  await quiz.save();
+
+  res.status(200).json({
+    status: 'success',
+    isCorrect,
+    correctAnswer: question.answer,
+    feedback,
+    explanation: question.explanation || '',
+    quizScore: quiz.score,
+    newLevel
+  });
+});
+
+/**
  * Get the user's quiz history
  */
 export const getQuizHistory = asyncHandler(async (req, res) => {
@@ -285,4 +359,25 @@ export const getQuiz = asyncHandler(async (req, res) => {
   }
 
   res.status(200).json({ status: 'success', quiz: returnedQuiz });
+});
+
+/**
+ * Get quizzes generated for a specific session
+ */
+export const getSessionQuizzes = asyncHandler(async (req, res) => {
+  const { sessionId } = req.params;
+  const userId = req.user.id;
+
+  const session = await Session.findOne({ _id: sessionId, userId });
+  if (!session) throw new AppError('Session not found', 404);
+
+  const quizzes = await Quiz.find({ sessionId })
+    .populate('documentId', 'title')
+    .sort({ createdAt: -1 });
+
+  res.status(200).json({
+    status: 'success',
+    results: quizzes.length,
+    quizzes
+  });
 });

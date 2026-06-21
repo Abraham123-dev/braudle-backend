@@ -9,9 +9,12 @@ export const generateQuizSchema = z
 export const generateCustomAssessmentSchema = z
   .object({
     documentId: z.string().length(24, 'Invalid document ID'),
-    format: z.enum(['objective', 'subjective', 'theory', 'mixed']),
-    difficulty: z.enum(['easy', 'medium', 'hard', 'expert']),
-    numQuestions: z.number().min(5).max(30)
+    sessionId: z.string().length(24, 'Invalid session ID').optional(),
+    format: z.enum(['objective', 'subjective', 'theory', 'mixed', 'story-based']),
+    difficulty: z.enum(['easy', 'medium', 'hard', 'expert']).optional().default('medium'),
+    numQuestions: z.number().min(1).max(20).optional().default(15),
+    isExam: z.boolean().optional().default(false),
+    instructions: z.string().max(1000).optional()
   })
   .strict();
 
@@ -28,5 +31,12 @@ export const submitQuizSchema = z
       )
       .min(1, 'No answers provided')
       .max(20, 'Too many answers'),
+  })
+  .strict();
+
+export const gradeQuestionSchema = z
+  .object({
+    questionId: z.string().length(24, 'Invalid question ID'),
+    answer: z.string().min(1, 'Answer cannot be empty').max(2000, 'Answer is too long'),
   })
   .strict();

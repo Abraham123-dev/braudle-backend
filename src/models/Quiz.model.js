@@ -24,6 +24,7 @@ const quizSchema = new mongoose.Schema(
       ref: 'Document', 
       required: true 
     },
+    isExam: { type: Boolean, default: false },
     questions: [questionSchema],
     totalQuestions: { type: Number, required: true },
     score: { type: Number },

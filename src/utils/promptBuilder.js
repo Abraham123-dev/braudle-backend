@@ -120,6 +120,17 @@ Rules:
 
   // ── Layer 6: Behaviour rules ──────────────────────────────────────────────
   const rules = `RULES YOU MUST ALWAYS FOLLOW:
+- DIRECT GENERATIONS TO STUDIO: If the student asks you to generate a quiz, practice test, exam, or flashcards in the chat, do NOT generate them. Instead, politely direct them to the "Braudle Modes / Studio" panel on the right (or the "Braudle Modes" tab on mobile) where they can configure and generate them directly.
+- KEY CONCEPTS: Remind the student that they can click on any of the Key Concepts in the left sidebar at any time to understand their depth or get focused explanations here in the chat.
+- MATHEMATICAL FORMULAS: When displaying mathematical expressions, you MUST follow these guidelines:
+  1. Always write equations in LaTeX format.
+  2. Use display math for important formulas: $$ ... $$ (on its own line, centered).
+  3. Use inline math for short expressions: $ ... $
+  4. Use proper LaTeX commands for fractions (\frac{a}{b}), square roots (\sqrt{x}), powers (x^2), integrals (\int_a^b), summations (\sum_{i=1}^{n}), matrices (\begin{bmatrix} ... \end{bmatrix}), etc.
+  5. Explain every step in plain language before showing the next equation.
+  6. Keep formatting clean and suitable for students.
+  7. Never output ASCII-style or raw unicode math (like ∮, ε_0, ⋅) when LaTeX can be used.
+  8. For multi-step solutions, separate each step onto its own line.
 - MENTORSHIP: If the student demonstrates clear mastery (correctly answers 2-3 questions in a row), congratulate them and suggest a next step. Never push forward blindly.
 - RESPECT THE STUDENT: Never be harsh, dismissive, or skip incorrect answers. Every mistake is a learning opportunity.
 - STAY ANCHORED: Your responses must be grounded in the document content. Do not invent facts.
@@ -222,6 +233,15 @@ SECTION CONTENT:
 ${chunk}
 
 Generate ONE practice question from the section content above. Ask it conversationally, as if you are sitting next to the student. After they answer, evaluate their response and provide specific, helpful feedback. Then ask if they want another question or to continue to the next section.
+If the question, answer, feedback, or explanation contains any mathematical variables, formulas, equations, or expressions, you MUST follow these guidelines:
+1. Always write equations in LaTeX format.
+2. Use display math for important formulas: $$ ... $$
+3. Use inline math for short expressions: $ ... $
+4. Use proper LaTeX commands for fractions (\frac{a}{b}), square roots (\sqrt{x}), powers (x^2), integrals (\int_a^b), summations (\sum_{i=1}^{n}), matrices (\begin{bmatrix} ... \end{bmatrix}), etc.
+5. Explain every step in plain language before showing the next equation.
+6. Keep formatting clean and suitable for students.
+7. Never output ASCII-style or raw unicode math (like ∮, ε_0, ⋅) when LaTeX can be used.
+8. For multi-step solutions, separate each step onto its own line.
 
 Keep the entire interaction friendly and supportive.`;
 };
@@ -251,9 +271,40 @@ const buildQuizPrompt = (chunks, profile, count = 5, documentTopics = []) => {
 Generate exactly ${count} questions based ONLY on the content provided below.
 Mix question types: 60% MCQ, 40% short theory.
 ${levelNote}
-Each question MUST include these fields: topic, question, type, options (MCQ only), answer, explanation.
+Each question MUST include these fields: topic, question, type (mcq/true_false/theory), options (only for mcq), answer, explanation.
 ${topicsNote}
-Return ONLY a valid JSON array. No markdown. No preamble. No trailing text.
+
+MATHEMATICAL FORMULAS REQUIREMENT:
+When displaying mathematical expressions, you MUST follow these guidelines:
+1. Always write equations in LaTeX format.
+2. Use display math for important formulas: $$ ... $$
+3. Use inline math for short expressions: $ ... $
+4. Use proper LaTeX commands for fractions (\frac{a}{b}), square roots (\sqrt{x}), powers (x^2), integrals (\int_a^b), summations (\sum_{i=1}^{n}), matrices (\begin{bmatrix} ... \end{bmatrix}), etc.
+5. Explain every step in plain language before showing the next equation.
+6. Keep formatting clean and suitable for students.
+7. Never output ASCII-style or raw unicode math (like ∮, ε_0, ⋅) when LaTeX can be used.
+8. For multi-step solutions, separate each step onto its own line.
+
+Return ONLY a valid JSON array containing the questions. Do NOT wrap it in markdown code fences, do not write "Here is your JSON", do not write any preambles or explanations.
+
+JSON SCHEMA EXAMPLE:
+[
+  {
+    "topic": "Topic Name",
+    "question": "The question text here...",
+    "type": "mcq",
+    "options": ["Option A", "Option B", "Option C", "Option D"],
+    "answer": "Option A",
+    "explanation": "Detailed explanation of why this answer is correct."
+  },
+  {
+    "topic": "Topic Name",
+    "question": "The question text here...",
+    "type": "theory",
+    "answer": "Expected model answer description...",
+    "explanation": "Detailed explanation of key concepts tested."
+  }
+]
 
 CONTENT TO USE:
 ${chunks.join('\n\n---\n\n')}`;
@@ -330,7 +381,7 @@ ${transcript}`;
  * Builds the prompt for custom practice quizzes or exams.
  */
 const buildCustomAssessmentPrompt = (chunks, options) => {
-  const { format, difficulty, numQuestions, documentTopics = [] } = options;
+  const { format, difficulty, numQuestions, instructions, documentTopics = [] } = options;
 
   let difficultyNote = '';
   switch(difficulty) {
@@ -345,11 +396,18 @@ const buildCustomAssessmentPrompt = (chunks, options) => {
   if (format === 'objective')  formatNote = 'ALL questions MUST be multiple choice (mcq) or true_false.';
   else if (format === 'subjective') formatNote = 'ALL questions MUST be short answer theory (theory).';
   else if (format === 'theory') formatNote = 'ALL questions MUST be long-form conceptual essays (theory) with detailed answers expected.';
+  else if (format === 'story-based') formatNote = 'ALL questions MUST be story-based or case study scenario questions. Each question must present a brief real-world scenario or story (3-5 sentences) and then test the student\'s understanding of key concepts in that scenario. Make the questions tricky to test the student\'s level of thinking and deep reasoning.';
   else formatNote = 'Mix question types: 60% MCQ, 40% short theory.';
 
   const topicsNote = documentTopics.length > 0
     ? `Map each question to one of these topics: ${documentTopics.join(', ')}.`
     : 'Assign a specific topic name (1-3 words) to each question based on its content.';
+
+  const customInstructionsNote = instructions
+    ? `ADDITIONAL STUDENT CUSTOM FOCUS / INSTRUCTIONS:
+"${instructions}"
+Strictly ensure that the questions generated align with this custom focus.`
+    : '';
 
   return `You are an expert exam setter.
 Generate exactly ${numQuestions} questions based ONLY on the content provided below.
@@ -360,9 +418,42 @@ ${difficultyNote}
 FORMAT REQUIREMENT:
 ${formatNote}
 
+${customInstructionsNote}
+
 Each question MUST include these fields: topic, question, type (mcq/true_false/theory), options (only for mcq), answer, explanation.
 ${topicsNote}
-Return ONLY a valid JSON array. No markdown. No preamble. No trailing text.
+
+MATHEMATICAL FORMULAS REQUIREMENT:
+When displaying mathematical expressions, you MUST follow these guidelines:
+1. Always write equations in LaTeX format.
+2. Use display math for important formulas: $$ ... $$
+3. Use inline math for short expressions: $ ... $
+4. Use proper LaTeX commands for fractions (\frac{a}{b}), square roots (\sqrt{x}), powers (x^2), integrals (\int_a^b), summations (\sum_{i=1}^{n}), matrices (\begin{bmatrix} ... \end{bmatrix}), etc.
+5. Explain every step in plain language before showing the next equation.
+6. Keep formatting clean and suitable for students.
+7. Never output ASCII-style or raw unicode math (like ∮, ε_0, ⋅) when LaTeX can be used.
+8. For multi-step solutions, separate each step onto its own line.
+
+Return ONLY a valid JSON array containing the questions. Do NOT wrap it in markdown code fences, do not write "Here is your JSON", do not write any preambles or explanations.
+
+JSON SCHEMA EXAMPLE:
+[
+  {
+    "topic": "Topic Name",
+    "question": "The question text here...",
+    "type": "mcq",
+    "options": ["Option A", "Option B", "Option C", "Option D"],
+    "answer": "Option A",
+    "explanation": "Detailed explanation of why this answer is correct."
+  },
+  {
+    "topic": "Topic Name",
+    "question": "The question text here...",
+    "type": "theory",
+    "answer": "Expected model answer description...",
+    "explanation": "Detailed explanation of key concepts tested."
+  }
+]
 
 CONTENT TO USE:
 ${chunks.join('\n\n---\n\n')}`;

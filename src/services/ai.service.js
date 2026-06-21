@@ -68,7 +68,7 @@ export const callGroq = async (messages, model = GROQ_MODELS.smart) => {
     model,
     messages,
     temperature: 0.5,
-    max_tokens: 2048,
+    max_tokens: 4096,
   });
 
   return completion.choices[0]?.message?.content || '';

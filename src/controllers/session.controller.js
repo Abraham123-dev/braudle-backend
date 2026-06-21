@@ -119,13 +119,8 @@ export const generateWelcomeText = (document, profile, name) => {
     }
   }
 
-  welcomeText += `\n\n**How would you like to start?**`;
-  welcomeText += `\n\nChoose one of the learning modes to begin:`;
-  welcomeText += `\n1. **📚 Understand**: Receive explanations, simplified breakdowns & examples.`;
-  welcomeText += `\n2. **🔄 Review**: Quick recap of key points and summaries.`;
-  welcomeText += `\n3. **✏️ Practice**: Answer tutor questions inline with instant feedback.`;
-  welcomeText += `\n4. **🎯 Prepare**: Exam simulation prep (story, MCQ, theory, or mixed).`;
-  welcomeText += `\n5. **💬 Ask Anything**: Free-form discussion/chat about the material.`;
+  welcomeText += `\n\n💡 **Tip**: You can click on any of the **Key Concepts** in the left sidebar at any time to automatically get a detailed explanation here in the chat.`;
+  welcomeText += `\n\nTo test your knowledge, check out the **Braudle Modes** panel on the right (or tap the tab on mobile) where you can generate practice tests, exam simulations, or memory flashcards!`;
 
   return welcomeText;
 };
@@ -137,13 +132,10 @@ export const startSession = asyncHandler(async (req, res) => {
   const { documentId, mode } = req.body;
   const userId = req.user.id;
 
-  // 1. Verify document exists, belongs to user, and is processed
+  // 1. Verify document exists and belongs to user
   const document = await Document.findOne({ _id: documentId, userId });
   if (!document) throw new AppError('Document not found', 404);
   if (document.userId.toString() !== userId) throw new AppError('Forbidden: Access denied', 403);
-  if (document.processingStatus !== 'ready') {
-    throw new AppError('Document is still being processed. Please wait.', 400);
-  }
 
   // 2. Check if there is already an active session for this document
   let session = await Session.findOne({ userId, documentId, status: 'active' });
@@ -162,21 +154,23 @@ export const startSession = asyncHandler(async (req, res) => {
       currentChunkIndex: 0,
     });
 
-    const profile = await ProfileService.getProfile(userId);
-    const name = req.user.name === 'New Student' ? '' : req.user.name;
-    const welcomeText = generateWelcomeText(document, profile || { weakTopics: [], strongTopics: [] }, name);
+    const messages = [];
+    if (document.processingStatus === 'ready') {
+      const profile = await ProfileService.getProfile(userId);
+      const name = req.user.name === 'New Student' ? '' : req.user.name;
+      const welcomeText = generateWelcomeText(document, profile || { weakTopics: [], strongTopics: [] }, name);
+      messages.push({
+        role: 'assistant',
+        content: welcomeText,
+        timestamp: new Date()
+      });
+    }
 
-    // 4. Initialize conversation with the welcome message
+    // 4. Initialize conversation (with welcome message if document is ready)
     await Conversation.create({
       sessionId: session._id,
       userId,
-      messages: [
-        {
-          role: 'assistant',
-          content: welcomeText,
-          timestamp: new Date()
-        }
-      ],
+      messages,
     });
   }
 
@@ -347,7 +341,7 @@ export const chatSession = asyncHandler(async (req, res) => {
 
 export const getSession = asyncHandler(async (req, res) => {
   const session = await Session.findOne({ _id: req.params.id, userId: req.user.id })
-    .populate('documentId', 'title subject');
+    .populate('documentId', 'title subject processingStatus processingStage');
   
   if (!session) throw new AppError('Session not found', 404);
   if (session.userId.toString() !== req.user.id) throw new AppError('Forbidden: Access denied', 403);
@@ -475,6 +469,17 @@ export const getWelcomeMessage = asyncHandler(async (req, res) => {
 
   const name = req.user.name === 'New Student' ? '' : req.user.name;
   const welcomeText = generateWelcomeText(document, profile, name);
+
+  // Auto-save welcome message to empty conversations
+  let conversation = await Conversation.findOne({ sessionId });
+  if (conversation && conversation.messages.length === 0) {
+    conversation.messages.push({
+      role: 'assistant',
+      content: welcomeText,
+      timestamp: new Date()
+    });
+    await conversation.save();
+  }
 
   const learningModes = [
     { id: 'understand', label: '📚 Understand',    description: 'I explain each section step-by-step with examples. Best for first-time learning.' },
