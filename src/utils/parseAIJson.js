@@ -8,16 +8,32 @@
 export const parseAIJson = (content, defaultValue = {}) => {
   if (!content || typeof content !== 'string') return defaultValue;
   try {
-    const startIndex = content.indexOf('{');
-    if (startIndex === -1) return defaultValue;
+    const startObj = content.indexOf('{');
+    const startArr = content.indexOf('[');
+    
+    if (startObj === -1 && startArr === -1) return defaultValue;
+    
+    let startIndex = -1;
+    let openChar = '';
+    let closeChar = '';
+    
+    if (startObj !== -1 && (startArr === -1 || startObj < startArr)) {
+      startIndex = startObj;
+      openChar = '{';
+      closeChar = '}';
+    } else {
+      startIndex = startArr;
+      openChar = '[';
+      closeChar = ']';
+    }
 
     let depth = 0;
     let found = false;
     let endIndex = -1;
 
     for (let i = startIndex; i < content.length; i++) {
-      if (content[i] === '{') depth++;
-      else if (content[i] === '}') depth--;
+      if (content[i] === openChar) depth++;
+      else if (content[i] === closeChar) depth--;
 
       if (depth === 0) {
         endIndex = i;
@@ -26,7 +42,7 @@ export const parseAIJson = (content, defaultValue = {}) => {
       }
     }
 
-    if (!found) throw new Error('Unbalanced or missing braces');
+    if (!found) throw new Error('Unbalanced or missing braces/brackets');
 
     const jsonStr = content.substring(startIndex, endIndex + 1).trim();
     return JSON.parse(jsonStr);

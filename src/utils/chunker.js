@@ -7,38 +7,76 @@ const splitIntoChunks = (text, wordLimit = 300) => {
   
   const paragraphs = text.split('\n\n').filter(p => p.trim());
   const chunks = [];
-  let currentChunk = '';
+  let currentChunk = [];
   let currentWordCount = 0;
 
- for (const para of paragraphs) {
-  const words = para.split(/\s+/);
-  const wordCount = words.length;
+  const getWordCount = (str) => str.split(/\s+/).filter(Boolean).length;
 
-  if (wordCount > wordLimit) {
-    if (currentChunk.trim()) chunks.push(currentChunk.trim());
+  for (const para of paragraphs) {
+    const paraWordCount = getWordCount(para);
 
-    currentChunk = '';
-    currentWordCount = 0;
-
-    for (let i = 0; i < words.length; i += wordLimit) {
-      chunks.push(words.slice(i, i + wordLimit).join(' '));
+    // If paragraph fits, add it to current chunk
+    if (currentWordCount + paraWordCount <= wordLimit) {
+      currentChunk.push(para);
+      currentWordCount += paraWordCount;
+      continue;
     }
 
-    continue;
+    // It doesn't fit. Save current chunk if not empty
+    if (currentChunk.length > 0) {
+      chunks.push(currentChunk.join('\n\n'));
+      currentChunk = [];
+      currentWordCount = 0;
+    }
+
+    // If the paragraph itself is larger than the limit, split it by sentences
+    if (paraWordCount > wordLimit) {
+      // Split by sentence boundaries (.?! followed by whitespace)
+      const sentences = para.split(/(?<=[.!?])\s+/);
+      let sentenceChunk = [];
+      let sentenceWordCount = 0;
+
+      for (const sentence of sentences) {
+        const sentenceWords = getWordCount(sentence);
+
+        if (sentenceWordCount + sentenceWords <= wordLimit) {
+          sentenceChunk.push(sentence);
+          sentenceWordCount += sentenceWords;
+        } else {
+          if (sentenceChunk.length > 0) {
+            chunks.push(sentenceChunk.join(' '));
+          }
+
+          // If a single sentence is somehow longer than wordLimit, chunk it by words
+          if (sentenceWords > wordLimit) {
+            const words = sentence.split(/\s+/);
+            for (let i = 0; i < words.length; i += wordLimit) {
+              chunks.push(words.slice(i, i + wordLimit).join(' '));
+            }
+            sentenceChunk = [];
+            sentenceWordCount = 0;
+          } else {
+            sentenceChunk = [sentence];
+            sentenceWordCount = sentenceWords;
+          }
+        }
+      }
+
+      if (sentenceChunk.length > 0) {
+        currentChunk = [sentenceChunk.join(' ')];
+        currentWordCount = sentenceWordCount;
+      }
+    } else {
+      // Paragraph fits in a new chunk
+      currentChunk = [para];
+      currentWordCount = paraWordCount;
+    }
   }
 
-  if ((currentWordCount + wordCount) > wordLimit) {
-    if (currentChunk.trim()) chunks.push(currentChunk.trim());
-
-    currentChunk = para;
-    currentWordCount = wordCount;
-  } else {
-    currentChunk += (currentChunk ? '\n\n' : '') + para;
-    currentWordCount += wordCount;
+  if (currentChunk.length > 0) {
+    chunks.push(currentChunk.join('\n\n'));
   }
-}
 
-  if (currentChunk.trim()) chunks.push(currentChunk.trim());
   return chunks;
 };
 

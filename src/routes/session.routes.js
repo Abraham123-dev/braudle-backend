@@ -1,6 +1,7 @@
 import { Router } from 'express';
 import { verifyJWT } from '../middleware/auth.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
+import { sessionChatLimiter } from '../middleware/rateLimit.middleware.js';
 import { startSessionSchema, chatSchema, updateStateSchema } from '../validators/session.validator.js';
 import {
   startSession,
@@ -22,7 +23,7 @@ router.get('/flashcards', verifyJWT, getMyFlashcards);
 
 router.get('/:id', verifyJWT, getSession);
 router.get('/:id/welcome', verifyJWT, getWelcomeMessage);
-router.post('/:id/chat', verifyJWT, validate(chatSchema), chatSession);
+router.post('/:id/chat', verifyJWT, sessionChatLimiter, validate(chatSchema), chatSession);
 router.patch('/:id/complete', verifyJWT, completeSession);
 router.patch('/:id/state', verifyJWT, validate(updateStateSchema), updateSessionState);
 

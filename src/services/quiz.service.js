@@ -5,6 +5,7 @@ import { buildQuizPrompt, buildCustomAssessmentPrompt } from '../utils/promptBui
 import { AppError } from '../utils/AppError.js';
 import Document from '../models/Document.model.js';
 import { GROQ_MODELS } from '../config/models.js';
+import { parseAIJson } from '../utils/parseAIJson.js';
 
 /**
  * Generates a quiz from document chunks, using cache to save tokens.
@@ -13,9 +14,9 @@ import { GROQ_MODELS } from '../config/models.js';
  * @param {number} count - Question count
  * @param {string[]} documentTopics - Known topics for strict topic-mapping in the prompt
  */
-export const generateQuiz = async (documentId, profile, count = 5, documentTopics = []) => {
-  // 1. Generate a versioned cache key
-  const cacheKey = Cache.CACHE_KEYS.QUIZ_GENERATED(documentId, profile.level, count);
+export const generateQuiz = async (documentId, profile, count = 5, documentTopics = [], sessionId = '') => {
+  // 1. Generate a versioned cache key using sessionId (fallback to documentId if not provided)
+  const cacheKey = Cache.CACHE_KEYS.QUIZ_GENERATED(sessionId || documentId, profile.level, count);
 
   // 2. Wrap quiz generation in getOrSet for coalesced, cached retrieval
   return await Cache.getOrSet(
@@ -31,13 +32,12 @@ export const generateQuiz = async (documentId, profile, count = 5, documentTopic
       const messages = [{ role: 'system', content: prompt }];
       const response = await AIService.callGroqWithRetry(messages, GROQ_MODELS.smart);
 
-      try {
-        const cleanJson = response.replace(/```json|```/g, '').trim();
-        return JSON.parse(cleanJson);
-      } catch (err) {
-        console.error('[QUIZ] Generation/Parse error:', err.message);
+      const parsed = parseAIJson(response, null);
+      if (!parsed || !Array.isArray(parsed) || parsed.length === 0) {
+        console.error('[QUIZ] Generation error: parsed response is invalid or empty');
         throw new AppError('Failed to generate a valid quiz. Please try again.', 500);
       }
+      return parsed;
     },
     Cache.CACHE_TTL.QUIZ
   );
@@ -46,10 +46,10 @@ export const generateQuiz = async (documentId, profile, count = 5, documentTopic
 /**
  * Generates a custom practice exam/quiz with specific parameters
  */
-export const generateCustomAssessment = async (documentId, options) => {
+export const generateCustomAssessment = async (documentId, options, sessionId = '') => {
   const instructionsHash = options.instructions ? crypto.createHash('md5').update(options.instructions).digest('hex') : 'none';
   const cacheKey = Cache.CACHE_KEYS.QUIZ_CUSTOM(
-    documentId,
+    sessionId || documentId,
     options.difficulty,
     options.format,
     `${options.numQuestions}_${instructionsHash}`
@@ -69,13 +69,12 @@ export const generateCustomAssessment = async (documentId, options) => {
         GROQ_MODELS.smart
       );
 
-      try {
-        const cleanJson = response.replace(/```json|```/g, '').trim();
-        return JSON.parse(cleanJson);
-      } catch (err) {
-        console.error('[CUSTOM QUIZ] Generation/Parse error:', err.message);
+      const parsed = parseAIJson(response, null);
+      if (!parsed || !Array.isArray(parsed) || parsed.length === 0) {
+        console.error('[CUSTOM QUIZ] Generation error: parsed response is invalid or empty');
         throw new AppError('Failed to generate a valid custom assessment. Please try again.', 500);
       }
+      return parsed;
     },
     Cache.CACHE_TTL.QUIZ
   );

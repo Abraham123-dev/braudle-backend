@@ -98,8 +98,8 @@ export const getOrSet = async (key, fetchFn, ttl = 86400) => {
 export const CACHE_KEYS = {
   TEACH:                (docId, chunkIdx, level) => `v1:teach:${docId}:${chunkIdx}:${level}`,
   QUIZ:                 (documentId) => `v1:quiz:${documentId}`,
-  QUIZ_GENERATED:       (documentId, level, count) => `v1:quiz:${documentId}:${level}:${count}`,
-  QUIZ_CUSTOM:          (documentId, difficulty, format, numQuestions) => `v1:custom_quiz:${documentId}:${difficulty}:${format}:${numQuestions}`,
+  QUIZ_GENERATED:       (sessionId, level, count) => `v1:quiz:${sessionId}:${level}:${count}`,
+  QUIZ_CUSTOM:          (sessionId, difficulty, format, numQuestions) => `v1:custom_quiz:${sessionId}:${difficulty}:${format}:${numQuestions}`,
   PROFILE:             (userId) => `v1:profile:${userId}`,
   EMBED:               (docId, chunkIdx) => `v1:embed:${docId}:${chunkIdx}`,
   ACTIVE_STREAM:       (userId) => `v1:ai:stream:${userId}`,

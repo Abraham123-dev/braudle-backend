@@ -7,12 +7,433 @@ import { parseAIJson } from '../utils/parseAIJson.js';
 const groq = new Groq({ apiKey: env.groq.apiKey });
 
 /**
+ * Normalizes provider error types to detect transient status codes.
+ */
+function isTransientError(error) {
+  const status = error.status || error.statusCode || error.responseStatus;
+  if (status) {
+    const transientStatuses = [429, 500, 502, 503];
+    return transientStatuses.includes(status);
+  }
+
+  const message = error.message ? error.message.toLowerCase() : '';
+  const name = error.name ? error.name.toLowerCase() : '';
+  
+  if (
+    message.includes('timeout') ||
+    message.includes('etimedout') ||
+    message.includes('abort') ||
+    message.includes('network') ||
+    message.includes('fetch') ||
+    message.includes('connect') ||
+    name.includes('abort') ||
+    name.includes('timeout')
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
+/**
+ * Resolves model slugs to the actual API-compatible model IDs.
+ */
+const getModelForTask = (provider, task) => {
+  const mapping = {
+    groq: {
+      tutoring: 'llama-3.3-70b-versatile',
+      analysis: 'llama-3.1-8b-instant',
+      vision: 'llama-3.2-11b-vision-preview'
+    },
+    openrouter: {
+      tutoring: 'deepseek/deepseek-chat',
+      analysis: 'qwen/qwen-2.5-32b-instruct',
+      vision: 'qwen/qwen-2.5-vl-72b-instruct'
+    },
+    mistral: {
+      tutoring: 'mistral-medium-latest',
+      analysis: 'mistral-small-latest',
+      vision: 'pixtral-large-latest'
+    }
+  };
+  return mapping[provider]?.[task] || '';
+};
+
+/**
+ * Maps task model IDs to their standard display names for logging.
+ */
+const getModelDisplayName = (modelSlug) => {
+  const MODEL_DISPLAY_NAMES = {
+    'llama-3.3-70b-versatile': 'llama-3.3-70b-versatile',
+    'llama-3.1-8b-instant': 'llama-3.1-8b-instant',
+    'llama-3.2-11b-vision-preview': 'llama-3.2-11b-vision-preview',
+    'deepseek/deepseek-chat': 'DeepSeek V3',
+    'qwen/qwen-2.5-32b-instruct': 'Qwen 3 32B',
+    'qwen/qwen-2.5-vl-72b-instruct': 'Qwen 2.5 VL 72B',
+    'mistral-medium-latest': 'Mistral Medium 3',
+    'mistral-small-latest': 'Mistral Small 3.1',
+    'pixtral-large-latest': 'Pixtral Large'
+  };
+  return MODEL_DISPLAY_NAMES[modelSlug] || modelSlug;
+};
+
+const getProviderDisplayName = (providerKey) => {
+  const map = {
+    groq: 'Groq',
+    openrouter: 'OpenRouter',
+    mistral: 'Mistral'
+  };
+  return map[providerKey] || providerKey;
+};
+
+const logProviderDecision = (task, provider, model) => {
+  const taskLabel = task.toUpperCase();
+  const providerLabel = getProviderDisplayName(provider);
+  const modelLabel = getModelDisplayName(model);
+  
+  console.log(`\n[${taskLabel}]`);
+  console.log(`Provider: ${providerLabel}`);
+  console.log(`Model: ${modelLabel}`);
+};
+
+const logFallback = (task, failedProvider, error, nextProvider, nextModel) => {
+  const taskLabel = task.toUpperCase();
+  const failedProviderLabel = getProviderDisplayName(failedProvider);
+  const nextProviderLabel = getProviderDisplayName(nextProvider);
+  const nextModelLabel = getModelDisplayName(nextModel);
+  
+  const status = error.status || error.statusCode || '';
+  const errorSuffix = status ? ` (${status})` : '';
+  const reason = status === 429 ? 'Rate Limited' : 'Error';
+  
+  console.log(`\n[${taskLabel}]`);
+  console.log(`${failedProviderLabel} ${reason}${errorSuffix}`);
+  console.log(`Fallback: ${nextProviderLabel}`);
+  console.log(`Model: ${nextModelLabel}`);
+};
+
+/**
+ * Utility to run an async operation with both parent AbortSignal listener and an internal request timeout.
+ */
+const runWithSignalAndTimeout = async (fn, parentSignal, timeoutMs = 30000) => {
+  const controller = new AbortController();
+  
+  const onParentAbort = () => controller.abort();
+  if (parentSignal) {
+    if (parentSignal.aborted) {
+      throw new Error('Aborted');
+    }
+    parentSignal.addEventListener('abort', onParentAbort);
+  }
+  
+  const timeoutId = setTimeout(() => {
+    controller.abort();
+  }, timeoutMs);
+  
+  try {
+    return await fn(controller.signal);
+  } finally {
+    clearTimeout(timeoutId);
+    if (parentSignal) {
+      parentSignal.removeEventListener('abort', onParentAbort);
+    }
+  }
+};
+
+/**
+ * Centered Non-streaming AI Response Gateway
+ */
+export const generateAIResponse = async ({ task, messages, temperature = 0.5, max_tokens = 4096, signal }) => {
+  const providers = ['groq', 'openrouter', 'mistral'];
+  let lastError = null;
+
+  for (const provider of providers) {
+    const model = getModelForTask(provider, task);
+
+    // Validate key presence before trying
+    if (provider === 'openrouter' && !env.openRouter.apiKey) {
+      continue;
+    }
+    if (provider === 'mistral' && !env.mistral.apiKey) {
+      continue;
+    }
+
+    try {
+      logProviderDecision(task, provider, model);
+
+      if (provider === 'groq') {
+        const completion = await runWithSignalAndTimeout(
+          (sig) => groq.chat.completions.create({
+            model,
+            messages,
+            temperature,
+            max_tokens,
+          }, { signal: sig }),
+          signal,
+          30000
+        );
+        return completion.choices[0]?.message?.content || '';
+      }
+
+      if (provider === 'openrouter') {
+        const response = await runWithSignalAndTimeout(
+          (sig) => fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${env.openRouter.apiKey}`,
+              'HTTP-Referer': 'https://braudle.com',
+              'X-Title': 'BRAUDLE',
+            },
+            body: JSON.stringify({
+              model,
+              messages,
+              temperature,
+              max_tokens,
+            }),
+            signal: sig,
+          }),
+          signal,
+          30000
+        );
+
+        if (!response.ok) {
+          const err = new Error(`OpenRouter HTTP ${response.status}`);
+          err.status = response.status;
+          throw err;
+        }
+
+        const data = await response.json();
+        return data.choices?.[0]?.message?.content || '';
+      }
+
+      if (provider === 'mistral') {
+        const response = await runWithSignalAndTimeout(
+          (sig) => fetch('https://api.mistral.ai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'Authorization': `Bearer ${env.mistral.apiKey}`,
+            },
+            body: JSON.stringify({
+              model,
+              messages,
+              temperature,
+              max_tokens,
+            }),
+            signal: sig,
+          }),
+          signal,
+          30000
+        );
+
+        if (!response.ok) {
+          const err = new Error(`Mistral HTTP ${response.status}`);
+          err.status = response.status;
+          throw err;
+        }
+
+        const data = await response.json();
+        return data.choices?.[0]?.message?.content || '';
+      }
+    } catch (err) {
+      lastError = err;
+      if (!isTransientError(err)) {
+        console.error(`[AI GATEWAY] Non-transient error on ${provider}:`, err.message);
+        throw err;
+      }
+
+      const nextProvider = providers[providers.indexOf(provider) + 1];
+      if (nextProvider) {
+        const nextModel = getModelForTask(nextProvider, task);
+        logFallback(task, provider, err, nextProvider, nextModel);
+      } else {
+        console.error(`[AI GATEWAY] All providers failed. Last error:`, err.message);
+      }
+    }
+  }
+
+  throw lastError || new Error('AI Gateway failed to generate response');
+};
+
+/**
+ * Centered Streaming AI Response Gateway (Returns async generator yielding OpenAI-compatible chunks)
+ */
+export async function* streamAIResponse({ task, messages, temperature = 0.7, max_tokens = 1024, signal }) {
+  const providers = ['groq', 'openrouter', 'mistral'];
+  let lastError = null;
+
+  for (const provider of providers) {
+    const model = getModelForTask(provider, task);
+
+    if (provider === 'openrouter' && !env.openRouter.apiKey) {
+      continue;
+    }
+    if (provider === 'mistral' && !env.mistral.apiKey) {
+      continue;
+    }
+
+    try {
+      logProviderDecision(task, provider, model);
+
+      if (provider === 'groq') {
+        const stream = await runWithSignalAndTimeout(
+          (sig) => groq.chat.completions.create({
+            model,
+            messages,
+            temperature,
+            max_tokens,
+            stream: true,
+          }, { signal: sig }),
+          signal,
+          30000
+        );
+
+        for await (const chunk of stream) {
+          yield chunk;
+        }
+        return;
+      }
+
+      if (provider === 'openrouter') {
+        const response = await runWithSignalAndTimeout(
+          (sig) => fetch('https://openrouter.ai/api/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${env.openRouter.apiKey}`,
+              'HTTP-Referer': 'https://braudle.com',
+              'X-Title': 'BRAUDLE',
+            },
+            body: JSON.stringify({
+              model,
+              messages,
+              temperature,
+              max_tokens,
+              stream: true,
+            }),
+            signal: sig,
+          }),
+          signal,
+          30000
+        );
+
+        if (!response.ok) {
+          const err = new Error(`OpenRouter HTTP ${response.status}`);
+          err.status = response.status;
+          throw err;
+        }
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+        const bodyStream = response.body;
+
+        for await (const chunk of bodyStream) {
+          buffer += decoder.decode(chunk, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data: ')) continue;
+            const dataStr = trimmed.slice(6).trim();
+            if (dataStr === '[DONE]') continue;
+
+            try {
+              const parsed = JSON.parse(dataStr);
+              const text = parsed.choices?.[0]?.delta?.content || '';
+              if (text) {
+                yield { choices: [{ delta: { content: text } }] };
+              }
+            } catch (e) {
+              // Ignore invalid JSON on SSE lines
+            }
+          }
+        }
+        return;
+      }
+
+      if (provider === 'mistral') {
+        const response = await runWithSignalAndTimeout(
+          (sig) => fetch('https://api.mistral.ai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Accept': 'application/json',
+              'Authorization': `Bearer ${env.mistral.apiKey}`,
+            },
+            body: JSON.stringify({
+              model,
+              messages,
+              temperature,
+              max_tokens,
+              stream: true,
+            }),
+            signal: sig,
+          }),
+          signal,
+          30000
+        );
+
+        if (!response.ok) {
+          const err = new Error(`Mistral HTTP ${response.status}`);
+          err.status = response.status;
+          throw err;
+        }
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+        const bodyStream = response.body;
+
+        for await (const chunk of bodyStream) {
+          buffer += decoder.decode(chunk, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data: ')) continue;
+            const dataStr = trimmed.slice(6).trim();
+            if (dataStr === '[DONE]') continue;
+
+            try {
+              const parsed = JSON.parse(dataStr);
+              const text = parsed.choices?.[0]?.delta?.content || '';
+              if (text) {
+                yield { choices: [{ delta: { content: text } }] };
+              }
+            } catch (e) {
+              // Ignore invalid JSON on SSE lines
+            }
+          }
+        }
+        return;
+      }
+    } catch (err) {
+      lastError = err;
+      if (!isTransientError(err)) {
+        console.error(`[AI GATEWAY] Non-transient error on ${provider}:`, err.message);
+        throw err;
+      }
+
+      const nextProvider = providers[providers.indexOf(provider) + 1];
+      if (nextProvider) {
+        const nextModel = getModelForTask(nextProvider, task);
+        logFallback(task, provider, err, nextProvider, nextModel);
+      } else {
+        console.error(`[AI GATEWAY] All providers failed. Last error:`, err.message);
+      }
+    }
+  }
+
+  throw lastError || new Error('AI Gateway failed to generate response');
+}
+
+/**
  * Streams chat completions from Groq using the high-performance Llama models.
+ * Refactored to act as a wrapper for streamAIResponse.
  * Used primarily for real-time tutoring sessions via SSE.
- * 
- * @param {string} systemPrompt - The constructed persona and context
- * @param {string} userMessage - The latest message from the student
- * @param {Array} history - Recent conversation history for context
  */
 export const streamGroq = async (systemPrompt, userMessage, history = []) => {
   const messages = [
@@ -24,81 +445,73 @@ export const streamGroq = async (systemPrompt, userMessage, history = []) => {
     { role: 'user', content: userMessage },
   ];
 
-  return groq.chat.completions.create({
-    model: GROQ_MODELS.smart,
+  const parentController = new AbortController();
+  const generator = streamAIResponse({
+    task: 'tutoring',
     messages,
-    stream: true,
-    temperature: 0.7,
-    max_tokens: 1024,
-    top_p: 1,
+    signal: parentController.signal
   });
+
+  generator.abort = () => parentController.abort();
+  return generator;
 };
 
 /**
  * Transcribes handwritten text from an image using Groq Vision.
+ * Refactored to act as a wrapper for generateAIResponse (vision task).
  */
 export const transcribeImage = async (imageBase64, mimeType = 'image/jpeg') => {
-  const response = await groq.chat.completions.create({
-    model: GROQ_MODELS.vision,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          {
-            type: 'text',
-            text: 'Transcribe all handwritten text in this image accurately. Preserve headings and lists. Return only text.',
-          },
-          {
-            type: 'image_url',
-            image_url: { url: `data:${mimeType};base64,${imageBase64}` },
-          },
-        ],
-      },
-    ],
-  });
-  return response.choices[0]?.message?.content || '';
+  const messages = [
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: 'Transcribe all handwritten text in this image accurately. Preserve headings and lists. Return only text.',
+        },
+        {
+          type: 'image_url',
+          image_url: { url: `data:${mimeType};base64,${imageBase64}` },
+        },
+      ],
+    },
+  ];
+
+  return generateAIResponse({ task: 'vision', messages });
 };
 
 /**
  * Performs a non-streaming call to Groq.
- * Useful for background tasks like quiz generation or content summarization.
+ * Refactored to act as a wrapper for generateAIResponse.
  */
 export const callGroq = async (messages, model = GROQ_MODELS.smart) => {
-  const completion = await groq.chat.completions.create({
-    model,
-    messages,
-    temperature: 0.5,
-    max_tokens: 4096,
-  });
+  let task = 'analysis';
+  if (model === GROQ_MODELS.smart) {
+    task = 'tutoring';
+  } else if (model === GROQ_MODELS.vision) {
+    task = 'vision';
+  }
 
-  return completion.choices[0]?.message?.content || '';
+  return generateAIResponse({ task, messages });
 };
 
 /**
  * Call Groq with basic exponential backoff for rate limits.
+ * Refactored to delegate directly to generateAIResponse (which has its own multi-provider fallback logic).
  */
 export const callGroqWithRetry = async (messages, model = GROQ_MODELS.smart, retries = 3) => {
-  for (let attempt = 0; attempt < retries; attempt++) {
-    try {
-      return await callGroq(messages, model);
-    } catch (err) {
-      if (err.status === 429 && attempt < retries - 1) {
-        const delay = Math.pow(2, attempt) * 1000;
-        await new Promise(r => setTimeout(r, delay));
-        continue;
-      }
-      throw err;
-    }
+  let task = 'analysis';
+  if (model === GROQ_MODELS.smart) {
+    task = 'tutoring';
+  } else if (model === GROQ_MODELS.vision) {
+    task = 'vision';
   }
-  throw new Error('Groq rate limit exceeded after retries');
+
+  return generateAIResponse({ task, messages });
 };
 
 /**
  * Analyzes a completed session transcript to extract learning insights.
- * 
- * @param {Object[]} messages - The conversation history array.
- * @param {string[]} documentTopics - List of valid topics for the document.
- * @returns {Promise<Object>} Analysis object with weakTopics, strongTopics, and summary.
  */
 export const analyzeSession = async (messages, documentTopics = []) => {
   const prompt = buildSessionAnalysisPrompt(messages, documentTopics);
@@ -120,12 +533,6 @@ export const analyzeSession = async (messages, documentTopics = []) => {
 
 /**
  * Evaluates a student's short/long theory answer against the correct answer.
- * Uses Llama 3.1 8B (fast model).
- * 
- * @param {string} question - The question asked
- * @param {string} studentAnswer - The answer provided by the student
- * @param {string} correctAnswer - The expected correct answer
- * @returns {Promise<'correct' | 'partial' | 'wrong'>} The evaluation result
  */
 export const evaluateTheoryAnswer = async (question, studentAnswer, correctAnswer) => {
   if (!studentAnswer || studentAnswer.trim().length === 0) {

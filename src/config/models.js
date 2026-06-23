@@ -1,7 +1,7 @@
 export const GROQ_MODELS = {
   smart:  'llama-3.3-70b-versatile',
   fast:   'llama-3.1-8b-instant',
-  vision: 'qwen/qwen3.6-27b',
+  vision: 'llama-3.2-11b-vision-preview',
 };
 
 export const MODEL_ROUTING = {

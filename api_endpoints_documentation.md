@@ -248,7 +248,7 @@ Uploads a file directly to the backend server, which then transfers it to Cloudf
 ### 3.1.1 `POST /documents/presigned-url` (Direct single-file upload)
 Generates a presigned PUT URL so the frontend can upload the file directly to Cloudflare R2, bypassing the backend server bottleneck.
 - **Auth Required:** Yes
-- **Rate Limits:** Enforces the same daily limits (2 PDFs / 5 images). Checks and locks the upload slot atomically.
+- **Rate Limits:** Enforces daily limits (5 PDFs up to 10.99MB each per day; image uploads are unlimited). Checks and locks the upload slot atomically.
 - **Request Body:**
 ```json
 {
@@ -295,7 +295,7 @@ Signals to the backend that the direct single-file upload to R2 has finished. Th
 ### 3.1.3 `POST /documents/multipart/initiate` (Initiate multipart upload)
 Initiates a multipart upload session for uploading large PDFs/files directly to R2 in chunks.
 - **Auth Required:** Yes
-- **Rate Limits:** Enforces daily limits. Checks and locks the slot atomically.
+- **Rate Limits:** Enforces daily limits (5 PDFs up to 10.99MB each per day; image uploads are unlimited). Checks and locks the slot atomically.
 - **Request Body:**
 ```json
 {
@@ -505,7 +505,7 @@ Call this right after `POST /sessions/start`. Returns the personalised tutor gre
 ### 4.3 `POST /sessions/:id/chat` (SSE Stream)
 The core AI engine. Streams the tutor's response word-by-word using Server-Sent Events.
 - **Auth Required:** Yes
-- **Rate Limit:** 60 messages per hour per user
+- **Rate Limit:** Dynamic rate limit (Free: 60 messages/hour, Pro/Admin: 500 messages/hour)
 - **Required Header:** `Accept: text/event-stream`
 - **Request Body:**
 ```json

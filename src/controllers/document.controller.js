@@ -4,9 +4,11 @@ import User from '../models/User.model.js';
 import Document from '../models/Document.model.js';
 import Session from '../models/Session.model.js';
 import Conversation from '../models/Conversation.model.js';
+import Quiz from '../models/Quiz.model.js';
 import * as StorageService from '../services/storage.service.js';
 import { documentQueue } from '../queues/document.queue.js';
 import { env } from '../config/env.js';
+import { deleteCached, CACHE_KEYS } from '../utils/cache.js';
 
 /**
  * Handles document upload, R2 storage, and background task queuing 
@@ -23,26 +25,45 @@ export const uploadDocument = asyncHandler(async (req, res) => {
   // 1. Determine type based on mimetype
   const isPdf = file.mimetype === 'application/pdf';
   const type = isPdf ? 'pdf' : 'image';
-  const limit = isPdf ? 2 : 5;
   const countField = isPdf ? 'uploadCount.pdf' : 'uploadCount.image';
 
-  // 1. Atomic check and increment of upload counters to prevent TOCTOU race
-  const user = await User.findOneAndUpdate(
-    { 
-      _id: userId, 
-      [countField]: { $lt: limit } 
-    },
-    { 
-      $inc: { [countField]: 1 },
-      $set: { lastUploadDate: new Date() }
-    },
-    { new: true }
-  );
+  let user;
+  if (isPdf) {
+    if (file.size >= 11 * 1024 * 1024) {
+      throw new AppError('PDF files must be under 11MB.', 400);
+    }
 
-  if (!user) {
-    const userExists = await User.exists({ _id: userId });
-    if (!userExists) throw new AppError('User not found', 404);
-    throw new AppError(`Daily ${type} upload limit reached (${limit}/day)`, 429);
+    const limit = 5;
+    user = await User.findOneAndUpdate(
+      { 
+        _id: userId, 
+        'uploadCount.pdf': { $lt: limit } 
+      },
+      { 
+        $inc: { 'uploadCount.pdf': 1 },
+        $set: { lastUploadDate: new Date() }
+      },
+      { new: true }
+    );
+
+    if (!user) {
+      const userExists = await User.exists({ _id: userId });
+      if (!userExists) throw new AppError('User not found', 404);
+      throw new AppError("You've reached your maximum PDF upload for the day. Come back tomorrow!", 429);
+    }
+  } else {
+    // Images are unlimited
+    user = await User.findByIdAndUpdate(
+      userId,
+      { 
+        $inc: { 'uploadCount.image': 1 },
+        $set: { lastUploadDate: new Date() }
+      },
+      { new: true }
+    );
+    if (!user) {
+      throw new AppError('User not found', 404);
+    }
   }
 
   // 2. Prepare storage key
@@ -141,10 +162,14 @@ export const deleteDocument = asyncHandler(async (req, res) => {
   const sessions = await Session.find({ documentId: document._id }).select('_id');
   const sessionIds = sessions.map(s => s._id);
 
-  // 2. Cascade delete: Conversations -> Sessions -> Document
+  // 2. Cascade delete: Conversations -> Quizzes -> Sessions -> Document
   await Conversation.deleteMany({ sessionId: { $in: sessionIds } });
+  await Quiz.deleteMany({ sessionId: { $in: sessionIds } });
   await Session.deleteMany({ documentId: document._id });
   await document.deleteOne();
+
+  // 3. Invalidate dashboard performance cache so score updates are reflected immediately
+  await deleteCached(CACHE_KEYS.DASHBOARD_PERF(req.user.id));
 
   // 3. Cleanup R2 storage (Async, non-blocking for the response)
   StorageService.deleteFromR2(fileKey).catch((err) => 
@@ -164,26 +189,41 @@ export const getPresignedUrl = asyncHandler(async (req, res) => {
   // Determine type based on contentType or filename extension
   const isPdf = contentType === 'application/pdf' || filename.toLowerCase().endsWith('.pdf');
   const type = isPdf ? 'pdf' : 'image';
-  const limit = isPdf ? 2 : 5;
   const countField = isPdf ? 'uploadCount.pdf' : 'uploadCount.image';
 
-  // Atomic check and increment of upload counters to prevent TOCTOU race
-  const user = await User.findOneAndUpdate(
-    { 
-      _id: userId, 
-      [countField]: { $lt: limit } 
-    },
-    { 
-      $inc: { [countField]: 1 },
-      $set: { lastUploadDate: new Date() }
-    },
-    { new: true }
-  );
+  let user;
+  if (isPdf) {
+    const limit = 5;
+    user = await User.findOneAndUpdate(
+      { 
+        _id: userId, 
+        'uploadCount.pdf': { $lt: limit } 
+      },
+      { 
+        $inc: { 'uploadCount.pdf': 1 },
+        $set: { lastUploadDate: new Date() }
+      },
+      { new: true }
+    );
 
-  if (!user) {
-    const userExists = await User.exists({ _id: userId });
-    if (!userExists) throw new AppError('User not found', 404);
-    throw new AppError(`Daily ${type} upload limit reached (${limit}/day)`, 429);
+    if (!user) {
+      const userExists = await User.exists({ _id: userId });
+      if (!userExists) throw new AppError('User not found', 404);
+      throw new AppError("You've reached your maximum PDF upload for the day. Come back tomorrow!", 429);
+    }
+  } else {
+    // Images are unlimited
+    user = await User.findByIdAndUpdate(
+      userId,
+      { 
+        $inc: { 'uploadCount.image': 1 },
+        $set: { lastUploadDate: new Date() }
+      },
+      { new: true }
+    );
+    if (!user) {
+      throw new AppError('User not found', 404);
+    }
   }
 
   const sanitizedName = StorageService.sanitizeFilename(filename);
@@ -263,26 +303,41 @@ export const initiateMultipart = asyncHandler(async (req, res) => {
 
   const isPdf = contentType === 'application/pdf' || filename.toLowerCase().endsWith('.pdf');
   const type = isPdf ? 'pdf' : 'image';
-  const limit = isPdf ? 2 : 5;
   const countField = isPdf ? 'uploadCount.pdf' : 'uploadCount.image';
 
-  // Atomic check and increment
-  const user = await User.findOneAndUpdate(
-    { 
-      _id: userId, 
-      [countField]: { $lt: limit } 
-    },
-    { 
-      $inc: { [countField]: 1 },
-      $set: { lastUploadDate: new Date() }
-    },
-    { new: true }
-  );
+  let user;
+  if (isPdf) {
+    const limit = 5;
+    user = await User.findOneAndUpdate(
+      { 
+        _id: userId, 
+        'uploadCount.pdf': { $lt: limit } 
+      },
+      { 
+        $inc: { 'uploadCount.pdf': 1 },
+        $set: { lastUploadDate: new Date() }
+      },
+      { new: true }
+    );
 
-  if (!user) {
-    const userExists = await User.exists({ _id: userId });
-    if (!userExists) throw new AppError('User not found', 404);
-    throw new AppError(`Daily ${type} upload limit reached (${limit}/day)`, 429);
+    if (!user) {
+      const userExists = await User.exists({ _id: userId });
+      if (!userExists) throw new AppError('User not found', 404);
+      throw new AppError("You've reached your maximum PDF upload for the day. Come back tomorrow!", 429);
+    }
+  } else {
+    // Images are unlimited
+    user = await User.findByIdAndUpdate(
+      userId,
+      { 
+        $inc: { 'uploadCount.image': 1 },
+        $set: { lastUploadDate: new Date() }
+      },
+      { new: true }
+    );
+    if (!user) {
+      throw new AppError('User not found', 404);
+    }
   }
 
   const sanitizedName = StorageService.sanitizeFilename(filename);

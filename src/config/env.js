@@ -48,6 +48,12 @@ export const env = {
   groq: {
     apiKey: process.env.GROQ_API_KEY,
   },
+  mistral: {
+    apiKey: process.env.MISTRAL_API_KEY,
+  },
+  openRouter: {
+    apiKey: process.env.OPENROUTER_API_KEY,
+  },
   
   
   cfR2: {

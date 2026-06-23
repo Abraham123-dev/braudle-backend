@@ -461,8 +461,12 @@ export const getWelcomeMessage = asyncHandler(async (req, res) => {
   if (!session) throw new AppError('Session not found', 404);
 
   const document = await Document.findById(session.documentId)
-    .select('title topics summary totalChunks');
+    .select('title topics summary totalChunks processingStatus');
   if (!document) throw new AppError('Document not found', 404);
+
+  if (document.processingStatus !== 'ready') {
+    throw new AppError('Document is still processing. Please try again when it is ready.', 400);
+  }
 
   const profile = await ProfileService.getProfile(userId);
   if (!profile) throw new AppError('Student profile not found', 404);
@@ -470,16 +474,19 @@ export const getWelcomeMessage = asyncHandler(async (req, res) => {
   const name = req.user.name === 'New Student' ? '' : req.user.name;
   const welcomeText = generateWelcomeText(document, profile, name);
 
-  // Auto-save welcome message to empty conversations
-  let conversation = await Conversation.findOne({ sessionId });
-  if (conversation && conversation.messages.length === 0) {
-    conversation.messages.push({
-      role: 'assistant',
-      content: welcomeText,
-      timestamp: new Date()
-    });
-    await conversation.save();
-  }
+  // Auto-save welcome message to empty conversations atomically to prevent race conditions
+  await Conversation.findOneAndUpdate(
+    { sessionId, 'messages.0': { $exists: false } },
+    {
+      $push: {
+        messages: {
+          role: 'assistant',
+          content: welcomeText,
+          timestamp: new Date()
+        }
+      }
+    }
+  );
 
   const learningModes = [
     { id: 'understand', label: '📚 Understand',    description: 'I explain each section step-by-step with examples. Best for first-time learning.' },

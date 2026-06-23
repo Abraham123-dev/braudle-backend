@@ -43,14 +43,20 @@ const uploadImageLimiter = rateLimit({
   statusCode: 429,
 });
 
-// Session chat rate limiter: 60 messages per hour per user (relaxed to 1000 in dev)
+// Session chat rate limiter: dynamic limit (Free: 60/hr, Pro/Admin: 500/hr, Dev: 1000/hr)
 const sessionChatLimiter = rateLimit({
   store: new RedisStore({
     sendCommand: (...args) => redisClient.call(...args),
     prefix: 'rl:chat:',
   }),
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: isDev ? 1000 : 60,
+  max: (req) => {
+    if (isDev) return 1000;
+    if (req.user?.role === 'admin' || req.user?.tier === 'pro') {
+      return 500;
+    }
+    return 60;
+  },
   keyGenerator: (req) => req.user?.id || ipKeyGenerator(req),
   message: 'Too many messages. Please wait before sending another.',
   statusCode: 429,

@@ -6,6 +6,25 @@
 // Layer 5 — Conversation history (injected at call site before sending to Groq)
 // Layer 6 — Behaviour rules + Mode instruction
 
+
+const sampleDocumentChunks = (chunks, maxSamples = 15) => {
+  if (chunks.length <= maxSamples) {
+    return chunks;
+  }
+  const headCount = 4;
+  const tailCount = 4;
+  const middleCount = maxSamples - headCount - tailCount;
+
+  const head = chunks.slice(0, headCount);
+  const tail = chunks.slice(-tailCount);
+
+  const middleChunks = chunks.slice(headCount, chunks.length - tailCount);
+  const step = Math.floor(middleChunks.length / middleCount);
+  const middle = Array.from({ length: middleCount }, (_, i) => middleChunks[i * step]).filter(Boolean);
+
+  return [...head, ...middle, ...tail];
+};
+
 /**
  * Builds the system prompt for all teaching modes.
  *
@@ -267,6 +286,7 @@ const buildQuizPrompt = (chunks, profile, count = 5, documentTopics = []) => {
     ? `STRICT REQUIREMENT: Map each question to exactly one topic from this list: [${documentTopics.join(', ')}]. Do not create new topics.`
     : 'Assign a specific topic name (1-3 words) to each question based on its content.';
 
+    const sample = sampleDocumentChunks(chunks, 15);
   return `You are a professional exam question writer for students.
 Generate exactly ${count} questions based ONLY on the content provided below.
 Mix question types: 60% MCQ, 40% short theory.
@@ -307,7 +327,7 @@ JSON SCHEMA EXAMPLE:
 ]
 
 CONTENT TO USE:
-${chunks.join('\n\n---\n\n')}`;
+${sample.join('\n\n---\n\n')}`;
 };
 
 /**
@@ -409,6 +429,7 @@ const buildCustomAssessmentPrompt = (chunks, options) => {
 Strictly ensure that the questions generated align with this custom focus.`
     : '';
 
+    const sample = sampleDocumentChunks(chunks, 15);
   return `You are an expert exam setter.
 Generate exactly ${numQuestions} questions based ONLY on the content provided below.
 
@@ -456,7 +477,7 @@ JSON SCHEMA EXAMPLE:
 ]
 
 CONTENT TO USE:
-${chunks.join('\n\n---\n\n')}`;
+${sample.join('\n\n---\n\n')}`;
 };
 
 /**
@@ -468,29 +489,7 @@ ${chunks.join('\n\n---\n\n')}`;
  * @returns {string} Document understanding prompt.
  */
 function buildDocumentUnderstandingPrompt(chunks) {
-  const MAX_SAMPLES = 15;
-  let sampleChunks = [];
-
-  if (chunks.length <= MAX_SAMPLES) {
-    // Small document: use everything
-    sampleChunks = chunks;
-  } else {
-    // Large document: take head, evenly spaced middle, and tail
-    const headCount = 4;
-    const tailCount = 4;
-    const middleCount = MAX_SAMPLES - headCount - tailCount; // 7 middle samples
-
-    const head = chunks.slice(0, headCount);
-    const tail = chunks.slice(-tailCount);
-
-    // Select evenly distributed middle chunks
-    const middleChunks = chunks.slice(headCount, chunks.length - tailCount);
-    const step = Math.floor(middleChunks.length / middleCount);
-    const middle = Array.from({ length: middleCount }, (_, i) => middleChunks[i * step]).filter(Boolean);
-
-    sampleChunks = [...head, ...middle, ...tail];
-  }
-
+  const sampleChunks = sampleDocumentChunks(chunks, 15);
   const sample = sampleChunks.join('\n\n---\n\n');
 
   return `You are an expert curriculum analyst and educational content specialist.
