@@ -1,4 +1,6 @@
 import StudentProfile from '../models/StudentProfile.model.js';
+import Session from '../models/Session.model.js';
+import Quiz from '../models/Quiz.model.js';
 import { calculateXP, shouldUpgradeLevel } from '../utils/scoreCalculator.js';
 import { getOrSet, deleteCached, CACHE_KEYS, CACHE_TTL } from '../utils/cache.js';
 
@@ -55,6 +57,53 @@ export const updateProfileAfterQuiz = async (userId, score, questions = []) => {
   // Check for level upgrade
   if (shouldUpgradeLevel(profile.level, profile.recentScores)) {
     profile.level = profile.level === 'beginner' ? 'intermediate' : 'advanced';
+  }
+
+  // Update streak, longestStreak, lastStudyDate
+  const now = new Date();
+  const todayStr = now.toISOString().split('T')[0];
+
+  if (profile.lastStudyDate) {
+    const lastDate = new Date(profile.lastStudyDate);
+    const lastDateStr = lastDate.toISOString().split('T')[0];
+
+    if (lastDateStr !== todayStr) {
+      const msDiff = new Date(todayStr).getTime() - new Date(lastDateStr).getTime();
+      const dayDiff = Math.round(msDiff / (1000 * 60 * 60 * 24));
+
+      if (dayDiff === 1) {
+        profile.streak = (profile.streak || 0) + 1;
+      } else if (dayDiff > 1) {
+        profile.streak = 1;
+      }
+    }
+  } else {
+    profile.streak = 1;
+  }
+
+  profile.lastStudyDate = now;
+  if (profile.streak > (profile.longestStreak || 0)) {
+    profile.longestStreak = profile.streak;
+  }
+
+  // Increment totalSessions
+  profile.totalSessions = (profile.totalSessions || 0) + 1;
+
+  // Calculate averageScore from all user's quizzes in the database
+  try {
+    const userSessions = await Session.find({ userId }).select('_id');
+    const sessionIds = userSessions.map(s => s._id);
+    const quizzes = await Quiz.find({ 
+      sessionId: { $in: sessionIds }, 
+      score: { $exists: true, $ne: null } 
+    }).select('score');
+
+    const allScores = quizzes.map(q => q.score);
+    const sum = allScores.reduce((acc, s) => acc + s, 0) + score;
+    profile.averageScore = Math.round(sum / (allScores.length + 1));
+  } catch (err) {
+    console.error('Error calculating average score:', err);
+    profile.averageScore = score;
   }
 
   // ── Topical Mastery Analysis ──────────────────────────────────────────────
@@ -142,6 +191,59 @@ export const updateProfileAfterSessionAnalysis = async (userId, { weakTopics = [
   await profile.save();
 
   // Invalidate cache to reflect changes in high-frequency routes
+  await deleteCached(CACHE_KEYS.PROFILE(userId));
+
+  return profile;
+};
+
+/**
+ * Records a study activity (streak, lastStudyDate, totalSessions).
+ * Called when starting a session or sending messages, to ensure streak updates.
+ * Awarding +10 XP daily learning boost when streak increments or on first study action.
+ * Uses a smart short-circuit to exit immediately if they already studied today.
+ *
+ * @param {string} userId
+ * @returns {Promise<Object|null>} The updated profile
+ */
+export const recordStudyActivity = async (userId) => {
+  const profile = await StudentProfile.findOne({ userId });
+  if (!profile) return null;
+
+  const now = new Date();
+  const todayStr = now.toISOString().split('T')[0];
+
+  if (profile.lastStudyDate) {
+    const lastDate = new Date(profile.lastStudyDate);
+    const lastDateStr = lastDate.toISOString().split('T')[0];
+
+    if (lastDateStr === todayStr) {
+      // Already recorded study activity today! Return early to avoid database writes.
+      return profile;
+    }
+
+    // Calculate diff in days
+    const msDiff = new Date(todayStr).getTime() - new Date(lastDateStr).getTime();
+    const dayDiff = Math.round(msDiff / (1000 * 60 * 60 * 24));
+
+    if (dayDiff === 1) {
+      profile.streak = (profile.streak || 0) + 1;
+    } else if (dayDiff > 1) {
+      profile.streak = 1;
+    }
+  } else {
+    profile.streak = 1;
+  }
+
+  // Award +10 XP daily boost for study activity
+  profile.xp = (profile.xp || 0) + 10;
+  profile.lastStudyDate = now;
+  profile.totalSessions = (profile.totalSessions || 0) + 1;
+
+  if (profile.streak > (profile.longestStreak || 0)) {
+    profile.longestStreak = profile.streak;
+  }
+
+  await profile.save();
   await deleteCached(CACHE_KEYS.PROFILE(userId));
 
   return profile;

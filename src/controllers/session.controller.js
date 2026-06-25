@@ -137,6 +137,9 @@ export const startSession = asyncHandler(async (req, res) => {
   if (!document) throw new AppError('Document not found', 404);
   if (document.userId.toString() !== userId) throw new AppError('Forbidden: Access denied', 403);
 
+  // Record study activity (streak, total sessions, etc.)
+  await ProfileService.recordStudyActivity(userId).catch(err => console.error('[SESSION] Failed to record study activity:', err));
+
   // 2. Check if there is already an active session for this document
   let session = await Session.findOne({ userId, documentId, status: 'active' });
 
@@ -222,6 +225,9 @@ export const chatSession = asyncHandler(async (req, res) => {
   const profile = await ProfileService.getProfile(userId);
   if (!profile) throw new AppError('Student profile not found', 404);
 
+  // Keep streak alive and record study activity
+  await ProfileService.recordStudyActivity(userId).catch(err => console.error('[CHAT SESSION] Failed to record study activity:', err));
+
   // Conversation Null Safety
   let conversation = await Conversation.findOne({ sessionId });
   if (!conversation) {
@@ -238,7 +244,7 @@ export const chatSession = asyncHandler(async (req, res) => {
   };
 
   const currentChunk = (document.chunks && document.chunks[session.currentChunkIndex]) || '';
-  const history = (conversation.messages || []).slice(-10); // Last 5 exchanges
+  const history = (conversation.messages || []).slice(-6); // Last 3 exchanges (saves input tokens)
 
   // Expensive AI Cache Check — only cache initial "ready" responses, not follow-ups
   const cacheKey = CACHE_KEYS.TEACH(document._id, session.currentChunkIndex, profile.level);

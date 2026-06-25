@@ -15,6 +15,7 @@ import documentRoutes from './routes/document.routes.js';
 import sessionRoutes from './routes/session.routes.js';
 import quizRoutes from './routes/quiz.routes.js';
 import dashboardRoutes from './routes/dashboard.routes.js';
+import generalChatRoutes from './routes/generalChat.routes.js';
 import { AppError } from './utils/AppError.js';
 
 
@@ -54,6 +55,7 @@ app.use('/api/documents', documentRoutes);
 app.use('/api/sessions', sessionRoutes);
 app.use('/api/quiz', quizRoutes);
 app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/general-chat', generalChatRoutes);
 
 app.get('/api/health', (req, res) => {
   const mongoState = mongoose.connection.readyState;

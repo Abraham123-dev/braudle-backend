@@ -35,6 +35,33 @@ The prompt builder now injects the **full student onboarding profile** into ever
 | `subjects` | Uses subject-relevant analogies and examples |
 | `weakTopics` | Spends extra time and care on previously failed areas |
 
+### 4. AI Gateway Fallback Routing Verification (`node tests/test_fallback.mjs`)
+* **Status**: Passed (11/11 assertions)
+* **Description**: Verifies the fallback routing logic across Groq Primary, Groq Secondary, OpenRouter, and Mistral under transient and non-transient error conditions, ensuring proper logging and behavior.
+* **Output**:
+```
+── AI Gateway Fallback Routing & Error Checks ──
+
+Testing Case 1: Primary fails (429) -> Secondary succeeds...
+  ✅ PASS: Should try Primary Groq first
+  ✅ PASS: Should fallback to Secondary Groq on 429
+  ✅ PASS: Should return success response from Secondary
+
+Testing Case 2: Primary & Secondary fail (transient) -> OpenRouter succeeds...
+  ✅ PASS: Should try Primary Groq
+  ✅ PASS: Should try Secondary Groq
+  ✅ PASS: Should try OpenRouter
+  ✅ PASS: Should return response from OpenRouter
+
+Testing Case 3: Primary fails (non-transient 401) -> Aborts immediately...
+  ✅ PASS: Thrown error status should be 401
+  ✅ PASS: Should try Primary Groq
+  ✅ PASS: Should NOT try Secondary Groq on non-transient error
+  ✅ PASS: Should abort and throw
+
+── Results: 11 passed, 0 failed ──
+```
+
 Three prompt builders are now exported:
 - `buildTeachPrompt(chunk, profile, isBreakdown)` — Full 5-layer teach prompt
 - `buildQuizPrompt(chunks, profile)` — Level-aware quiz generation

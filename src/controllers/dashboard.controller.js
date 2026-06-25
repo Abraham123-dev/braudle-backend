@@ -103,11 +103,33 @@ export const getRecommendations = asyncHandler(async (req, res) => {
     return null;
   }).filter(Boolean);
 
+  // 3. Spaced Repetition (Review Decay): Mastered/completed 7+ days ago
+  const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+  const decayingSessions = await Session.find({
+    userId,
+    status: 'completed',
+    completedAt: { $lte: sevenDaysAgo }
+  }).sort({ completedAt: -1 }).limit(5).populate('documentId', 'title subject');
+
+  const reviewDecay = [];
+  for (const session of decayingSessions) {
+    if (!session.documentId) continue;
+    reviewDecay.push({
+      sessionId: session._id,
+      documentId: session.documentId._id,
+      title: session.documentId.title,
+      subject: session.documentId.subject,
+      completedAt: session.completedAt,
+      reason: 'Memory decay warning: mastered over 7 days ago'
+    });
+  }
+
   res.status(200).json({
     status: 'success',
     data: {
       readyToTest: readyToTest.slice(0, 3),
-      weakSpots: weakSpots.slice(0, 3)
+      weakSpots: weakSpots.slice(0, 3),
+      reviewDecay: reviewDecay.slice(0, 3)
     }
   });
 });

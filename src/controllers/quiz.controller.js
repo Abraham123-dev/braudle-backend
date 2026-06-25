@@ -195,7 +195,7 @@ export const generateCustomAssessment = asyncHandler(async (req, res) => {
 });
 
 // Helper for fast programmatic grading of MCQ/TrueFalse questions
-const gradeMcqOrTrueFalse = (studentAns, correctAns) => {
+const gradeMcqOrTrueFalse = (studentAns, correctAns, options = []) => {
   if (!studentAns || !correctAns) return false;
   const cleanStudent = studentAns.trim().toLowerCase();
   const cleanCorrect = correctAns.trim().toLowerCase();
@@ -209,7 +209,7 @@ const gradeMcqOrTrueFalse = (studentAns, correctAns) => {
   }
 
   const getLetterPrefix = (str) => {
-    const match = str.match(/^([a-d])\s*[\.\)]/i);
+    const match = str.match(/^([a-d])\s*[\.\)\:-]/i);
     return match ? match[1].toLowerCase() : null;
   };
 
@@ -220,7 +220,30 @@ const gradeMcqOrTrueFalse = (studentAns, correctAns) => {
   if (studentAns.length === 1 && correctPrefix && cleanStudent === correctPrefix) return true;
   if (correctAns.length === 1 && studentPrefix && cleanCorrect === studentPrefix) return true;
 
-  const stripPrefix = (str) => str.replace(/^([a-d])\s*[\.\)]\s*/i, '').trim().toLowerCase();
+  // Match using options index if available
+  if (Array.isArray(options) && options.length > 0) {
+    const studentIdx = options.findIndex(opt => opt.trim().toLowerCase() === cleanStudent);
+    const correctIdx = options.findIndex(opt => opt.trim().toLowerCase() === cleanCorrect);
+
+    const studentLetter = studentIdx !== -1 ? String.fromCharCode(97 + studentIdx) : null;
+    const correctLetter = correctIdx !== -1 ? String.fromCharCode(97 + correctIdx) : null;
+
+    const cleanCorrectLetterOnly = cleanCorrect.replace(/[\.\)\:-]/g, '').trim();
+    if (cleanCorrectLetterOnly.length === 1 && studentLetter && cleanCorrectLetterOnly === studentLetter) {
+      return true;
+    }
+
+    const cleanStudentLetterOnly = cleanStudent.replace(/[\.\)\:-]/g, '').trim();
+    if (cleanStudentLetterOnly.length === 1 && correctLetter && cleanStudentLetterOnly === correctLetter) {
+      return true;
+    }
+
+    if (studentLetter && correctLetter && studentLetter === correctLetter) {
+      return true;
+    }
+  }
+
+  const stripPrefix = (str) => str.replace(/^([a-d])\s*[\.\)\:-]\s*/i, '').trim().toLowerCase();
   if (stripPrefix(studentAns) === stripPrefix(correctAns)) return true;
 
   return false;
@@ -252,7 +275,7 @@ export const submitQuiz = asyncHandler(async (req, res) => {
       q.studentAnswer = studentSubmission.answer;
 
       if (q.type === 'mcq' || q.type === 'true_false') {
-        q.isCorrect = gradeMcqOrTrueFalse(q.studentAnswer, q.answer);
+        q.isCorrect = gradeMcqOrTrueFalse(q.studentAnswer, q.answer, q.options);
         q.feedback = q.isCorrect 
           ? "Excellent! Your answer is correct." 
           : `Incorrect. The correct option was: ${q.answer}.`;
@@ -314,7 +337,7 @@ export const gradeQuestion = asyncHandler(async (req, res) => {
   let feedback = '';
 
   if (question.type === 'mcq' || question.type === 'true_false') {
-    isCorrect = gradeMcqOrTrueFalse(answer, question.answer);
+    isCorrect = gradeMcqOrTrueFalse(answer, question.answer, question.options);
     feedback = isCorrect 
       ? "Excellent! Your answer is correct." 
       : `Incorrect. The correct option was: ${question.answer}.`;

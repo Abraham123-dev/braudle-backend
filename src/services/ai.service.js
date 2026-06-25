@@ -4,21 +4,41 @@ import { GROQ_MODELS } from '../config/models.js';
 import { buildSessionAnalysisPrompt } from '../utils/promptBuilder.js';
 import { parseAIJson } from '../utils/parseAIJson.js';
 
-const groq = new Groq({ apiKey: env.groq.apiKey });
+const groq = new Groq({ apiKey: env.groq.apiKey, maxRetries: 0 });
+const groqSecondary = new Groq({ apiKey: env.groqSecondary.apiKey, maxRetries: 0 });
 
 /**
  * Normalizes provider error types to detect transient status codes.
  */
 function isTransientError(error) {
   const status = error.status || error.statusCode || error.responseStatus;
-  if (status) {
-    const transientStatuses = [429, 500, 502, 503];
-    return transientStatuses.includes(status);
+  
+  // Do not fallback on: 400 (Invalid Request), 401/403 (Authentication/API Key errors)
+  if (status && [400, 401, 403].includes(status)) {
+    return false;
   }
 
   const message = error.message ? error.message.toLowerCase() : '';
   const name = error.name ? error.name.toLowerCase() : '';
-  
+
+  // Explicit check to block API Key or Authentication issues from fallback
+  if (
+    message.includes('api key') ||
+    message.includes('apikey') ||
+    message.includes('auth') ||
+    message.includes('unauthorized') ||
+    message.includes('forbidden') ||
+    message.includes('invalid key') ||
+    message.includes('validation')
+  ) {
+    return false;
+  }
+
+  if (status) {
+    const transientStatuses = [413, 429, 500, 502, 503];
+    return transientStatuses.includes(status);
+  }
+
   if (
     message.includes('timeout') ||
     message.includes('etimedout') ||
@@ -43,17 +63,26 @@ const getModelForTask = (provider, task) => {
     groq: {
       tutoring: 'llama-3.3-70b-versatile',
       analysis: 'llama-3.1-8b-instant',
-      vision: 'llama-3.2-11b-vision-preview'
+      vision: 'qwen/qwen3.6-27b',
+      general_chat: 'llama-3.3-70b-versatile'
+    },
+    groq_secondary: {
+      tutoring: 'llama-3.3-70b-versatile',
+      analysis: 'llama-3.1-8b-instant',
+      vision: 'qwen/qwen3.6-27b',
+      general_chat: 'llama-3.3-70b-versatile'
     },
     openrouter: {
       tutoring: 'deepseek/deepseek-chat',
       analysis: 'qwen/qwen-2.5-32b-instruct',
-      vision: 'qwen/qwen-2.5-vl-72b-instruct'
+      vision: 'qwen/qwen-2.5-vl-72b-instruct',
+      general_chat: 'deepseek/deepseek-chat'
     },
     mistral: {
       tutoring: 'mistral-medium-latest',
       analysis: 'mistral-small-latest',
-      vision: 'pixtral-large-latest'
+      vision: 'pixtral-large-latest',
+      general_chat: 'mistral-small-latest'
     }
   };
   return mapping[provider]?.[task] || '';
@@ -66,7 +95,7 @@ const getModelDisplayName = (modelSlug) => {
   const MODEL_DISPLAY_NAMES = {
     'llama-3.3-70b-versatile': 'llama-3.3-70b-versatile',
     'llama-3.1-8b-instant': 'llama-3.1-8b-instant',
-    'llama-3.2-11b-vision-preview': 'llama-3.2-11b-vision-preview',
+    'qwen/qwen3.6-27b': 'Qwen 3.6 27B Vision',
     'deepseek/deepseek-chat': 'DeepSeek V3',
     'qwen/qwen-2.5-32b-instruct': 'Qwen 3 32B',
     'qwen/qwen-2.5-vl-72b-instruct': 'Qwen 2.5 VL 72B',
@@ -144,13 +173,23 @@ const runWithSignalAndTimeout = async (fn, parentSignal, timeoutMs = 30000) => {
  * Centered Non-streaming AI Response Gateway
  */
 export const generateAIResponse = async ({ task, messages, temperature = 0.5, max_tokens = 4096, signal }) => {
-  const providers = ['groq', 'openrouter', 'mistral'];
+  const providers = task === 'general_chat'
+    ? ['mistral', 'openrouter']
+    : ['groq', 'groq_secondary', 'openrouter', 'mistral'];
   let lastError = null;
 
   for (const provider of providers) {
     const model = getModelForTask(provider, task);
+    const start = Date.now();
+    const fallbackLevel = providers.indexOf(provider); // 0 = primary, 1 = fallback 1, etc.
 
     // Validate key presence before trying
+    if (provider === 'groq' && !env.groq.apiKey) {
+      continue;
+    }
+    if (provider === 'groq_secondary' && !env.groqSecondary.apiKey) {
+      continue;
+    }
     if (provider === 'openrouter' && !env.openRouter.apiKey) {
       continue;
     }
@@ -161,9 +200,12 @@ export const generateAIResponse = async ({ task, messages, temperature = 0.5, ma
     try {
       logProviderDecision(task, provider, model);
 
-      if (provider === 'groq') {
+      let resultText = '';
+
+      if (provider === 'groq' || provider === 'groq_secondary') {
+        const client = provider === 'groq' ? groq : groqSecondary;
         const completion = await runWithSignalAndTimeout(
-          (sig) => groq.chat.completions.create({
+          (sig) => client.chat.completions.create({
             model,
             messages,
             temperature,
@@ -172,10 +214,8 @@ export const generateAIResponse = async ({ task, messages, temperature = 0.5, ma
           signal,
           30000
         );
-        return completion.choices[0]?.message?.content || '';
-      }
-
-      if (provider === 'openrouter') {
+        resultText = completion.choices[0]?.message?.content || '';
+      } else if (provider === 'openrouter') {
         const response = await runWithSignalAndTimeout(
           (sig) => fetch('https://openrouter.ai/api/v1/chat/completions', {
             method: 'POST',
@@ -204,10 +244,8 @@ export const generateAIResponse = async ({ task, messages, temperature = 0.5, ma
         }
 
         const data = await response.json();
-        return data.choices?.[0]?.message?.content || '';
-      }
-
-      if (provider === 'mistral') {
+        resultText = data.choices?.[0]?.message?.content || '';
+      } else if (provider === 'mistral') {
         const response = await runWithSignalAndTimeout(
           (sig) => fetch('https://api.mistral.ai/v1/chat/completions', {
             method: 'POST',
@@ -235,12 +273,20 @@ export const generateAIResponse = async ({ task, messages, temperature = 0.5, ma
         }
 
         const data = await response.json();
-        return data.choices?.[0]?.message?.content || '';
+        resultText = data.choices?.[0]?.message?.content || '';
       }
+
+      const duration = Date.now() - start;
+      console.log(`[AI GATEWAY] Success | Provider: ${provider} | Fallback Level: ${fallbackLevel} | Response Time: ${duration}ms`);
+      return resultText;
+
     } catch (err) {
+      const duration = Date.now() - start;
+      console.error(`[AI GATEWAY] Failure | Provider: ${provider} | Fallback Level: ${fallbackLevel} | Response Time: ${duration}ms | Error: ${err.message || err}`);
+
       lastError = err;
       if (!isTransientError(err)) {
-        console.error(`[AI GATEWAY] Non-transient error on ${provider}:`, err.message);
+        console.error(`[AI GATEWAY] Non-transient error on ${provider}. Aborting fallback queue.`);
         throw err;
       }
 
@@ -260,13 +306,24 @@ export const generateAIResponse = async ({ task, messages, temperature = 0.5, ma
 /**
  * Centered Streaming AI Response Gateway (Returns async generator yielding OpenAI-compatible chunks)
  */
-export async function* streamAIResponse({ task, messages, temperature = 0.7, max_tokens = 1024, signal }) {
-  const providers = ['groq', 'openrouter', 'mistral'];
+export async function* streamAIResponse({ task, messages, temperature = 0.7, max_tokens = 4096, signal }) {
+  const providers = task === 'general_chat'
+    ? ['mistral', 'openrouter']
+    : ['groq', 'groq_secondary', 'openrouter', 'mistral'];
   let lastError = null;
 
   for (const provider of providers) {
     const model = getModelForTask(provider, task);
+    const start = Date.now();
+    const fallbackLevel = providers.indexOf(provider); // 0 = primary, 1 = fallback 1, etc.
 
+    // Validate key presence before trying
+    if (provider === 'groq' && !env.groq.apiKey) {
+      continue;
+    }
+    if (provider === 'groq_secondary' && !env.groqSecondary.apiKey) {
+      continue;
+    }
     if (provider === 'openrouter' && !env.openRouter.apiKey) {
       continue;
     }
@@ -277,9 +334,10 @@ export async function* streamAIResponse({ task, messages, temperature = 0.7, max
     try {
       logProviderDecision(task, provider, model);
 
-      if (provider === 'groq') {
+      if (provider === 'groq' || provider === 'groq_secondary') {
+        const client = provider === 'groq' ? groq : groqSecondary;
         const stream = await runWithSignalAndTimeout(
-          (sig) => groq.chat.completions.create({
+          (sig) => client.chat.completions.create({
             model,
             messages,
             temperature,
@@ -289,6 +347,9 @@ export async function* streamAIResponse({ task, messages, temperature = 0.7, max
           signal,
           30000
         );
+
+        const duration = Date.now() - start;
+        console.log(`[AI GATEWAY] Success | Provider: ${provider} | Fallback Level: ${fallbackLevel} | Response Time (Stream Init): ${duration}ms`);
 
         for await (const chunk of stream) {
           yield chunk;
@@ -325,6 +386,9 @@ export async function* streamAIResponse({ task, messages, temperature = 0.7, max
           throw err;
         }
 
+        const duration = Date.now() - start;
+        console.log(`[AI GATEWAY] Success | Provider: ${provider} | Fallback Level: ${fallbackLevel} | Response Time (Stream Init): ${duration}ms`);
+
         const decoder = new TextDecoder();
         let buffer = '';
         const bodyStream = response.body;
@@ -382,6 +446,9 @@ export async function* streamAIResponse({ task, messages, temperature = 0.7, max
           throw err;
         }
 
+        const duration = Date.now() - start;
+        console.log(`[AI GATEWAY] Success | Provider: ${provider} | Fallback Level: ${fallbackLevel} | Response Time (Stream Init): ${duration}ms`);
+
         const decoder = new TextDecoder();
         let buffer = '';
         const bodyStream = response.body;
@@ -411,9 +478,12 @@ export async function* streamAIResponse({ task, messages, temperature = 0.7, max
         return;
       }
     } catch (err) {
+      const duration = Date.now() - start;
+      console.error(`[AI GATEWAY] Failure | Provider: ${provider} | Fallback Level: ${fallbackLevel} | Response Time: ${duration}ms | Error: ${err.message || err}`);
+
       lastError = err;
       if (!isTransientError(err)) {
-        console.error(`[AI GATEWAY] Non-transient error on ${provider}:`, err.message);
+        console.error(`[AI GATEWAY] Non-transient error on ${provider}. Aborting fallback queue.`);
         throw err;
       }
 
@@ -467,7 +537,7 @@ export const transcribeImage = async (imageBase64, mimeType = 'image/jpeg') => {
       content: [
         {
           type: 'text',
-          text: 'Transcribe all handwritten text in this image accurately. Preserve headings and lists. Return only text.',
+          text: 'Transcribe all text (handwritten or typed) in this image accurately, and describe any diagrams, equations, or visual layouts. Preserve lists and headings. If there is no text, provide a concise visual description of the contents.',
         },
         {
           type: 'image_url',

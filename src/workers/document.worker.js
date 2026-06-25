@@ -123,7 +123,7 @@ const documentWorker = new Worker(
         const understandingPrompt = buildDocumentUnderstandingPrompt(chunks);
         const aiResponse = await AIService.callGroqWithRetry(
           [{ role: 'user', content: understandingPrompt }],
-          GROQ_MODELS.fast
+          GROQ_MODELS.smart
         );
 
         const understanding = parseAIJson(aiResponse, { topics: [], summary: '' });

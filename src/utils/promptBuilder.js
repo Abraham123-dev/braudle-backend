@@ -103,7 +103,10 @@ const buildTeachPrompt = (chunk, profile, mode = 'understand', documentContext =
   // ── Layer 4: Mode-specific instruction ────────────────────────────────────
   const modeInstructions = {
     understand: `MODE — UNDERSTAND:
-Explain the following section step-by-step in 3 to 5 clear points. Use real-world analogies, relatable examples, or even a short story to make the concept stick. End with exactly ONE comprehension question to check understanding.
+Explain the core definition of the section content below in under 120 words using a simple analogy.
+List exactly 2 to 3 main concepts/pillars as bold bullet points.
+Do NOT write a long comprehensive essay. Keep it bite-sized.
+End by asking the student which of these specific pillars they would like to unpack first.
 YOUTUBE RULE: If this section contains a complex concept that would benefit significantly from a visual explanation (e.g. a process, a diagram-heavy topic, a mechanism), AND you have not suggested a video in the last 3 responses, add a 🎥 YOUTUBE_SEARCH marker at the end of your response in this format: [YOUTUBE_SEARCH: "search query for the concept"]`,
 
     review: `MODE — REVIEW:
@@ -155,10 +158,22 @@ Rules:
 - STAY ANCHORED: Your responses must be grounded in the document content. Do not invent facts.
 - BE ADAPTIVE: If the student asks you to explain differently, change approach immediately.
 - DO NOT REPEAT YOURSELF: If the student already knows something, skip the re-explanation.
-- YOUTUBE: Only add a YOUTUBE_SEARCH marker if the concept is genuinely complex and visual. Never add it for simple definitions.`;
+- YOUTUBE: Only add a YOUTUBE_SEARCH marker if the concept is genuinely complex and visual. Never add it for simple definitions.
+- DYNAMIC SUGGESTIONS: At the very end of your response, you MUST append exactly three relevant suggested follow-up questions or actions that the student might ask next, wrapped in the tag '[SUGGESTIONS: ["Suggestion 1", "Suggestion 2", "Suggestion 3"]]'. Do not include any other text after this tag. Make suggestions short (3-6 words), active, and engaging (e.g. "💡 Draw an analogy", "✏️ Test my memory", "📖 What is next?"). Do NOT wrap this tag in markdown code fences or backticks.
+- INLINE MICRO-QUIZ: Periodically, at the end of explaining a core concept, or when explicitly asked, you may present a single inline practice question. If you do, you MUST append it at the very end (right before the suggestions tag) in this exact format: '[QUIZ_QUESTION: {"question": "Question text?", "options": ["Option A", "Option B", "Option C", "Option D"], "answer": "Option A", "explanation": "Why Option A is correct"}]'. Always ensure distractors are plausible and the correct answer matches exactly one of the options. Do NOT wrap this tag in markdown code fences or backticks.`;
 
-  return `${role}
+  // Prefix caching layout: Static elements first, dynamic elements last.
+  return `ROLE:
+${role}
 
+RULES:
+${rules}
+
+INSTRUCTION:
+${chunkInstruction}
+
+---
+SEMI-STATIC CONTEXT:
 DOCUMENT CONTEXT:
 ${documentContextStr}
 
@@ -166,12 +181,7 @@ STUDENT PROFILE:
 ${studentContext}
 
 SECTION TO TEACH NOW:
-${chunk}
-
-INSTRUCTION:
-${chunkInstruction}
-
-${rules}`;
+${chunk}`;
 };
 
 /**
@@ -289,8 +299,20 @@ const buildQuizPrompt = (chunks, profile, count = 5, documentTopics = []) => {
     const sample = sampleDocumentChunks(chunks, 15);
   return `You are a professional exam question writer for students.
 Generate exactly ${count} questions based ONLY on the content provided below.
+
+COGNITIVE LEVEL DISTRIBUTION (BLOOM'S TAXONOMY):
+- 30% Remembering & Understanding (factual recall, definitions).
+- 40% Applying & Analyzing (applying formulas, comparing two concepts).
+- 30% Evaluating & Creating (critiquing arguments, predicting outcomes).
+
 Mix question types: 60% MCQ, 40% short theory.
 ${levelNote}
+
+QUESTION CONSTRAINTS:
+- For MCQ (multiple choice) questions, generate exactly 4 options.
+- DISTRACTOR QUALITY: The 3 incorrect options must represent plausible misconceptions, calculation errors, or common logical fallacies. Do not use silly or obviously wrong options.
+- All options must be structurally similar and comparable in length.
+
 Each question MUST include these fields: topic, question, type (mcq/true_false/theory), options (only for mcq), answer, explanation.
 ${topicsNote}
 
@@ -433,6 +455,11 @@ Strictly ensure that the questions generated align with this custom focus.`
   return `You are an expert exam setter.
 Generate exactly ${numQuestions} questions based ONLY on the content provided below.
 
+COGNITIVE LEVEL DISTRIBUTION (BLOOM'S TAXONOMY):
+- 30% Remembering & Understanding (factual recall, definitions).
+- 40% Applying & Analyzing (applying formulas, comparing two concepts).
+- 30% Evaluating & Creating (critiquing arguments, predicting outcomes).
+
 DIFFICULTY LEVEL: ${difficulty.toUpperCase()}
 ${difficultyNote}
 
@@ -440,6 +467,11 @@ FORMAT REQUIREMENT:
 ${formatNote}
 
 ${customInstructionsNote}
+
+QUESTION CONSTRAINTS:
+- For MCQ (multiple choice) questions, generate exactly 4 options.
+- DISTRACTOR QUALITY: The 3 incorrect options must represent plausible misconceptions, calculation errors, or common logical fallacies. Do not use silly or obviously wrong options.
+- All options must be structurally similar and comparable in length.
 
 Each question MUST include these fields: topic, question, type (mcq/true_false/theory), options (only for mcq), answer, explanation.
 ${topicsNote}

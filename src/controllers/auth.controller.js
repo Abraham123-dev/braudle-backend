@@ -7,7 +7,42 @@ import * as EmailService from '../services/email.service.js';
 
 const ACCESS_COOKIE = 'braudle_token';
 const REFRESH_COOKIE = 'braudle_refresh';
-const ACCESS_COOKIE_MAX_AGE_MS = 15 * 60 * 1000;
+
+// Parse JWT_EXPIRES_IN config dynamically to milliseconds for access cookie
+const getAccessCookieMaxAge = () => {
+  const expiresIn = env.jwt.expiresIn || '15m';
+  if (typeof expiresIn === 'number') {
+    return expiresIn * 1000;
+  }
+  
+  // Match standard short format: e.g. '30s', '15m', '2h', '7d'
+  const match = String(expiresIn).trim().match(/^(\d+)([smhd]?)$/);
+  if (match) {
+    const value = parseInt(match[1], 10);
+    const unit = match[2] || 's';
+    switch (unit) {
+      case 's': return value * 1000;
+      case 'm': return value * 60 * 1000;
+      case 'h': return value * 60 * 60 * 1000;
+      case 'd': return value * 24 * 60 * 60 * 1000;
+    }
+  }
+  
+  // Match verbose format: e.g. '2 days', '10 hours', '15 minutes'
+  const verboseMatch = String(expiresIn).trim().match(/^(\d+)\s*(sec|second|min|minute|hour|day)s?$/i);
+  if (verboseMatch) {
+    const value = parseInt(verboseMatch[1], 10);
+    const unit = verboseMatch[2].toLowerCase();
+    if (unit.startsWith('sec')) return value * 1000;
+    if (unit.startsWith('min')) return value * 60 * 1000;
+    if (unit.startsWith('hour')) return value * 60 * 60 * 1000;
+    if (unit.startsWith('day')) return value * 24 * 60 * 60 * 1000;
+  }
+
+  return 15 * 60 * 1000; // Fallback to 15 minutes
+};
+
+const ACCESS_COOKIE_MAX_AGE_MS = getAccessCookieMaxAge();
 const REFRESH_COOKIE_MAX_AGE_MS = 7 * 24 * 60 * 60 * 1000;
 
 const COOKIE_OPTIONS = {

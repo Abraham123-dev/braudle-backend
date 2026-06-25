@@ -11,7 +11,7 @@ export const sendMagicLink = async (email, token) => {
 
   return await resend.emails.send({
     // Production: Switch to 'BRAUDLE <auth@braudle.com>' after verifying your domain in Resend
-    from: 'BRAUDLE <onboarding@resend.dev>', 
+    from: 'BRAUDLE <onboarding@resend.dev>',
     to: email,
     subject: '✨ Your BRAUDLE Magic Login Link',
     html: `
@@ -73,4 +73,4 @@ export const sendMagicLink = async (email, token) => {
       </html>
     `,
   });
-};
+};

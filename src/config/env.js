@@ -9,7 +9,8 @@ const requiredEnvVars = [
   'GOOGLE_CLIENT_ID',
   'GOOGLE_CLIENT_SECRET',
   'GOOGLE_CALLBACK_URL',
-  'GROQ_API_KEY',
+  'GROQ_API_KEY_1',
+  'GROQ_API_KEY_2',
   'RESEND_API_KEY',
   'CF_ACCOUNT_ID',
   'CF_R2_ACCESS_KEY',
@@ -46,7 +47,10 @@ export const env = {
   },
   
   groq: {
-    apiKey: process.env.GROQ_API_KEY,
+    apiKey: process.env.GROQ_API_KEY_1,
+  },
+  groqSecondary: {
+    apiKey: process.env.GROQ_API_KEY_2,
   },
   mistral: {
     apiKey: process.env.MISTRAL_API_KEY,
@@ -54,7 +58,9 @@ export const env = {
   openRouter: {
     apiKey: process.env.OPENROUTER_API_KEY,
   },
-  
+  gemini: {
+    apiKey: process.env.GEMINI_API_KEY,
+  },
   
   cfR2: {
     accountId: process.env.CF_ACCOUNT_ID,
