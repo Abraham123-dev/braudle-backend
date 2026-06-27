@@ -56,6 +56,10 @@ const documentSchema = new mongoose.Schema(
       type: [String],
       default: [],
     },
+    chunkEmbeddings: {
+      type: [[Number]],
+      default: [],
+    },
     totalChunks: {
       type: Number,
       default: 0,

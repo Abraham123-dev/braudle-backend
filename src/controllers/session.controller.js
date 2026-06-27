@@ -218,7 +218,7 @@ export const chatSession = asyncHandler(async (req, res) => {
 
   // Fetch document with all context fields needed for the prompt
   const document = await Document.findById(session.documentId)
-    .select('chunks topics summary title totalChunks');
+    .select('chunks topics summary title totalChunks type chunkEmbeddings');
   if (!document) throw new AppError('Document not found', 404);
 
   // Cache-aware profile fetch — avoids a MongoDB hit on every chat message
@@ -241,9 +241,54 @@ export const chatSession = asyncHandler(async (req, res) => {
     currentChunkIndex:  session.currentChunkIndex,
     totalChunks:        document.totalChunks || document.chunks?.length || 1,
     preparationStyle:   session.preparationStyle || 'mixed',
+    type:               document.type,
   };
 
-  const currentChunk = (document.chunks && document.chunks[session.currentChunkIndex]) || '';
+  let currentChunk = (document.chunks && document.chunks[session.currentChunkIndex]) || '';
+
+  // 2.1. Semantic RAG: If in 'ask' mode, query the entire document semantically
+  if (session.mode === 'ask' && message && message !== 'ready' && document.chunks && document.chunks.length > 0) {
+    try {
+      const queryEmbedding = await AIService.generateEmbedding(message);
+      let bestIndex = session.currentChunkIndex;
+      let highestSimilarity = -1;
+
+      // Cosine similarity helper
+      const cosineSimilarity = (vecA, vecB) => {
+        if (!vecA || !vecB || vecA.length !== vecB.length) return 0;
+        let dotProduct = 0;
+        let normA = 0;
+        let normB = 0;
+        for (let i = 0; i < vecA.length; i++) {
+          dotProduct += vecA[i] * vecB[i];
+          normA += vecA[i] * vecA[i];
+          normB += vecB[i] * vecB[i];
+        }
+        if (normA === 0 || normB === 0) return 0;
+        return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+      };
+
+      const chunkEmbeddings = document.chunkEmbeddings || [];
+      for (let i = 0; i < document.chunks.length; i++) {
+        const chunkEmb = chunkEmbeddings[i];
+        if (chunkEmb && chunkEmb.length > 0) {
+          const score = cosineSimilarity(queryEmbedding, chunkEmb);
+          if (score > highestSimilarity) {
+            highestSimilarity = score;
+            bestIndex = i;
+          }
+        }
+      }
+
+      if (highestSimilarity > 0.1) {
+        currentChunk = document.chunks[bestIndex];
+        documentContext.currentChunkIndex = bestIndex;
+      }
+    } catch (err) {
+      console.error('[CHAT SESSION RAG] Failed semantic chunk retrieval, falling back to sequential page:', err.message);
+    }
+  }
+
   const history = (conversation.messages || []).slice(-6); // Last 3 exchanges (saves input tokens)
 
   // Expensive AI Cache Check — only cache initial "ready" responses, not follow-ups
@@ -336,6 +381,7 @@ export const chatSession = asyncHandler(async (req, res) => {
     );
     await conversation.save();
   } catch (error) {
+    console.error(`[CHAT SESSION] Streaming error in session ${sessionId}:`, error);
     if (!res.writableEnded) {
       res.write(`data: ${JSON.stringify({ error: 'AI Stream interrupted' })}\n\n`);
       res.end();

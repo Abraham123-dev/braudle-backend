@@ -53,6 +53,10 @@ export const uploadDocument = asyncHandler(async (req, res) => {
     }
   } else {
     // Images are unlimited
+    if (file.size > 10 * 1024 * 1024) {
+      throw new AppError('Image notes must be under 10MB.', 400);
+    }
+
     user = await User.findByIdAndUpdate(
       userId,
       { 

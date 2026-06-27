@@ -177,6 +177,9 @@ export const sendGeneralChatMessage = asyncHandler(async (req, res) => {
     if (!isImage) {
       throw new AppError('Only image uploads are allowed in General Chat. PDFs can be studied in your Library.', 400);
     }
+    if (req.file.size > 10 * 1024 * 1024) {
+      throw new AppError('Image size too large. Vision model limit is 10MB.', 400);
+    }
 
     const imageHash = crypto.createHash('sha256').update(req.file.buffer).digest('hex');
 
@@ -258,6 +261,11 @@ Do not wrap in markdown backticks or add any conversational filler. Return only 
       };
       
       const parsedAnalysis = parseAIJson(visionResponseText, defaultAnalysis);
+
+      if (!parsedAnalysis.extractedText?.trim() && !parsedAnalysis.summary?.trim()) {
+        await StorageService.deleteFromR2(fileKey).catch(() => {});
+        throw new AppError('Vision model returned an empty extraction. Please try another image.', 422);
+      }
 
       // Embedding
       const searchText = `${parsedAnalysis.summary || ''} ${(parsedAnalysis.detectedTopics || []).join(' ')} ${(parsedAnalysis.keyConcepts || []).join(' ')} ${(parsedAnalysis.questions || []).join(' ')}`;
@@ -389,6 +397,10 @@ Do not wrap in markdown backticks or add any conversational filler. Return only 
           
           const parsedAnalysis = parseAIJson(visionResponseText, defaultAnalysis);
 
+          if (!parsedAnalysis.extractedText?.trim() && !parsedAnalysis.summary?.trim()) {
+            throw new Error('Vision model returned an empty extraction during healing.');
+          }
+
           // 3. Generate RAG embeddings based on structured analysis texts
           const searchText = `${parsedAnalysis.summary || ''} ${(parsedAnalysis.detectedTopics || []).join(' ')} ${(parsedAnalysis.keyConcepts || []).join(' ')} ${(parsedAnalysis.questions || []).join(' ')}`;
           const embeddings = await AIService.generateEmbedding(searchText);
@@ -487,7 +499,23 @@ Do not wrap in markdown backticks or add any conversational filler. Return only 
       }
 
       // Include other historical images with truncated OCR details (to prevent context bloat but allow focus-shifting)
-      const historicalImages = session.imageKnowledge.filter(img => !activeImage || img.imageHash !== activeImage.imageHash);
+      // Limit to the top 2 most relevant or recent historical images to prevent token bloat
+      let historicalImages = session.imageKnowledge.filter(img => !activeImage || img.imageHash !== activeImage.imageHash);
+      if (historicalImages.length > 2) {
+        if (searchString.trim().length > 0) {
+          const queryEmbedding = await AIService.generateEmbedding(searchString);
+          historicalImages = historicalImages.map(img => ({
+            img,
+            score: cosineSimilarity(queryEmbedding, img.embeddings)
+          }))
+          .sort((a, b) => b.score - a.score)
+          .slice(0, 2)
+          .map(item => item.img);
+        } else {
+          historicalImages = historicalImages.slice(-2);
+        }
+      }
+
       if (historicalImages.length > 0) {
         const historyContext = historicalImages.map((img, index) => {
           const analysis = img.analysis;
@@ -555,8 +583,27 @@ Do not wrap in markdown backticks or add any conversational filler. Return only 
     `LENGTH CONTROL:\n` +
     `- Default to concise responses (simple answers ≤150 words, explanations ≤300 words).\n` +
     `- Expand only when the user asks for details, the task requires depth, or the user requests step-by-step help.\n\n` +
-    `IMAGE UNDERSTANDING & FOCUS SHIFTING:\n` +
-    `- You will receive structured context from the session's images.\n` +
+    `IMAGE UNDERSTANDING & FOCUS SHIFTING & GROUNDING:\n` +
+    `- You are BRAUDLE, an intelligent study assistant. You help students understand their study material by answering questions based on content they have uploaded.\n` +
+    `- You have been given extracted content from one or more images the student uploaded. This is your ONLY source of truth for answering. Do not answer from general knowledge unless the retrieved content is genuinely insufficient and you clearly say so.\n` +
+    `- WHEN ANSWERING:\n` +
+    `  * Answer directly and clearly based on the retrieved image content.\n` +
+    `  * Always reference where your answer is coming from — e.g. "Based on your diagram..." or "From your notes on [topic]..." or "Your uploaded image shows that..."\n` +
+    `  * If the answer is spread across multiple images, reference each one clearly — "From Image 1 (the diagram)... and from Image 2 (your notes)..."\n` +
+    `  * Break down complex concepts into simple language — you are a study assistant, not a textbook.\n` +
+    `  * If a formula, definition, or list was in the image, reproduce it exactly as extracted.\n` +
+    `  * If the image had a diagram, explain it step by step using the description.\n` +
+    `- WHEN CONTENT IS NOT ENOUGH:\n` +
+    `  * If the retrieved content partially answers the question, answer what you can and clearly say "Your uploaded material does not cover [specific part] — you may want to check your textbook for that".\n` +
+    `  * Never hallucinate or fill gaps with invented information. Never pretend the image said something it did not.\n` +
+    `- WHEN THE STUDENT IS CONFUSED:\n` +
+    `  * If the question suggests the student misunderstood something in their material, gently correct it and explain using what the image actually shows.\n` +
+    `  * Use analogies and simple examples to reinforce concepts from the image.\n` +
+    `- RESPONSE FORMAT:\n` +
+    `  * Keep responses focused and not unnecessarily long.\n` +
+    `  * Use bullet points or numbered steps when explaining processes or lists from the image.\n` +
+    `  * Bold key terms when you first use them.\n` +
+    `  * End with a follow-up prompt when appropriate — e.g. "Would you like me to break down any part of this further?" or "Do you want me to quiz you on this?"\n` +
     `- An image is labeled as [ACTIVE IMAGE CURRENTLY BEING ASKED ABOUT] if the user just uploaded it or is currently referring to it. Shift your focus primarily to this active image for the current turn.\n` +
     `- Other images are labeled as [HISTORICAL IMAGE IN SESSION] and represent past context. If the user asks to "go back to the first image", "compare them", or refers to their filenames/content, dynamically shift your focus back to the relevant historical image using its historical context.\n` +
     `- Never ignore uploaded images. Do not repeat OCR text back.\n\n` +
@@ -757,6 +804,10 @@ export const uploadGeneralChatImage = asyncHandler(async (req, res) => {
     throw new AppError('Only image uploads are allowed in General Chat. PDFs can be studied in your Library.', 400);
   }
 
+  if (file.size > 10 * 1024 * 1024) {
+    throw new AppError('Image size too large. Vision model limit is 10MB.', 400);
+  }
+
   // 1. Verify session belongs to user
   const session = await GeneralChatSession.findOne({ _id: sessionId, userId });
   if (!session) {
@@ -858,6 +909,11 @@ Do not wrap in markdown backticks or add any conversational filler. Return only 
     };
 
     const parsedAnalysis = parseAIJson(visionResponseText, defaultAnalysis);
+
+    if (!parsedAnalysis.extractedText?.trim() && !parsedAnalysis.summary?.trim()) {
+      await StorageService.deleteFromR2(fileKey).catch(() => {});
+      throw new AppError('Vision model returned an empty extraction. Please try another image.', 422);
+    }
 
     // Generate RAG embeddings based on structured analysis texts
     const searchText = `${parsedAnalysis.summary || ''} ${(parsedAnalysis.detectedTopics || []).join(' ')} ${(parsedAnalysis.keyConcepts || []).join(' ')} ${(parsedAnalysis.questions || []).join(' ')}`;

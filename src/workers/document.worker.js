@@ -91,6 +91,9 @@ const documentWorker = new Worker(
         extractedText = data.text;
         await parser.destroy();
       } else {
+        if (fileBuffer.length > 10 * 1024 * 1024) {
+          throw new Error('Image notes exceed the 10MB vision processing limit');
+        }
         const base64 = fileBuffer.toString('base64');
         const extension = fileKey.split('.').pop().toLowerCase();
         let mimeType = 'image/jpeg';
@@ -140,10 +143,28 @@ const documentWorker = new Worker(
       // ── Stage 5 ─────────────────────────────────────────────────────────────
       await setStage(documentId, 'preparing_tutor');
 
+      const chunkEmbeddings = [];
+      try {
+        const embeddingPromises = chunks.map(chunk => AIService.generateEmbedding(chunk));
+        const resolvedEmbeddings = await Promise.all(embeddingPromises);
+        chunkEmbeddings.push(...resolvedEmbeddings);
+      } catch (embErr) {
+        console.error(`[WORKER] Generating chunk embeddings failed for ${documentId}, falling back to local TF-IDF:`, embErr.message);
+        for (const chunk of chunks) {
+          try {
+            const fbEmb = await AIService.generateEmbedding(chunk).catch(() => AIService.getLocalTfidfEmbedding(chunk));
+            chunkEmbeddings.push(fbEmb);
+          } catch (localErr) {
+            chunkEmbeddings.push(new Array(1536).fill(0));
+          }
+        }
+      }
+
       // ── Stage 6 ─────────────────────────────────────────────────────────────
       await Document.findByIdAndUpdate(documentId, {
         rawText: extractedText,
         chunks,
+        chunkEmbeddings,
         totalChunks: chunks.length,
         topics,
         summary,

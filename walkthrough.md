@@ -66,3 +66,104 @@ Three prompt builders are now exported:
 - `buildTeachPrompt(chunk, profile, isBreakdown)` — Full 5-layer teach prompt
 - `buildQuizPrompt(chunks, profile)` — Level-aware quiz generation
 - `buildCorrectionPrompt(chunk, studentAnswer, correctAnswer, profile)` — Misconception correction
+
+
+# Walkthrough: Layer 6 — RAG Optimization & System Hardening Complete
+
+## Changes Made
+
+### 1. Swallowed SSE Errors Fixed
+* **File**: [session.controller.js](file:///c:/Users/USER/braudle-backend/src/controllers/session.controller.js)
+* **Description**: Added standard `console.error` logging inside the catch block of the `chatSession` controller. This surfaces Groq rate limits, timeouts, and network errors which were previously swallowed.
+
+### 2. Enforced Image Payload Constraints
+* **Files**: 
+  * [document.controller.js](file:///c:/Users/USER/braudle-backend/src/controllers/document.controller.js)
+  * [document.worker.js](file:///c:/Users/USER/braudle-backend/src/workers/document.worker.js)
+  * [generalChat.controller.js](file:///c:/Users/USER/braudle-backend/src/controllers/generalChat.controller.js)
+* **Description**: 
+  * Added validation in `uploadDocument`, `sendGeneralChatMessage`, and `uploadGeneralChatImage` to reject images exceeding 10MB with a 400 Bad Request.
+  * Added a downstream size verification on the downloaded image buffer inside the background ingestion worker. This prevents base64 translation crashes and upstream LLM request body failures.
+
+### 3. Prevented Silent OCR Failures
+* **File**: [generalChat.controller.js](file:///c:/Users/USER/braudle-backend/src/controllers/generalChat.controller.js)
+* **Description**: Added validation checks on the parsed vision model response. If text extraction and summary fields are empty, the backend rejects the transaction (deleting the uploaded R2 object) rather than writing empty, corrupted metadata records to MongoDB.
+
+### 4. Optimized Chat Prompt Size (Capped Context)
+* **File**: [generalChat.controller.js](file:///c:/Users/USER/braudle-backend/src/controllers/generalChat.controller.js)
+* **Description**: Restructured the RAG context formatting to include at most the **top 2 most relevant or recent historical images** (using in-memory cosine similarity checks or chronological slicing) alongside the active image. This avoids prompt context bloat and token-limit crashes.
+
+## Verification
+
+### Automated Integration Tests
+
+#### 1. AI Gateway Fallback Check
+* **Command**: `node tests/test_fallback.mjs`
+* **Result**: **11 passed, 0 failed** (Verified that rate-limiting, transient, and non-transient provider failures resolve correctly).
+
+#### 2. Word Chunker Verification
+* **Command**: `node tests/test_chunker.mjs`
+* **Result**: **9 passed, 0 failed** (Verified semantic chunk boundaries and edge case safety).
+
+#### 3. General Chat Token & Message Limits Check
+* **Command**: `node tests/test_general_chat.mjs`
+* **Result**: **18 passed, 0 failed** (Verified 12-hour limit tracking, conversation caps, and token limits).
+
+#### 4. Multimodal RAG Integration & Vision Test
+* **Commands**: 
+  * `node tests/test_vision.js`
+  * `node tests/test_multimodal_rag_integration.js`
+* **Result**: **Passed** (Verified Qwen Vision transcription, image cache hits/misses, cosine similarity search, and automated cleaning).
+
+
+# Walkthrough: Layer 7 — Prompt Calibration Complete
+
+## Changes Made
+
+### 1. Vision Extraction Prompt Upgraded
+* **File**: [ai.service.js](file:///c:/Users/USER/braudle-backend/src/services/ai.service.js)
+* **Description**: Replaced the basic image transcription text with the requested, structured expert academic content extractor instructions. The vision model now outputs content structured strictly into `CONTENT_TYPE`, `SUBJECT`, `TOPIC`, `RAW_TEXT`, `VISUAL_DESCRIPTION`, `KEY_CONCEPTS`, and `FULL_SUMMARY` fields.
+
+### 2. Context-Aware Tutoring Prompts
+* **Files**: 
+  * [session.controller.js](file:///c:/Users/USER/braudle-backend/src/controllers/session.controller.js)
+  * [promptBuilder.js](file:///c:/Users/USER/braudle-backend/src/utils/promptBuilder.js)
+* **Description**:
+  * Pass the document `type` (image vs. PDF) inside the `documentContext` object within `session.controller.js`.
+  * Updated `buildTeachPrompt` in `promptBuilder.js` to conditionally inject the strict study assistant grounding rules when the source document is an image.
+
+### 3. General Chat Prompts Hardened
+* **File**: [generalChat.controller.js](file:///c:/Users/USER/braudle-backend/src/controllers/generalChat.controller.js)
+* **Description**: Injected the strict study assistant grounding rules and response formatting rules directly into the general chat `systemInstructions`.
+
+## Verification
+
+### Automated Integration Tests
+* Re-ran `node tests/test_multimodal_rag_integration.js`.
+* **Result**: **Passed** (Verified that the Mistral Small model successfully parsed the active image context, grounded itself to the dashboard image data using the new prompt rules, used the requested conversational style, and suggested next steps).
+
+
+# Walkthrough: Layer 8 — Library Document Semantic RAG Complete
+
+## Changes Made
+
+### 1. Document Schema Upgraded
+* **File**: [Document.model.js](file:///c:/Users/USER/braudle-backend/src/models/Document.model.js)
+* **Description**: Added a 2D array field `chunkEmbeddings` mapping 1-to-1 to the text `chunks` array. This preserves 100% backward compatibility for all existing study library documents.
+
+### 2. Ingestion Embeddings Generation
+* **File**: [document.worker.js](file:///c:/Users/USER/braudle-backend/src/workers/document.worker.js)
+* **Description**: Once text is chunked during file processing (Stage 5), the worker generates 1536-dimensional embeddings for all chunks in parallel using the OpenAI embedding service, falling back to local TF-IDF if the remote service is unavailable.
+
+### 3. Ask Mode Semantic Context Retrieval
+* **File**: [session.controller.js](file:///c:/Users/USER/braudle-backend/src/controllers/session.controller.js)
+* **Description**:
+  * Update the document query to select `chunkEmbeddings`.
+  * If the tutoring chat is in `'ask'` mode and the user submits a message (not a startup `'ready'` event), the controller runs a query embedding and computes cosine similarity across all document chunks. It then retrieves and feeds the most relevant page context into the LLM context prompt, enabling students to search across the entire document during their study sessions.
+
+## Verification
+
+### Integration Tests
+* Created and executed a new integration test script:
+  `node tests/test_document_semantic_rag.mjs`
+* **Result**: **Passed** (Verified that document ingestion successfully populates `chunkEmbeddings` in MongoDB, and that sending a query in `ask` mode correctly retrieves the most semantically relevant chunk, grounding the AI's response to the correct study material).
