@@ -119,7 +119,15 @@ GeneralChatSession.create = async (data) => {
   return mockSessionDb;
 };
 
-StudentProfile.findOne = async () => mockProfileDb;
+StudentProfile.findOne = () => {
+  const query = {
+    lean: async () => mockProfileDb,
+    save: async () => mockProfileDb
+  };
+  query.then = (resolve) => Promise.resolve(mockProfileDb).then(resolve);
+  query.catch = (reject) => Promise.resolve(mockProfileDb).catch(reject);
+  return query;
+};
 
 const callController = (controllerFn, req) => {
   return new Promise((resolve, reject) => {

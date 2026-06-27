@@ -75,7 +75,7 @@ const getModelForTask = (provider, task) => {
     openrouter: {
       tutoring: 'deepseek/deepseek-chat',
       analysis: 'qwen/qwen-2.5-32b-instruct',
-      vision: 'qwen/qwen-2.5-vl-72b-instruct',
+      vision: 'meta-llama/llama-3.2-11b-vision-instruct',
       general_chat: 'deepseek/deepseek-chat'
     },
     mistral: {
@@ -95,6 +95,8 @@ const getModelDisplayName = (modelSlug) => {
   const MODEL_DISPLAY_NAMES = {
     'llama-3.3-70b-versatile': 'llama-3.3-70b-versatile',
     'llama-3.1-8b-instant': 'llama-3.1-8b-instant',
+    'llama-3.2-11b-vision-preview': 'Llama 3.2 11B Vision',
+    'meta-llama/llama-3.2-11b-vision-instruct': 'Llama 3.2 11B Vision Instruct',
     'qwen/qwen3.6-27b': 'Qwen 3.6 27B Vision',
     'deepseek/deepseek-chat': 'DeepSeek V3',
     'qwen/qwen-2.5-32b-instruct': 'Qwen 3 32B',
@@ -656,4 +658,74 @@ Do NOT include markdown, backticks, or any explanation. Return only the raw JSON
       feedback: 'An error occurred while evaluating your answer.',
     };
   }
+};
+
+/**
+ * Generates vector embedding from OpenRouter (or falls back to local term-hash embedding)
+ */
+export const generateEmbedding = async (text) => {
+  if (!text || text.trim().length === 0) {
+    return new Array(1536).fill(0);
+  }
+  
+  if (!env.openRouter.apiKey) {
+    console.log('[AI SERVICE] OpenRouter API Key missing. Falling back to local term-hash embedding.');
+    return getLocalTfidfEmbedding(text);
+  }
+
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/embeddings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${env.openRouter.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'openai/text-embedding-3-small',
+        input: text.trim(),
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`OpenRouter embeddings HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (data.data && data.data[0] && data.data[0].embedding) {
+      return data.data[0].embedding;
+    }
+    throw new Error('Embeddings data format invalid');
+  } catch (err) {
+    console.error('[AI SERVICE] OpenRouter embedding creation failed, using local hash-based vector:', err.message);
+    return getLocalTfidfEmbedding(text);
+  }
+};
+
+/**
+ * Generates a local term-hash based pseudo-embedding vector of 1536 dimensions.
+ * Corresponds to a normalized bag-of-words representation using string hashing.
+ */
+export const getLocalTfidfEmbedding = (text) => {
+  const words = (text || '').toLowerCase().match(/\w+/g) || [];
+  const vector = new Array(1536).fill(0);
+  
+  words.forEach(word => {
+    // FNV-1a hash equivalent for word mapping to index
+    let hash = 2166136261;
+    for (let i = 0; i < word.length; i++) {
+      hash ^= word.charCodeAt(i);
+      hash = Math.imul(hash, 16777619);
+    }
+    const idx = Math.abs(hash) % 1536;
+    vector[idx] += 1;
+  });
+
+  // Calculate magnitude
+  const sumOfSquares = vector.reduce((sum, val) => sum + val * val, 0);
+  const magnitude = Math.sqrt(sumOfSquares);
+  
+  if (magnitude > 0) {
+    return vector.map(val => val / magnitude);
+  }
+  return vector;
 };

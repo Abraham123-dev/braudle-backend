@@ -8,6 +8,7 @@ import {
   sendGeneralChatMessage,
   renameGeneralChatSession,
   deleteGeneralChatSession,
+  uploadGeneralChatImage,
 } from '../controllers/generalChat.controller.js';
 
 const router = Router();
@@ -17,6 +18,7 @@ router.get('/', verifyJWT, getGeneralChat);
 router.post('/', verifyJWT, createGeneralChatSession);
 router.get('/:id', verifyJWT, getGeneralChatSessionMessages);
 router.post('/:id/message', verifyJWT, uploadSingle, sendGeneralChatMessage);
+router.post('/:id/upload', verifyJWT, uploadSingle, uploadGeneralChatImage);
 router.put('/:id', verifyJWT, renameGeneralChatSession);
 router.delete('/:id', verifyJWT, deleteGeneralChatSession);
 

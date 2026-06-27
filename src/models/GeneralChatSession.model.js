@@ -7,6 +7,24 @@ const attachmentSchema = new mongoose.Schema({
   extractedText: { type: String },
 }, { _id: false });
 
+const imageKnowledgeSchema = new mongoose.Schema({
+  imageHash: { type: String, required: true, index: true },
+  fileUrl: { type: String, required: true },
+  fileKey: { type: String, required: true },
+  fileName: { type: String, required: true },
+  analysis: {
+    extractedText: { type: String },
+    summary: { type: String },
+    questions: [{ type: String }],
+    equations: [{ type: String }],
+    diagrams: [{ type: String }],
+    keyConcepts: [{ type: String }],
+    detectedTopics: [{ type: String }]
+  },
+  embeddings: [{ type: Number }],
+  createdAt: { type: Date, default: Date.now }
+});
+
 const generalChatMessageSchema = new mongoose.Schema({
   role: {
     type: String,
@@ -37,6 +55,7 @@ const generalChatSessionSchema = new mongoose.Schema(
       default: 'New Chat',
     },
     messages: [generalChatMessageSchema],
+    imageKnowledge: [imageKnowledgeSchema],
   },
   { timestamps: true }
 );
