@@ -245,9 +245,10 @@ export const chatSession = asyncHandler(async (req, res) => {
   };
 
   let currentChunk = (document.chunks && document.chunks[session.currentChunkIndex]) || '';
+  let referencedChunk = '';
 
-  // 2.1. Semantic RAG: If in 'ask' mode, query the entire document semantically
-  if (session.mode === 'ask' && message && message !== 'ready' && document.chunks && document.chunks.length > 0) {
+  // 2.1. Semantic RAG: If student sends a query (not 'ready'), perform similarity matching
+  if (message && message !== 'ready' && document.chunks && document.chunks.length > 0) {
     try {
       const queryEmbedding = await AIService.generateEmbedding(message);
       let bestIndex = session.currentChunkIndex;
@@ -280,7 +281,16 @@ export const chatSession = asyncHandler(async (req, res) => {
         }
       }
 
-      if (highestSimilarity > 0.1) {
+      // If we found a highly relevant chunk elsewhere in the document (similarity > 0.35),
+      // provide it as additional referenced context for answering the student's question.
+      if (highestSimilarity > 0.35) {
+        if (bestIndex !== session.currentChunkIndex) {
+          referencedChunk = document.chunks[bestIndex];
+        } else if (session.mode === 'ask') {
+          currentChunk = document.chunks[bestIndex];
+          documentContext.currentChunkIndex = bestIndex;
+        }
+      } else if (session.mode === 'ask' && highestSimilarity > 0.1) {
         currentChunk = document.chunks[bestIndex];
         documentContext.currentChunkIndex = bestIndex;
       }
@@ -288,6 +298,8 @@ export const chatSession = asyncHandler(async (req, res) => {
       console.error('[CHAT SESSION RAG] Failed semantic chunk retrieval, falling back to sequential page:', err.message);
     }
   }
+
+  documentContext.referencedChunk = referencedChunk;
 
   const history = (conversation.messages || []).slice(-6); // Last 3 exchanges (saves input tokens)
 

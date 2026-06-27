@@ -155,15 +155,86 @@ Three prompt builders are now exported:
 * **File**: [document.worker.js](file:///c:/Users/USER/braudle-backend/src/workers/document.worker.js)
 * **Description**: Once text is chunked during file processing (Stage 5), the worker generates 1536-dimensional embeddings for all chunks in parallel using the OpenAI embedding service, falling back to local TF-IDF if the remote service is unavailable.
 
-### 3. Ask Mode Semantic Context Retrieval
+### 3. Hybrid Semantic Context Retrieval (All Study Modes)
 * **File**: [session.controller.js](file:///c:/Users/USER/braudle-backend/src/controllers/session.controller.js)
 * **Description**:
-  * Update the document query to select `chunkEmbeddings`.
-  * If the tutoring chat is in `'ask'` mode and the user submits a message (not a startup `'ready'` event), the controller runs a query embedding and computes cosine similarity across all document chunks. It then retrieves and feeds the most relevant page context into the LLM context prompt, enabling students to search across the entire document during their study sessions.
+  * Updated the database document selection query to retrieve `chunkEmbeddings`.
+  * If the tutoring session is in any interaction mode (e.g. `understand`, `practice`, `ask`) and the student sends a message (not startup `ready`), the controller performs a query embedding and calculates cosine similarity across all document chunks.
+  * If a highly relevant chunk is found elsewhere in the document (similarity > 0.35), it is passed as a `referencedChunk` to the prompt builder.
+  * If the mode is `'ask'`, the matching chunk overrides the default sequential lesson chunk.
+
+### 4. System Prompt Context Augmentation
+* **File**: [promptBuilder.js](file:///c:/Users/USER/braudle-backend/src/utils/promptBuilder.js)
+* **Description**: Updated `buildTeachPrompt` to accept `referencedChunk`. If present, it appends the text as `ADDITIONAL RELEVANT SECTION FOUND IN DOCUMENT FOR USER QUERY` at the bottom of the compiled system prompt. This gives the AI tutor access to relevant textbook parts or homework questions from other pages without breaking the student's lesson progression.
 
 ## Verification
 
 ### Integration Tests
-* Created and executed a new integration test script:
+* Updated and executed the integration test script:
+  `node tests/test_document_semantic_rag.mjs` (configured in `'understand'` study mode).
+* **Result**: **Passed** (Verified that when the session is in a structured lesson mode, asking a question about a concept defined on another page successfully matches that chunk semantically, passes it as `referencedChunk`, and the AI accurately answers using the retrieved text).
+
+
+# Walkthrough: Layer 9 — Universal Document Grounding Complete
+
+## Changes Made
+
+### 1. Hardened System Grounding Rules
+* **File**: [promptBuilder.js](file:///c:/Users/USER/braudle-backend/src/utils/promptBuilder.js)
+* **Description**: Upgraded the tutoring session behaviour rules in `buildTeachPrompt` to universally enforce document grounding across all study formats (PDF and images). 
+  * The student's uploaded content is defined as the AI's ONLY source of truth.
+  * Answering from general knowledge is restricted unless explicitly declared.
+  * Every explanation is anchored back to the document source text.
+
+## Verification
+
+### Integration Tests
+* Executed the integration test script:
   `node tests/test_document_semantic_rag.mjs`
-* **Result**: **Passed** (Verified that document ingestion successfully populates `chunkEmbeddings` in MongoDB, and that sending a query in `ask` mode correctly retrieves the most semantically relevant chunk, grounding the AI's response to the correct study material).
+* **Result**: **Passed** (Verified that the AI successfully references the notes, structures explanations with the requested formatting, and restricts its answers to the provided notes).
+
+
+# Walkthrough: Layer 10 — Studio Routing Prompt Refinement Complete
+
+## Changes Made
+
+### 1. Refined Direct generations to Studio Routing Prompt
+* **File**: [promptBuilder.js](file:///c:/Users/USER/braudle-backend/src/utils/promptBuilder.js)
+* **Description**: Updated the `DIRECT GENERATIONS TO STUDIO` instruction in `buildTeachPrompt` to add a clear exemption note:
+  > *Note: This rule ONLY applies to formal tests, quizzes, and flashcard sets. You MUST still provide illustrative examples, analogies, and solve individual practice questions directly in the chat when requested.*
+  This ensures that when a student asks for an illustrative example or a conceptual analogy, the AI answers them in the chat instead of misinterpreting the query as a request to generate an exam and routing them to the Studio.
+
+## Verification
+
+### Automated Integration Tests
+* Executed the integration test script:
+  `node tests/test_document_semantic_rag.mjs`
+* **Result**: **Passed** (Verified that the AI tutor correctly generates conceptual analogies, solves questions, and stays grounded in the document context without triggering the Studio redirect defensive block).
+
+
+# Walkthrough: Layer 11 — Frontend Sync to Brain UI Removal Complete
+
+## Changes Made
+
+### 1. Removed Sync to Brain Button
+* **File**: [page.tsx](file:///c:/Users/USER/braudle-frontend/app/session/[id]/page.tsx)
+* **Description**: Completely removed the "Sync to Brain" action button from the study workspace header layout. Also cleaned up the `handleFinishSession` destructured value from the `useSession` hook invocation block to ensure no TypeScript or ESLint unused-variable compilation errors occur.
+
+
+# Walkthrough: Layer 12 — Studio Redirect Prompt Hardening Complete
+
+## Changes Made
+
+### 1. Hardened Studio Routing Rules
+* **File**: [promptBuilder.js](file:///c:/Users/USER/braudle-backend/src/utils/promptBuilder.js)
+* **Description**: Rewrote the `DIRECT GENERATIONS TO STUDIO` instruction block to use a strict blacklist and whitelist paradigm to eliminate false positive redirects.
+  * Added a **CRITICAL - AVOID FALSE POSITIVES** warning block.
+  * Restricts redirects exclusively to *formal, multi-question test, quiz set, or flashcard deck generation* requests.
+  * Explicitly forbids redirecting common verbs like "solve", "explain", "give an example", "illustrate", "help with this problem", "explain this formula", or "do this question", forcing them to be resolved directly inside the tutoring session chat.
+
+## Verification
+
+### Automated Integration Tests
+* Executed the integration test script:
+  `node tests/test_document_semantic_rag.mjs`
+* **Result**: **Passed** (Confirmed that typical "solve" queries, examples, and study prompts execute directly in the chat with correct grounding, analogies, and suggestions without false-triggering the Studio redirect block).

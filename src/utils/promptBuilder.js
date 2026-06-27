@@ -42,6 +42,7 @@ const buildTeachPrompt = (chunk, profile, mode = 'understand', documentContext =
     totalChunks = 1,
     preparationStyle = 'mixed',
     type = 'pdf',
+    referencedChunk = '',
   } = documentContext;
 
   // ── Layer 1: Role & Persona ──────────────────────────────────────────────
@@ -194,18 +195,22 @@ Rules:
 
   // ── Layer 6: Behaviour rules ──────────────────────────────────────────────
   const rules = `RULES YOU MUST ALWAYS FOLLOW:
-${type === 'image' ? `IMAGE GROUNDING & ANCHORING (CRITICAL):
-- This image content is your ONLY source of truth for answering. Do not answer from general knowledge unless the retrieved content is genuinely insufficient and you clearly say so.
-- Always reference where your answer is coming from — e.g. "Based on your diagram..." or "From your notes on [topic]..." or "Your uploaded image shows that..."
-- Break down complex concepts into simple language — you are a study assistant, not a textbook.
-- If a formula, definition, or list was in the image, reproduce it exactly as extracted.
-- If the image had a diagram, explain it step by step using the description.
-- If the retrieved content partially answers the question, answer what you can and clearly say "Your uploaded material does not cover [specific part] — you may want to check your textbook for that".
-- Never hallucinate or fill gaps with invented information. Never pretend the image said something it did not.
-- If the question suggests the student misunderstood something in their material, gently correct it and explain using what the image actually shows. Use analogies and simple examples to reinforce concepts from the image.
-- Keep responses focused and not unnecessarily long. Use bullet points or numbered steps when explaining processes or lists from the image. Bold key terms when you first use them.
-- End with a follow-up prompt when appropriate — e.g. "Would you like me to break down any part of this further?" or "Do you want me to quiz you on this?"` : ''}
-- DIRECT GENERATIONS TO STUDIO: If the student asks you to generate a quiz, practice test, exam, or flashcards in the chat, do NOT generate them. Instead, politely direct them to the "Braudle Modes / Studio" panel on the right (or the "Braudle Modes" tab on mobile) where they can configure and generate them directly.
+- DOCUMENT GROUNDING & ANCHORING (CRITICAL):
+  * The provided document/image content (under "SECTION TO TEACH NOW" and "ADDITIONAL RELEVANT SECTION") is your ONLY source of truth for teaching and answering. 
+  * Do not teach or answer from general knowledge unless the retrieved content is genuinely insufficient and you clearly say so.
+  * Always reference where your explanation is coming from — e.g. "Based on the section on [topic]..." or "From your notes on..." or "The document shows that..."
+  * Break down complex concepts into simple language — you are a study assistant, not a textbook.
+  * If a formula, definition, or list was in the image/text, reproduce it exactly as extracted.
+  * If the image had a diagram, explain it step by step using the description.
+  * If the retrieved content partially answers the question, answer what you can and clearly say "Your uploaded material does not cover [specific part] — you may want to check your textbook for that".
+  * Never hallucinate or fill gaps with invented information. Never pretend the document said something it did not.
+  * If the question suggests the student misunderstood something in their material, gently correct it and explain using what the document actually shows. Use analogies and simple examples to reinforce concepts.
+  * Keep responses focused and not unnecessarily long. Use bullet points or numbered steps when explaining processes or lists. Bold key terms when you first use them.
+  * End with a follow-up prompt when appropriate — e.g. "Would you like me to break down any part of this further?" or "Do you want me to quiz you on this?"
+- DIRECT GENERATIONS TO STUDIO (CRITICAL - AVOID FALSE POSITIVES):
+  * You MUST only route the student to the Studio if they are explicitly asking for a *formal, multi-question test, quiz set, or flashcard deck generation*.
+  * NEVER route the student to the Studio if they ask you to "solve", "explain", "give an example", "illustrate", "help with this problem", "explain this formula", or "do this question".
+  * For single practice problems, homework questions, examples, and step-by-step explanations, you MUST solve and explain them directly in this chat session. Do not redirect them.
 - KEY CONCEPTS: Remind the student that they can click on any of the Key Concepts in the left sidebar at any time to understand their depth or get focused explanations here in the chat.
 - MATH FORMATTING (CRITICAL):
   - Use LaTeX: display math $$ ... $$ for key formulas, inline $ ... $ for variables
@@ -246,7 +251,7 @@ STUDENT PROFILE:
 ${studentContext}
 
 SECTION TO TEACH NOW:
-${chunk}`;
+${chunk}${referencedChunk ? `\n\nADDITIONAL RELEVANT SECTION FOUND IN DOCUMENT FOR USER QUERY:\n${referencedChunk}` : ''}`;
 };
 
 /**

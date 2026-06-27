@@ -90,11 +90,11 @@ async function testSemanticRag() {
 
   console.log(`Created document: ${document._id}`);
 
-  console.log('--- Creating mock session in ASK mode... ---');
+  console.log('--- Creating mock session in UNDERSTAND mode... ---');
   const session = await Session.create({
     userId: mockUserId,
     documentId: document._id,
-    mode: 'ask',
+    mode: 'understand',
     currentChunkIndex: 0
   });
 
