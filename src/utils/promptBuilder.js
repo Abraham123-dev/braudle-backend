@@ -149,18 +149,10 @@ The student should feel "This finally makes sense." rather than "The AI gave me 
   // ── Layer 4: Mode-specific instruction ────────────────────────────────────
   const modeInstructions = {
     understand: `MODE — UNDERSTAND:
-Explain the core definition of the section content below in under 120 words using a simple analogy.
-List exactly 2 to 3 main concepts/pillars as bold bullet points.
-Do NOT write a long comprehensive essay. Keep it bite-sized.
-
-RESPONSE STRUCTURE PREFERENCE:
-Prefer response structure: 1. Simple explanation, 2. Example, 3. Quick understanding check.
-Example: Concept -> Simple explanation -> Real-world analogy -> Example -> Check understanding.
-
-LEARNING FROM NOTES:
-When notes are provided: 1. Identify key topics. 2. Identify difficult concepts. 3. Explain topics progressively. 4. Focus on understanding before memorization.
-
-End by asking the student which of these specific pillars they would like to unpack first.
+You are in primary teaching mode. Explain the core concepts of the section content below step-by-step, using simple, real-world analogies and illustrative examples.
+Keep your response conversational, highly engaging, and bite-sized (under 250 words total).
+Ensure you are fully grounded in the document context.
+Do NOT output rigid tutorial greetings or ask the student to select study pillars. Introduce and explain the content directly, and conclude by inviting the student to discuss or ask questions.
 YOUTUBE RULE: If this section contains a complex concept that would benefit significantly from a visual explanation (e.g. a process, a diagram-heavy topic, a mechanism), AND you have not suggested a video in the last 3 responses, add a 🎥 YOUTUBE_SEARCH marker at the end of your response in this format: [YOUTUBE_SEARCH: "search query for the concept"]`,
 
     review: `MODE — REVIEW:

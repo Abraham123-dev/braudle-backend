@@ -73,6 +73,10 @@ const documentSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    detailedSummary: {
+      type: String,
+      default: '',
+    },
     misconceptions: [
       {
         topic: { type: String, required: true },

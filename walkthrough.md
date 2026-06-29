@@ -186,10 +186,13 @@ Three prompt builders are now exported:
   * Answering from general knowledge is restricted unless explicitly declared.
   * Every explanation is anchored back to the document source text.
 
-## Verification
+* **Header Upload Control**: Placed the "+ Upload Source" action button neatly inside the library title block and homepage "Your Library" header area.
+* **Greeting & Motivational Nudges Restored**: Restored the dynamic "Good morning/afternoon/evening" welcome heading, sub-greeting prompt, and stable daily motivational quote at the top of the homepage.
+* **Notebook Limit & Explore Link**: Restricted the homepage dashboard grid to show a maximum of 3 notebooks next to the "+ Create notebook" card. Added a centered link/button underneath (`Explore more of your uploaded notebooks in the Library`) to navigate to the full Library page.
+* **Dashboard Widgets Cleaned**: Kept the homepage free of gamified statistics rows and carousels.
 
-### Integration Tests
-* Executed the integration test script:
+## Verification
+- Verified compilation cleanliness using `npx tsc --noEmit`. No TypeScript errors exist in the codebase.t script:
   `node tests/test_document_semantic_rag.mjs`
 * **Result**: **Passed** (Verified that the AI successfully references the notes, structures explanations with the requested formatting, and restricts its answers to the provided notes).
 

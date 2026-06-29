@@ -270,10 +270,13 @@ export const chatSession = asyncHandler(async (req, res) => {
       };
 
       const chunkEmbeddings = document.chunkEmbeddings || [];
+      const scoredChunks = [];
+
       for (let i = 0; i < document.chunks.length; i++) {
         const chunkEmb = chunkEmbeddings[i];
         if (chunkEmb && chunkEmb.length > 0) {
           const score = cosineSimilarity(queryEmbedding, chunkEmb);
+          scoredChunks.push({ index: i, score, content: document.chunks[i] });
           if (score > highestSimilarity) {
             highestSimilarity = score;
             bestIndex = i;
@@ -281,16 +284,22 @@ export const chatSession = asyncHandler(async (req, res) => {
         }
       }
 
-      // If we found a highly relevant chunk elsewhere in the document (similarity > 0.35),
-      // provide it as additional referenced context for answering the student's question.
-      if (highestSimilarity > 0.35) {
-        if (bestIndex !== session.currentChunkIndex) {
-          referencedChunk = document.chunks[bestIndex];
-        } else if (session.mode === 'ask') {
-          currentChunk = document.chunks[bestIndex];
-          documentContext.currentChunkIndex = bestIndex;
-        }
-      } else if (session.mode === 'ask' && highestSimilarity > 0.1) {
+      // Sort scored chunks by similarity descending
+      scoredChunks.sort((a, b) => b.score - a.score);
+
+      // Select top 3 chunks with score > 0.25 (excluding the active chunk to avoid duplicate context)
+      const topRelevantChunks = scoredChunks
+        .filter(c => c.score > 0.25 && c.index !== session.currentChunkIndex)
+        .slice(0, 3);
+
+      if (topRelevantChunks.length > 0) {
+        referencedChunk = topRelevantChunks
+          .map(c => `[Section ${c.index + 1} - Relevance: ${Math.round(c.score * 100)}%]:\n${c.content}`)
+          .join('\n\n');
+      }
+
+      // If in ask mode, focus on the closest match
+      if (session.mode === 'ask' && highestSimilarity > 0.1) {
         currentChunk = document.chunks[bestIndex];
         documentContext.currentChunkIndex = bestIndex;
       }
@@ -572,4 +581,83 @@ export const getWelcomeMessage = asyncHandler(async (req, res) => {
       learningModes,
     },
   });
+});
+
+/**
+ * Lazy-loaded endpoint to get or generate the comprehensive PDF study summary.
+ * Returns the cached summary if it exists, otherwise requests the AI to write one.
+ */
+export const getDetailedSummary = asyncHandler(async (req, res) => {
+  const { id: sessionId } = req.params;
+  const userId = req.user.id;
+
+  const session = await Session.findOne({ _id: sessionId, userId });
+  if (!session) throw new AppError('Session not found', 404);
+
+  const document = await Document.findById(session.documentId);
+  if (!document) throw new AppError('Document not found', 404);
+
+  // Return immediately if detailedSummary already exists
+  if (document.detailedSummary && document.detailedSummary.trim().length > 0) {
+    return res.status(200).json({
+      status: 'success',
+      detailedSummary: document.detailedSummary,
+    });
+  }
+
+  // Generate if not cached
+  const fullText = document.rawText || document.chunks.join('\n\n') || '';
+  if (!fullText.trim()) {
+    throw new AppError('No content found in the document to summarize.', 400);
+  }
+
+  // Safe context length limit (approx 12,000 words)
+  const wordLimit = 12000;
+  const words = fullText.split(/\s+/);
+  const truncatedText = words.slice(0, wordLimit).join(' ');
+  const hasMore = words.length > wordLimit;
+
+  const summaryPrompt = `You are an elite academic assistant. Write a comprehensive, detailed, and highly-structured study summary of the following document content.
+Your summary should help a student master the concepts. Format the output in clean, readable GitHub Markdown with sections, bullet points, and bold terms where appropriate.
+
+Include the following sections:
+1. 📌 **Executive Summary**: A high-level overview of the document's main theme and goal.
+2. 🔑 **Key Themes & Core Concepts**: Deep-dive explanation of the primary concepts, defining terminology and formulas.
+3. 📝 **Section-by-Section Outline**: Break down the text structure and summarize each part/chapter's argument or findings.
+4. 💡 **Crucial Takeaways**: Highlight the absolute most important formulas, rules, or insights students must memorize.
+
+Below is the document content:
+---
+${truncatedText}
+${hasMore ? '\n\n[Content truncated for length]' : ''}
+---
+
+Provide ONLY the markdown formatted study summary. Do not include introductory conversational text like "Here is your summary". Start directly with the title and headers.`;
+
+  try {
+    const aiResponse = await AIService.generateAIResponse({
+      task: 'tutoring',
+      messages: [
+        { role: 'system', content: 'You are an expert academic tutor summarizing textbooks and lecture notes.' },
+        { role: 'user', content: summaryPrompt }
+      ],
+      temperature: 0.3,
+    });
+
+    if (!aiResponse || aiResponse.trim().length === 0) {
+      throw new Error('AI returned an empty response.');
+    }
+
+    // Save and cache in MongoDB
+    document.detailedSummary = aiResponse;
+    await document.save();
+
+    res.status(200).json({
+      status: 'success',
+      detailedSummary: aiResponse,
+    });
+  } catch (err) {
+    console.error('[DETAILED SUMMARY GENERATION] Failed:', err);
+    throw new AppError('Failed to generate study summary. Please try again.', 500);
+  }
 });
