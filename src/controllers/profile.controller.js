@@ -48,7 +48,8 @@ export const updateProfile = asyncHandler(async (req, res) => {
       name: updatedUser.name,
       email: updatedUser.email,
       avatar: updatedUser.avatar,
-      onboardingComplete: updatedUser.onboardingComplete
+      onboardingComplete: updatedUser.onboardingComplete,
+      plan: updatedUser.plan
     }
   });
 });

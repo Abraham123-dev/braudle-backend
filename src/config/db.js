@@ -2,14 +2,26 @@ import mongoose from 'mongoose';
 import { env } from './env.js';
 
 const connectDB = async () => {
-  try {
-    await mongoose.connect(env.mongoUri, {
-      serverSelectionTimeoutMS: 5000,
-    });
-    console.log(' MongoDB connected successfully');
-  } catch (error) {
-    console.warn(' MongoDB connection failed:', error.message);
-    console.warn('Server will continue without database — add MongoDB connection when ready');
+  const maxRetries = 5;
+  let retries = 0;
+
+  while (retries < maxRetries) {
+    try {
+      await mongoose.connect(env.mongoUri, {
+        serverSelectionTimeoutMS: 5000,
+      });
+      console.log(' MongoDB connected successfully');
+      return;
+    } catch (error) {
+      retries++;
+      console.error(`❌ MongoDB connection attempt ${retries}/${maxRetries} failed:`, error.message);
+      if (retries >= maxRetries) {
+        console.error('❌ MongoDB connection failed after maximum retries. Exiting...');
+        process.exit(1);
+      }
+      console.log('Retrying MongoDB connection in 5 seconds...');
+      await new Promise(resolve => setTimeout(resolve, 5000));
+    }
   }
 };
 

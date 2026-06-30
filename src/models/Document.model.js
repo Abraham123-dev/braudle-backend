@@ -131,7 +131,10 @@ const documentSchema = new mongoose.Schema(
     sessionMemory: {
       flashcardsShown: { type: [String], default: [] },
       questionsServed: { type: [String], default: [] },
-      practiceGuidesGenerated: { type: [mongoose.Schema.Types.Mixed], default: [] }
+      practiceGuidesGenerated: { type: [mongoose.Schema.Types.Mixed], default: [] },
+      lastFlashcardGen: { type: Date },
+      lastPracticeGen: { type: Date },
+      lastExamGen: { type: Date }
     },
   },
   { 

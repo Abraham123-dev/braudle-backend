@@ -80,7 +80,7 @@ export const getMe = asyncHandler(async (req, res) => {
     throw new AppError('Unauthorized', 401);
   }
 
-  const user = await User.findById(req.user.id).select('name email avatar role onboardingComplete authProvider');
+  const user = await User.findById(req.user.id).select('name email avatar role onboardingComplete authProvider plan');
   if (!user) {
     throw new AppError('User not found', 404);
   }

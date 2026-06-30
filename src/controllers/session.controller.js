@@ -246,9 +246,9 @@ export const chatSession = asyncHandler(async (req, res) => {
   }
 
   const tokenAllowances = {
-    free: 25000,
-    plus: 100000,
-    large: 1000000
+    free: 20000,
+    plus: 40000,
+    large: 120000
   };
 
   const allowance = tokenAllowances[plan];

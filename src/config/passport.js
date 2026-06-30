@@ -40,7 +40,11 @@ passport.use(
           });
         } else {
           user.name = name;
-          user.avatar = avatar;
+          // Preserve custom avatar uploaded to Cloudflare R2 (or custom storage), only sync Google avatar if they don't have a custom one
+          const isCustomAvatar = user.avatar && (user.avatar.includes('r2.dev') || user.avatar.includes('cloudflarestorage.com'));
+          if (!isCustomAvatar) {
+            user.avatar = avatar;
+          }
           await user.save();
         }
 

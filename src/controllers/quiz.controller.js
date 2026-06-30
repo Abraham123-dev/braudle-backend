@@ -38,7 +38,7 @@ const normalizeQuestions = (questions) => {
 };
 
 // Helper to check and record generation limits
-const checkAndRecordGenLimit = async (user, document, type) => {
+export const checkAndRecordGenLimit = async (user, document, type) => {
   const plan = user.plan || 'free';
   const now = new Date();
 
@@ -77,10 +77,12 @@ const checkAndRecordGenLimit = async (user, document, type) => {
   if (!document.sessionMemory) {
     document.sessionMemory = { flashcardsShown: [], questionsServed: [], practiceGuidesGenerated: [] };
   }
-  const lastGenTime = document.sessionMemory[lastGenField] ? new Date(document.sessionMemory[lastGenField]).getTime() : 0;
+
+  const lastGenVal = document.sessionMemory[lastGenField];
+  const lastGenTime = lastGenVal ? new Date(lastGenVal).getTime() : 0;
   const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
 
-  if (Date.now() - lastGenTime < threeDaysMs) {
+  if (lastGenTime > 0 && (Date.now() - lastGenTime < threeDaysMs)) {
     const remainingMs = threeDaysMs - (Date.now() - lastGenTime);
     const remainingHours = Math.ceil(remainingMs / (60 * 60 * 1000));
     let remainingStr = '';
@@ -94,7 +96,7 @@ const checkAndRecordGenLimit = async (user, document, type) => {
     throw new AppError(`You've reached the limit. Free users can only generate 1 ${type} every 3 days. Available in ${remainingStr}.`, 429);
   }
 
-  document.sessionMemory[lastGenField] = now;
+  document.set(`sessionMemory.${lastGenField}`, now);
   document.markModified('sessionMemory');
   await document.save();
 };
