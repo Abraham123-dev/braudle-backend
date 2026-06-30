@@ -197,7 +197,7 @@ export const updateOnboardingName = asyncHandler(async (req, res) => {
   const user = await User.findOneAndUpdate(
     { _id: userId, name: 'New Student' },
     { name: singleName },
-    { new: true, runValidators: true }
+    { returnDocument: 'after', runValidators: true }
   ).select('name email avatar role onboardingComplete authProvider');
 
   if (!user) {

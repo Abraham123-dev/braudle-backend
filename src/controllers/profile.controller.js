@@ -3,34 +3,54 @@ import { asyncHandler } from '../utils/asyncHandler.js';
 import StudentProfile from '../models/StudentProfile.model.js';
 import User from '../models/User.model.js';
 import * as ProfileService from '../services/profile.service.js';
+import * as StorageService from '../services/storage.service.js';
 
-export const completeOnboarding = asyncHandler(async (req, res) => {
+export const updateProfile = asyncHandler(async (req, res) => {
   const userId = req.user._id || req.user.id;
+  const { studyLevel, learningStyle, goal, level } = req.body;
+  const file = req.file;
 
-  // Check if StudentProfile already exists for this userId
-  const existingProfile = await StudentProfile.findOne({ userId });
-  if (existingProfile) {
-    throw new AppError('Onboarding already completed', 400);
+  // Build profile update fields
+  const profileUpdate = {};
+  if (studyLevel !== undefined) profileUpdate.studyLevel = studyLevel;
+  if (learningStyle !== undefined) profileUpdate.learningStyle = learningStyle;
+  if (goal !== undefined) profileUpdate.goal = goal;
+  if (level !== undefined) profileUpdate.level = level;
+
+  // Update StudentProfile. Use upsert: true so it works for onboarding too!
+  const profile = await StudentProfile.findOneAndUpdate(
+    { userId },
+    profileUpdate,
+    { new: true, upsert: true }
+  );
+
+  const userUpdate = { onboardingComplete: true };
+
+  // If avatar file is uploaded, upload to R2 and set User avatar
+  if (file) {
+    const sanitizedName = StorageService.sanitizeFilename(file.originalname);
+    const fileKey = `avatars/${userId}/${Date.now()}-${sanitizedName}`;
+    const avatarUrl = await StorageService.uploadToR2(file.buffer, fileKey, file.mimetype);
+    userUpdate.avatar = avatarUrl;
   }
 
-  // Create StudentProfile with fields from req.body
-  const { studyLevel, learningStyle, goal, level } = req.body;
-  const profile = await StudentProfile.create({
-    userId,
-    studyLevel,
-    learningStyle,
-    goal,
-    level,
-  });
+  const updatedUser = await User.findByIdAndUpdate(userId, userUpdate, { new: true });
 
-  // Set User.onboardingComplete to true and save
-  await User.findByIdAndUpdate(userId, { onboardingComplete: true });
-
-  // Invalidate cache since we just created the profile
+  // Invalidate cached profile
   const { deleteCached, CACHE_KEYS } = await import('../utils/cache.js');
   await deleteCached(CACHE_KEYS.PROFILE(userId));
 
-  return res.status(200).json({ message: 'Onboarding complete', profile });
+  return res.status(200).json({ 
+    message: 'Profile updated successfully', 
+    profile,
+    user: {
+      id: updatedUser._id,
+      name: updatedUser.name,
+      email: updatedUser.email,
+      avatar: updatedUser.avatar,
+      onboardingComplete: updatedUser.onboardingComplete
+    }
+  });
 });
 
 export const getStudentProfile = asyncHandler(async (req, res) => {

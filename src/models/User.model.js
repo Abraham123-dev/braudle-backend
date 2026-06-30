@@ -14,6 +14,28 @@ const userSchema = new mongoose.Schema(
     },
     lastUploadDate: { type: Date },
     onboardingComplete: { type: Boolean, default: false },
+    plan: {
+      type: String,
+      enum: ['free', 'plus', 'large'],
+      default: 'free',
+    },
+    dailyTokenUsage: {
+      type: Number,
+      default: 0,
+    },
+    lastTokenResetDate: {
+      type: Date,
+      default: Date.now,
+    },
+    dailyGenerationsCount: {
+      flashcards: { type: Number, default: 0 },
+      practice: { type: Number, default: 0 },
+      exam: { type: Number, default: 0 },
+    },
+    lastGenerationResetDate: {
+      type: Date,
+      default: Date.now,
+    },
   },
   { timestamps: true }
 );

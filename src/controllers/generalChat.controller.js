@@ -751,7 +751,7 @@ export const renameGeneralChatSession = asyncHandler(async (req, res) => {
   const session = await GeneralChatSession.findOneAndUpdate(
     { _id: id, userId },
     { title: title.trim() },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
   if (!session) {

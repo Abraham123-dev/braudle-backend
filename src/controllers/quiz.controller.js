@@ -3,12 +3,14 @@ import { AppError } from '../utils/AppError.js';
 import Quiz from '../models/Quiz.model.js';
 import Session from '../models/Session.model.js';
 import Document from '../models/Document.model.js';
+import User from '../models/User.model.js';
 import * as QuizService from '../services/quiz.service.js';
 import * as ProfileService from '../services/profile.service.js';
 import * as AIService from '../services/ai.service.js';
 import { calculateScore } from '../utils/scoreCalculator.js';
 import { redisClient, isRedisHealthy } from '../config/redis.js';
 import { deleteCached, CACHE_KEYS } from '../utils/cache.js';
+import { parseAIJson } from '../utils/parseAIJson.js';
 
 const stripAnswers = (questions) => questions.map((q) => ({
   _id: q._id,
@@ -35,6 +37,174 @@ const normalizeQuestions = (questions) => {
   });
 };
 
+// Helper to check and record generation limits
+const checkAndRecordGenLimit = async (user, document, type) => {
+  const plan = user.plan || 'free';
+  const now = new Date();
+
+  if (plan === 'large') {
+    return; // Unlimited!
+  }
+
+  // Reset daily counts if a new day has started
+  const lastReset = user.lastGenerationResetDate ? new Date(user.lastGenerationResetDate) : new Date(0);
+  const isNewDay = lastReset.toDateString() !== now.toDateString();
+
+  if (isNewDay) {
+    user.dailyGenerationsCount = { flashcards: 0, practice: 0, exam: 0 };
+    user.lastGenerationResetDate = now;
+  }
+
+  if (plan === 'plus') {
+    // Plus limit: Max 3 generations per day globally
+    const count = user.dailyGenerationsCount[type] || 0;
+    if (count >= 3) {
+      throw new AppError(`You've reached your daily limit of 3 ${type} generations for the Plus plan.`, 429);
+    }
+    user.dailyGenerationsCount[type] = count + 1;
+    await user.save();
+    return;
+  }
+
+  // Free limit: 1 generation every 3 days per document
+  const fieldMap = {
+    flashcards: 'lastFlashcardGen',
+    practice: 'lastPracticeGen',
+    exam: 'lastExamGen'
+  };
+  const lastGenField = fieldMap[type];
+
+  if (!document.sessionMemory) {
+    document.sessionMemory = { flashcardsShown: [], questionsServed: [], practiceGuidesGenerated: [] };
+  }
+  const lastGenTime = document.sessionMemory[lastGenField] ? new Date(document.sessionMemory[lastGenField]).getTime() : 0;
+  const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
+
+  if (Date.now() - lastGenTime < threeDaysMs) {
+    const remainingMs = threeDaysMs - (Date.now() - lastGenTime);
+    const remainingHours = Math.ceil(remainingMs / (60 * 60 * 1000));
+    let remainingStr = '';
+    if (remainingHours >= 24) {
+      const days = Math.floor(remainingHours / 24);
+      const hours = remainingHours % 24;
+      remainingStr = `${days}d ${hours}h`;
+    } else {
+      remainingStr = `${remainingHours}h`;
+    }
+    throw new AppError(`You've reached the limit. Free users can only generate 1 ${type} every 3 days. Available in ${remainingStr}.`, 429);
+  }
+
+  document.sessionMemory[lastGenField] = now;
+  document.markModified('sessionMemory');
+  await document.save();
+};
+
+const generateAndSaveCacheOnTheFly = async (document) => {
+  try {
+    const { buildMasterKnowledgeCachePrompt } = await import('../utils/promptBuilder.js');
+    const cachePrompt = buildMasterKnowledgeCachePrompt(document.chunks);
+    const cacheResponse = await AIService.generateAIResponse({
+      task: 'analysis',
+      messages: [{ role: 'user', content: cachePrompt }],
+      temperature: 0.2,
+      max_tokens: 4096
+    });
+    const parsed = parseAIJson(cacheResponse, null);
+    if (parsed) {
+      document.knowledgeCache = {
+        concepts: parsed.concepts || [],
+        definitions: parsed.definitions || [],
+        learningObjectives: parsed.learningObjectives || [],
+        keyFacts: parsed.keyFacts || [],
+        importantExamples: parsed.importantExamples || [],
+        formulae: parsed.formulae || [],
+        flashcards: parsed.flashcards || [],
+        questionBank: parsed.questionBank || [],
+        examTopics: parsed.examTopics || []
+      };
+      document.markModified('knowledgeCache');
+      await document.save();
+    }
+  } catch (err) {
+    console.error('Failed to generate cache on the fly:', err.message);
+  }
+};
+
+const assembleQuizFromCache = (document, count, isExam, format) => {
+  if (!document.knowledgeCache || !Array.isArray(document.knowledgeCache.questionBank) || document.knowledgeCache.questionBank.length === 0) {
+    return null; 
+  }
+
+  let bank = [...document.knowledgeCache.questionBank];
+
+  if (format === 'objective') {
+    bank = bank.filter(q => q.type === 'mcq' || q.type === 'true_false');
+  } else if (format === 'theory' || format === 'subjective') {
+    bank = bank.filter(q => q.type === 'theory');
+  }
+
+  if (bank.length === 0) {
+    bank = [...document.knowledgeCache.questionBank];
+  }
+
+  const served = document.sessionMemory?.questionsServed || [];
+  let available = bank.filter(q => !served.includes(q.question));
+
+  if (available.length < count) {
+    available = bank;
+    if (document.sessionMemory) {
+      document.sessionMemory.questionsServed = [];
+    }
+  }
+
+  const shuffle = (arr) => arr.sort(() => Math.random() - 0.5);
+
+  let selected = [];
+  if (isExam) {
+    const easy = available.filter(q => q.difficulty === 'easy');
+    const medium = available.filter(q => q.difficulty === 'medium');
+    const hard = available.filter(q => q.difficulty === 'hard');
+
+    shuffle(easy);
+    shuffle(medium);
+    shuffle(hard);
+
+    while (selected.length < count && (easy.length > 0 || medium.length > 0 || hard.length > 0)) {
+      if (easy.length > 0) selected.push(easy.pop());
+      if (selected.length < count && medium.length > 0) selected.push(medium.pop());
+      if (selected.length < count && hard.length > 0) selected.push(hard.pop());
+    }
+
+    if (selected.length < count && available.length > 0) {
+      const remainingAvailable = available.filter(q => !selected.map(s => s.question).includes(q.question));
+      shuffle(remainingAvailable);
+      selected.push(...remainingAvailable.slice(0, count - selected.length));
+    }
+  } else {
+    shuffle(available);
+    selected = available.slice(0, count);
+  }
+
+  if (!document.sessionMemory) {
+    document.sessionMemory = { flashcardsShown: [], questionsServed: [], practiceGuidesGenerated: [] };
+  }
+  selected.forEach(q => {
+    if (!document.sessionMemory.questionsServed.includes(q.question)) {
+      document.sessionMemory.questionsServed.push(q.question);
+    }
+  });
+  document.markModified('sessionMemory');
+
+  return selected.map(q => ({
+    question: q.question,
+    type: q.type || 'mcq',
+    options: q.options || [],
+    answer: q.answer,
+    explanation: q.explanation || '',
+    topic: q.topic || ''
+  }));
+};
+
 /**
  * Generate a new quiz for a session
  */
@@ -56,24 +226,59 @@ export const generateQuiz = asyncHandler(async (req, res) => {
   }
 
   try {
-    // Fetch document topics for adaptive learning traceability
-    const document = await Document.findById(session.documentId).select('topics');
+    const user = await User.findById(userId);
+    if (!user) throw new AppError('User not found', 404);
 
-    // Cache-aware profile fetch
-    const profile = await ProfileService.getProfile(userId);
-    if (!profile) throw new AppError('Student profile not found', 404);
+    const document = await Document.findById(session.documentId);
+    if (!document) throw new AppError('Document not found', 404);
+
+    // Enforce practice generation limits
+    await checkAndRecordGenLimit(user, document, 'practice');
+
+    // Build cache if missing
+    if (!document.knowledgeCache || !document.knowledgeCache.questionBank || document.knowledgeCache.questionBank.length === 0) {
+      await generateAndSaveCacheOnTheFly(document);
+    }
+
+    // Attempt to assemble from cache
+    const cachedQuestions = assembleQuizFromCache(document, 5, false, 'mixed');
+    if (cachedQuestions && cachedQuestions.length > 0) {
+      const mongoose = (await import('mongoose')).default;
+      const questionsWithIds = cachedQuestions.map(q => ({
+        _id: new mongoose.Types.ObjectId(),
+        ...q
+      }));
+
+      const quiz = await Quiz.create({
+        sessionId: session._id,
+        documentId: session.documentId,
+        isExam: false,
+        questions: questionsWithIds,
+        totalQuestions: questionsWithIds.length,
+      });
+
+      await document.save();
+
+      return res.status(201).json({
+        status: 'success',
+        quiz: {
+          ...quiz.toObject(),
+          questions: stripAnswers(quiz.questions),
+        },
+      });
+    }
 
     // Check if a quiz already exists for this session
     let existingQuiz = await Quiz.findOne({ sessionId });
     if (existingQuiz && existingQuiz.score === undefined) {
-      // If a quiz exists and hasn't been submitted, return it with stripped answers
       return res.status(200).json({ 
         status: 'success', 
         quiz: { ...existingQuiz.toObject(), questions: stripAnswers(existingQuiz.questions) } 
       });
     }
 
-    // Call the AI service to generate a new quiz
+    // Call the AI service as fallback
+    const profile = await ProfileService.getProfile(userId);
     const quizData = await QuizService.generateQuiz(
       session.documentId, 
       profile, 
@@ -82,15 +287,9 @@ export const generateQuiz = asyncHandler(async (req, res) => {
       session._id.toString()
     );
 
-    const questions = quizData.questions || quizData; // Handle if AI returns array or object
-
-    if (!Array.isArray(questions) || questions.length === 0) {
-      throw new AppError('Invalid quiz generated by AI', 500);
-    }
-
+    const questions = quizData.questions || quizData;
     const normalizedQuestions = normalizeQuestions(questions);
 
-    // Create Quiz record
     const quiz = await Quiz.create({
       sessionId: session._id,
       documentId: session.documentId,
@@ -99,14 +298,11 @@ export const generateQuiz = asyncHandler(async (req, res) => {
       totalQuestions: normalizedQuestions.length,
     });
 
-    // Strip answers from response so students can't inspect element to cheat
-    const cleanQuestions = stripAnswers(quiz.questions);
-
     return res.status(201).json({
       status: 'success',
       quiz: {
         ...quiz.toObject(),
-        questions: cleanQuestions,
+        questions: stripAnswers(quiz.questions),
       },
     });
   } catch (error) {
@@ -128,14 +324,15 @@ export const generateCustomAssessment = asyncHandler(async (req, res) => {
   const document = await Document.findOne({ _id: documentId, userId });
   if (!document) throw new AppError('Document not found or access denied', 404);
 
+  const user = await User.findById(userId);
+  if (!user) throw new AppError('User not found', 404);
+
   let activeSessionId;
   if (sessionId) {
     const session = await Session.findOne({ _id: sessionId, userId, documentId });
     if (!session) throw new AppError('Session not found or access denied', 404);
     activeSessionId = session._id;
   } else {
-    // We need to anchor this to a session for history and grading.
-    // Create a fast, background 'exam' session.
     const session = await Session.create({
       userId,
       documentId,
@@ -155,6 +352,43 @@ export const generateCustomAssessment = asyncHandler(async (req, res) => {
   }
 
   try {
+    // Enforce generation limits
+    const limitType = isExam ? 'exam' : 'practice';
+    await checkAndRecordGenLimit(user, document, limitType);
+
+    // Build cache if missing
+    if (!document.knowledgeCache || !document.knowledgeCache.questionBank || document.knowledgeCache.questionBank.length === 0) {
+      await generateAndSaveCacheOnTheFly(document);
+    }
+
+    // Assemble questions from cache
+    const cachedQuestions = assembleQuizFromCache(document, numQuestions || 10, !!isExam, format || 'mixed');
+    if (cachedQuestions && cachedQuestions.length > 0) {
+      const mongoose = (await import('mongoose')).default;
+      const questionsWithIds = cachedQuestions.map(q => ({
+        _id: new mongoose.Types.ObjectId(),
+        ...q
+      }));
+
+      const quiz = await Quiz.create({
+        sessionId: activeSessionId,
+        documentId: documentId,
+        isExam: !!isExam,
+        questions: questionsWithIds,
+        totalQuestions: questionsWithIds.length,
+      });
+
+      await document.save();
+
+      return res.status(201).json({
+        status: 'success',
+        quiz: {
+          ...quiz.toObject(),
+          questions: stripAnswers(quiz.questions),
+        },
+      });
+    }
+
     const quizData = await QuizService.generateCustomAssessment(documentId, { 
       format, 
       difficulty, 
@@ -162,12 +396,8 @@ export const generateCustomAssessment = asyncHandler(async (req, res) => {
       instructions,
       documentTopics: document.topics || []
     }, activeSessionId.toString());
+
     const questions = quizData.questions || quizData;
-
-    if (!Array.isArray(questions) || questions.length === 0) {
-      throw new AppError('Invalid assessment generated by AI', 500);
-    }
-
     const normalizedQuestions = normalizeQuestions(questions);
 
     const quiz = await Quiz.create({

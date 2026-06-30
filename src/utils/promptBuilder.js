@@ -600,6 +600,69 @@ DOCUMENT CONTENT (sampled from ${sampleChunks.length} of ${chunks.length} sectio
 ${sample}`;
 }
 
+function buildMasterKnowledgeCachePrompt(chunks) {
+  const sampleChunks = sampleDocumentChunks(chunks, 12);
+  const sample = sampleChunks.join('\n\n---\n\n');
+
+  return `You are an expert curriculum analyst and educational content designer.
+Your task is to analyze the provided document content and extract a comprehensive set of study materials to build a master knowledge cache for student learning.
+
+Extract:
+1. concepts: A list of 5-10 key concepts discussed, each with a 'name' and an 'explanation'.
+2. definitions: A list of 5-10 key vocabulary terms, each with a 'term' and a 'definition'.
+3. learningObjectives: A list of 3-6 learning objectives (e.g. "Understand the principles of...")
+4. keyFacts: A list of 5-10 key factual statements or takeaways.
+5. importantExamples: A list of 3-6 real-world examples, each with a 'topic' and a 'description'.
+6. formulae: A list of 2-5 equations or formulas, each with 'name', 'formula', and 'explanation'. If none apply, return an empty array [].
+7. flashcards: A list of 10-15 possible study flashcards, each with 'front' (question/term), 'back' (answer/definition), and 'concept' (related concept name).
+8. questionBank: A list of 10-15 high-quality assessment questions. Mix multiple choice ('mcq'), true/false ('true_false'), and short answer ('theory') formats. Each must have:
+   - 'question': the question text
+   - 'type': 'mcq', 'true_false', or 'theory'
+   - 'options': array of strings (exactly 4 options for 'mcq', empty or null for 'true_false'/'theory')
+   - 'answer': correct answer (e.g. for mcq, the exact matching option string; for true_false, 'true' or 'false'; for theory, a sample correct answer)
+   - 'explanation': why the answer is correct
+   - 'difficulty': 'easy', 'medium', or 'hard'
+   - 'topic': the topic name this question maps to
+9. examTopics: A list of 3-6 high-yield exam topics.
+
+Return ONLY a valid JSON object. No markdown. No preamble. No trailing text.
+Schema:
+{
+  "concepts": [
+    { "name": "Concept Name", "explanation": "Detailed explanation..." }
+  ],
+  "definitions": [
+    { "term": "Term", "definition": "Definition..." }
+  ],
+  "learningObjectives": ["Objective 1", "Objective 2"],
+  "keyFacts": ["Fact 1", "Fact 2"],
+  "importantExamples": [
+    { "topic": "Topic", "description": "Example description..." }
+  ],
+  "formulae": [
+    { "name": "Formula Name", "formula": "E = mc^2", "explanation": "Description..." }
+  ],
+  "flashcards": [
+    { "front": "What is x?", "back": "x is y", "concept": "Concept Name" }
+  ],
+  "questionBank": [
+    { 
+      "question": "Question...", 
+      "type": "mcq", 
+      "options": ["A", "B", "C", "D"], 
+      "answer": "A", 
+      "explanation": "Why...", 
+      "difficulty": "medium", 
+      "topic": "Topic" 
+    }
+  ],
+  "examTopics": ["Topic A", "Topic B"]
+}
+
+DOCUMENT CONTENT (sampled):
+${sample}`;
+}
+
 export {
   buildTeachPrompt,
   buildInlinePracticePrompt,
@@ -608,4 +671,5 @@ export {
   buildSessionAnalysisPrompt,
   buildCustomAssessmentPrompt,
   buildDocumentUnderstandingPrompt,
+  buildMasterKnowledgeCachePrompt,
 };

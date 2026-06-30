@@ -1,3 +1,4 @@
+import crypto from 'crypto';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
@@ -73,8 +74,12 @@ app.get('/api/health', (req, res) => {
 app.use((err, req, res, next) => {
   let statusCode = err.statusCode || 500;
   let message = err.message || 'Internal Server Error';
+  
+  // Generate a unique correlation/error ID for tracking
+  const errorId = `err_${crypto.randomUUID().slice(0, 8)}`;
 
-  console.error(`[ERROR] ${err.statusCode || 500} - ${err.message}`);
+  // Log full error internally for debugging
+  console.error(`[ERROR] [ID: ${errorId}] ${statusCode} - ${err.message}`);
   if (err.stack) console.error(err.stack);
 
   // Handle body-parser / JSON.parse errors gracefully
@@ -87,12 +92,18 @@ app.use((err, req, res, next) => {
   const isDev = env.nodeEnv === 'development';
   
   // Only show stack trace in dev for 500 errors or non-operational bugs
-  // Keep 400-level errors clean
   const showStack = isDev && (statusCode === 500 || !err.isOperational);
+
+  // If it's a 500 error, sanitize the message in production to prevent leaking system details
+  const isInternal = statusCode === 500;
+  const clientMessage = isInternal && !isDev 
+    ? 'An unexpected error occurred on our end. Please try again later.' 
+    : message;
 
   res.status(statusCode).json({
     status: 'error',
-    message: statusCode === 500 && !isDev ? 'Internal Server Error' : message,
+    message: clientMessage,
+    errorId, // Return reference ID to the client so they can quote it to support
     ...(showStack && { stack: err.stack }),
   });
 });

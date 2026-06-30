@@ -92,6 +92,47 @@ const documentSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    knowledgeCache: {
+      concepts: [{
+        name: { type: String },
+        explanation: { type: String }
+      }],
+      definitions: [{
+        term: { type: String },
+        definition: { type: String }
+      }],
+      learningObjectives: [String],
+      keyFacts: [String],
+      importantExamples: [{
+        topic: { type: String },
+        description: { type: String }
+      }],
+      formulae: [{
+        name: { type: String },
+        formula: { type: String },
+        explanation: { type: String }
+      }],
+      flashcards: [{
+        front: { type: String },
+        back: { type: String },
+        concept: { type: String }
+      }],
+      questionBank: [{
+        question: { type: String },
+        type: { type: String },
+        options: [String],
+        answer: { type: String },
+        explanation: { type: String },
+        difficulty: { type: String },
+        topic: { type: String }
+      }],
+      examTopics: [String]
+    },
+    sessionMemory: {
+      flashcardsShown: { type: [String], default: [] },
+      questionsServed: { type: [String], default: [] },
+      practiceGuidesGenerated: { type: [mongoose.Schema.Types.Mixed], default: [] }
+    },
   },
   { 
     timestamps: true,

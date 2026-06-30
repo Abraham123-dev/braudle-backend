@@ -45,7 +45,7 @@ export const rotateRefreshToken = async (rawToken) => {
       expiresAt: { $gt: now },
     },
     { $set: { revokedAt: now } },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
   if (storedToken) return storedToken;

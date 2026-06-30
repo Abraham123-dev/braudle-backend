@@ -25,32 +25,35 @@ export const uploadDocument = asyncHandler(async (req, res) => {
   // 1. Determine type based on mimetype
   const isPdf = file.mimetype === 'application/pdf';
   const type = isPdf ? 'pdf' : 'image';
-  const countField = isPdf ? 'uploadCount.pdf' : 'uploadCount.image';
+
+  const userRecord = await User.findById(userId);
+  if (!userRecord) throw new AppError('User not found', 404);
+
+  const plan = userRecord.plan || 'free';
 
   let user;
   if (isPdf) {
-    if (file.size >= 11 * 1024 * 1024) {
-      throw new AppError('PDF files must be under 11MB.', 400);
+    const sizeLimits = { free: 10, plus: 25, large: 50 };
+    const uploadLimits = { free: 5, plus: 10, large: Infinity };
+
+    const maxSize = sizeLimits[plan] * 1024 * 1024;
+    if (file.size > maxSize) {
+      throw new AppError(`PDF files must be under ${sizeLimits[plan]}MB for your ${plan.toUpperCase()} plan.`, 400);
     }
 
-    const limit = 5;
-    user = await User.findOneAndUpdate(
-      { 
-        _id: userId, 
-        'uploadCount.pdf': { $lt: limit } 
-      },
+    const limit = uploadLimits[plan];
+    if (userRecord.uploadCount.pdf >= limit) {
+      throw new AppError(`You've reached your maximum daily limit of ${limit} PDF uploads for the ${plan.toUpperCase()} plan.`, 429);
+    }
+
+    user = await User.findByIdAndUpdate(
+      userId,
       { 
         $inc: { 'uploadCount.pdf': 1 },
         $set: { lastUploadDate: new Date() }
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
-
-    if (!user) {
-      const userExists = await User.exists({ _id: userId });
-      if (!userExists) throw new AppError('User not found', 404);
-      throw new AppError("You've reached your maximum PDF upload for the day. Come back tomorrow!", 429);
-    }
   } else {
     // Images are unlimited
     if (file.size > 10 * 1024 * 1024) {
@@ -63,11 +66,8 @@ export const uploadDocument = asyncHandler(async (req, res) => {
         $inc: { 'uploadCount.image': 1 },
         $set: { lastUploadDate: new Date() }
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
-    if (!user) {
-      throw new AppError('User not found', 404);
-    }
   }
 
   // 2. Prepare storage key
@@ -207,7 +207,7 @@ export const getPresignedUrl = asyncHandler(async (req, res) => {
         $inc: { 'uploadCount.pdf': 1 },
         $set: { lastUploadDate: new Date() }
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (!user) {
@@ -223,7 +223,7 @@ export const getPresignedUrl = asyncHandler(async (req, res) => {
         $inc: { 'uploadCount.image': 1 },
         $set: { lastUploadDate: new Date() }
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
     if (!user) {
       throw new AppError('User not found', 404);
@@ -321,7 +321,7 @@ export const initiateMultipart = asyncHandler(async (req, res) => {
         $inc: { 'uploadCount.pdf': 1 },
         $set: { lastUploadDate: new Date() }
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (!user) {
@@ -337,7 +337,7 @@ export const initiateMultipart = asyncHandler(async (req, res) => {
         $inc: { 'uploadCount.image': 1 },
         $set: { lastUploadDate: new Date() }
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
     if (!user) {
       throw new AppError('User not found', 404);

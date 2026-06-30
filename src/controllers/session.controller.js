@@ -4,6 +4,7 @@ import Session from '../models/Session.model.js';
 import Document from '../models/Document.model.js';
 import StudentProfile from '../models/StudentProfile.model.js';
 import Conversation from '../models/Conversation.model.js';
+import User from '../models/User.model.js';
 import { buildTeachPrompt } from '../utils/promptBuilder.js';
 import * as AIService from '../services/ai.service.js';
 import * as AdaptationService from '../services/adaptation.service.js';
@@ -218,7 +219,7 @@ export const chatSession = asyncHandler(async (req, res) => {
 
   // Fetch document with all context fields needed for the prompt
   const document = await Document.findById(session.documentId)
-    .select('chunks topics summary title totalChunks type chunkEmbeddings');
+    .select('chunks topics summary title totalChunks type chunkEmbeddings knowledgeCache sessionMemory');
   if (!document) throw new AppError('Document not found', 404);
 
   // Cache-aware profile fetch — avoids a MongoDB hit on every chat message
@@ -227,6 +228,151 @@ export const chatSession = asyncHandler(async (req, res) => {
 
   // Keep streak alive and record study activity
   await ProfileService.recordStudyActivity(userId).catch(err => console.error('[CHAT SESSION] Failed to record study activity:', err));
+
+  // Load User to check and enforce plan limits
+  const user = await User.findById(userId);
+  if (!user) throw new AppError('User not found', 404);
+
+  // Token allowance tracker check (6 hours rolling reset)
+  const plan = user.plan || 'free';
+  const limitWindow = 6 * 60 * 60 * 1000; // 6 hours
+  const now = new Date();
+  
+  const lastReset = user.lastTokenResetDate ? new Date(user.lastTokenResetDate) : new Date(0);
+  if (now.getTime() - lastReset.getTime() >= limitWindow) {
+    user.dailyTokenUsage = 0;
+    user.lastTokenResetDate = now;
+    await user.save();
+  }
+
+  const tokenAllowances = {
+    free: 25000,
+    plus: 100000,
+    large: 1000000
+  };
+
+  const allowance = tokenAllowances[plan];
+  if (user.dailyTokenUsage >= allowance) {
+    throw new AppError("You've reached today's AI study limit. Your study time will refresh in 6 hours.", 429);
+  }
+
+  // Intercept Flashcard deck generations to serve from Master Knowledge Cache
+  const isFlashcardRequest = session.mode === 'flashcards' && message !== 'ready' && !message.toLowerCase().includes('refresh') && !message.toLowerCase().includes('new version');
+  if (isFlashcardRequest) {
+    const generateAndSaveCacheOnTheFly = async (doc) => {
+      try {
+        const { buildMasterKnowledgeCachePrompt } = await import('../utils/promptBuilder.js');
+        const cachePrompt = buildMasterKnowledgeCachePrompt(doc.chunks);
+        const cacheResponse = await AIService.generateAIResponse({
+          task: 'analysis',
+          messages: [{ role: 'user', content: cachePrompt }],
+          temperature: 0.2,
+          max_tokens: 4096
+        });
+        const parsed = parseAIJson(cacheResponse, null);
+        if (parsed) {
+          doc.knowledgeCache = {
+            concepts: parsed.concepts || [],
+            definitions: parsed.definitions || [],
+            learningObjectives: parsed.learningObjectives || [],
+            keyFacts: parsed.keyFacts || [],
+            importantExamples: parsed.importantExamples || [],
+            formulae: parsed.formulae || [],
+            flashcards: parsed.flashcards || [],
+            questionBank: parsed.questionBank || [],
+            examTopics: parsed.examTopics || []
+          };
+          doc.markModified('knowledgeCache');
+          await doc.save();
+        }
+      } catch (err) {
+        console.error('Failed to generate cache on the fly:', err.message);
+      }
+    };
+
+    const { checkAndRecordGenLimit } = await import('./quiz.controller.js');
+    await checkAndRecordGenLimit(user, document, 'flashcards');
+
+    if (!document.knowledgeCache || !Array.isArray(document.knowledgeCache.flashcards) || document.knowledgeCache.flashcards.length === 0) {
+      await generateAndSaveCacheOnTheFly(document);
+    }
+
+    const cacheDeck = document.knowledgeCache?.flashcards || [];
+    if (cacheDeck.length > 0) {
+      const countMatch = message.match(/exactly\s+(\d+)\s+flashcards/i);
+      const cardCount = countMatch ? parseInt(countMatch[1], 10) : 15;
+
+      const shown = document.sessionMemory?.flashcardsShown || [];
+      let available = cacheDeck.filter(c => !shown.includes(c.front));
+      if (available.length < cardCount) {
+        available = cacheDeck;
+        if (document.sessionMemory) {
+          document.sessionMemory.flashcardsShown = [];
+        }
+      }
+
+      const shuffled = available.sort(() => Math.random() - 0.5);
+      const selectedCards = shuffled.slice(0, cardCount);
+
+      const cardLines = selectedCards.map(fc => `FLASHCARD | TOPIC: ${fc.concept || 'General'} | FRONT: ${fc.front} | BACK: ${fc.back}`).join('\n');
+      const fullAIResponse = `${cardLines}\n\n💡 These flashcards have been saved to your profile. Want to keep studying, try a practice question, or move to the next section?`;
+
+      res.setHeader('Content-Type', 'text/event-stream');
+      res.setHeader('Cache-Control', 'no-cache');
+      res.setHeader('Connection', 'keep-alive');
+
+      const tokens = fullAIResponse.split(' ');
+      for (const token of tokens) {
+        const tokenVal = token + ' ';
+        res.write(`data: ${JSON.stringify({ token: tokenVal })}\n\n`);
+        await new Promise(resolve => setTimeout(resolve, 8));
+      }
+
+      res.write('data: [DONE]\n\n');
+      res.end();
+
+      // Conversation records updates
+      let conversation = await Conversation.findOne({ sessionId });
+      if (!conversation) {
+        conversation = await Conversation.create({ sessionId, userId, messages: [] });
+      }
+      conversation.messages.push(
+        { role: 'user', content: message, timestamp: new Date() },
+        { role: 'assistant', content: fullAIResponse, timestamp: new Date() }
+      );
+      await conversation.save();
+
+      // Save flashcards to profile
+      const parsedCards = selectedCards.map(fc => ({
+        documentId: document._id,
+        documentTitle: document.title,
+        topic: fc.concept || 'General',
+        front: fc.front,
+        back: fc.back
+      }));
+      await StudentProfile.findOneAndUpdate(
+        { userId },
+        { $push: { savedFlashcards: { $each: parsedCards } } },
+        { new: true, upsert: true }
+      );
+
+      // Save to shown tracking
+      if (!document.sessionMemory) {
+        document.sessionMemory = { flashcardsShown: [], questionsServed: [], practiceGuidesGenerated: [] };
+      }
+      selectedCards.forEach(c => {
+        if (!document.sessionMemory.flashcardsShown.includes(c.front)) {
+          document.sessionMemory.flashcardsShown.push(c.front);
+        }
+      });
+      document.markModified('sessionMemory');
+      await document.save();
+
+      const { deleteCached: delCache, CACHE_KEYS: keys } = await import('../utils/cache.js');
+      await delCache(keys.PROFILE(userId));
+      return;
+    }
+  }
 
   // Conversation Null Safety
   let conversation = await Conversation.findOne({ sessionId });
@@ -367,6 +513,12 @@ export const chatSession = asyncHandler(async (req, res) => {
     res.write('data: [DONE]\n\n');
     res.end();
 
+    // Increment user token usage
+    const promptTokens = Math.ceil(message.length / 4);
+    const completionTokens = Math.ceil(fullAIResponse.length / 4);
+    const totalTokensUsed = promptTokens + completionTokens;
+    await User.findByIdAndUpdate(userId, { $inc: { dailyTokenUsage: totalTokensUsed } });
+
     // Cache the initial teaching response for this chunk/level
     if (!cachedResponse) await setCached(cacheKey, fullAIResponse, CACHE_TTL.TEACHING);
 
@@ -428,7 +580,7 @@ export const completeSession = asyncHandler(async (req, res) => {
   const session = await Session.findOneAndUpdate(
     { _id: req.params.id, userId: req.user.id },
     { status: 'completed', completedAt: new Date() },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
   if (!session) throw new AppError('Session not found', 404);

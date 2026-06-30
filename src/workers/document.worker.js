@@ -5,7 +5,7 @@ import { connectDB } from '../config/db.js';
 import Document from '../models/Document.model.js';
 import * as StorageService from '../services/storage.service.js';
 import { splitIntoChunks } from '../utils/chunker.js';
-import { buildDocumentUnderstandingPrompt } from '../utils/promptBuilder.js';
+import { buildDocumentUnderstandingPrompt, buildMasterKnowledgeCachePrompt } from '../utils/promptBuilder.js';
 import { PDFParse } from 'pdf-parse';
 import * as AIService from '../services/ai.service.js';
 import { GROQ_MODELS } from '../config/models.js';
@@ -70,7 +70,7 @@ const documentWorker = new Worker(
       const doc = await Document.findOneAndUpdate(
         { _id: documentId, processingStatus: 'pending' },
         { processingStatus: 'processing', processingStage: 'file_received' },
-        { new: true }
+        { returnDocument: 'after' }
       );
 
       if (!doc) {
@@ -160,6 +160,47 @@ const documentWorker = new Worker(
         }
       }
 
+      // ── Stage 5.5: Master Knowledge Cache Generation ─────────────────────────
+      let knowledgeCache = {
+        concepts: [],
+        definitions: [],
+        learningObjectives: [],
+        keyFacts: [],
+        importantExamples: [],
+        formulae: [],
+        flashcards: [],
+        questionBank: [],
+        examTopics: []
+      };
+
+      try {
+        console.log(`[WORKER] Generating Master Knowledge Cache for document ${documentId}...`);
+        const cachePrompt = buildMasterKnowledgeCachePrompt(chunks);
+        const cacheResponse = await AIService.generateAIResponse({
+          task: 'analysis',
+          messages: [{ role: 'user', content: cachePrompt }],
+          temperature: 0.2,
+          max_tokens: 4096
+        });
+
+        const parsedCache = parseAIJson(cacheResponse, null);
+        if (parsedCache) {
+          knowledgeCache = {
+            concepts: Array.isArray(parsedCache.concepts) ? parsedCache.concepts : [],
+            definitions: Array.isArray(parsedCache.definitions) ? parsedCache.definitions : [],
+            learningObjectives: Array.isArray(parsedCache.learningObjectives) ? parsedCache.learningObjectives : [],
+            keyFacts: Array.isArray(parsedCache.keyFacts) ? parsedCache.keyFacts : [],
+            importantExamples: Array.isArray(parsedCache.importantExamples) ? parsedCache.importantExamples : [],
+            formulae: Array.isArray(parsedCache.formulae) ? parsedCache.formulae : [],
+            flashcards: Array.isArray(parsedCache.flashcards) ? parsedCache.flashcards : [],
+            questionBank: Array.isArray(parsedCache.questionBank) ? parsedCache.questionBank : [],
+            examTopics: Array.isArray(parsedCache.examTopics) ? parsedCache.examTopics : []
+          };
+        }
+      } catch (cacheErr) {
+        console.error(`[WORKER] Generating Master Knowledge Cache failed for ${documentId}:`, cacheErr.message);
+      }
+
       // ── Stage 6 ─────────────────────────────────────────────────────────────
       await Document.findByIdAndUpdate(documentId, {
         rawText: extractedText,
@@ -169,6 +210,12 @@ const documentWorker = new Worker(
         topics,
         summary,
         misconceptions: [],
+        knowledgeCache,
+        sessionMemory: {
+          flashcardsShown: [],
+          questionsServed: [],
+          practiceGuidesGenerated: []
+        },
         processingStatus: 'ready',
         processingStage: 'ready',
       });
