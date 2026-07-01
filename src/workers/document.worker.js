@@ -4,7 +4,7 @@ import { env } from '../config/env.js';
 import { connectDB } from '../config/db.js';
 import Document from '../models/Document.model.js';
 import * as StorageService from '../services/storage.service.js';
-import { splitIntoChunks } from '../utils/chunker.js';
+import { splitIntoChunksSemantic } from '../utils/chunker.js';
 import { buildDocumentUnderstandingPrompt, buildMasterKnowledgeCachePrompt } from '../utils/promptBuilder.js';
 import { PDFParse } from 'pdf-parse';
 import * as AIService from '../services/ai.service.js';
@@ -113,7 +113,7 @@ const documentWorker = new Worker(
       // ── Stage 3 ─────────────────────────────────────────────────────────────
       await setStage(documentId, 'identifying_concepts');
 
-      const chunks = splitIntoChunks(extractedText);
+      const chunks = await splitIntoChunksSemantic(extractedText);
 
       // ── Stage 4 ─────────────────────────────────────────────────────────────
       // AI Document Understanding: Extract topics and a student-facing summary.

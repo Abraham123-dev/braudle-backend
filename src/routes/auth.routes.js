@@ -30,7 +30,7 @@ router.post('/refresh', validate(emptyBodySchema), asyncHandler(refreshSession))
 // Magic Link Routes
 router.post(
   '/email/start',
-  rateLimit('magic_link', 3, 900),
+  rateLimit('magic_link', 5, 300),
   validate(emailLoginSchema),
   asyncHandler(startEmailLogin)
 );

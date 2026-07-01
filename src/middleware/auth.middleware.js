@@ -23,13 +23,13 @@ const verifyJWT = async (req, res, next) => {
       return next(new AppError('Invalid token payload', 401));
     }
 
-    // Security fix: Verify user still exists in DB and pull the name and role for controllers
-    const user = await User.findById(decoded.id).select('_id name role');
+    // Security fix: Verify user still exists in DB and pull the name, role and plan for controllers and rate limiters
+    const user = await User.findById(decoded.id).select('_id name role plan');
     if (!user) {
       return next(new AppError('User account no longer exists or is inactive', 401));
     }
 
-    req.user = { id: user._id.toString(), name: user.name, role: user.role };
+    req.user = { id: user._id.toString(), name: user.name, role: user.role, plan: user.plan || 'free' };
 
     next();
   } catch (error) {

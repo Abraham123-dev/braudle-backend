@@ -8,6 +8,34 @@ import { env } from '../config/env.js';
 
 const isDev = env.nodeEnv === 'development';
 
+export const getPdfUploadMax = (req) => {
+  if (isDev) return 50;
+  if (req.user?.role === 'admin' || req.user?.plan === 'large') return 1000;
+  if (req.user?.plan === 'plus') return 10;
+  return 5;
+};
+
+export const getImageUploadMax = (req) => {
+  if (isDev) return 100;
+  if (req.user?.role === 'admin' || req.user?.plan === 'plus' || req.user?.plan === 'large') return 1000;
+  return 20;
+};
+
+export const getChatMax = (req) => {
+  if (isDev) return 1000;
+  if (req.user?.role === 'admin' || req.user?.plan === 'plus' || req.user?.plan === 'large') {
+    return 500;
+  }
+  return 60;
+};
+
+export const getQuizGenMax = (req) => {
+  if (isDev) return 100;
+  if (req.user?.role === 'admin' || req.user?.plan === 'large') return 1000;
+  if (req.user?.plan === 'plus') return 5;
+  return 5;
+};
+
 // Global rate limiter: 300 requests per 15 minutes (relaxed to 10,000 in dev)
 const globalLimiter = rateLimit({
   windowMs: 15 * 60 * 1000, // 15 minutes
@@ -17,27 +45,27 @@ const globalLimiter = rateLimit({
   legacyHeaders: false, // Disable the `X-RateLimit-*` headers
 });
 
-// Upload rate limiter: 2 PDFs per day per user (relaxed to 50 in dev)
+// Upload rate limiter: PDF uploads per day per user (Free: 5, Plus: 10, Large: Unlimited)
 const uploadPdfLimiter = rateLimit({
   store: new RedisStore({
     sendCommand: (...args) => redisClient.call(...args),
     prefix: 'rl:pdf:',
   }),
   windowMs: 24 * 60 * 60 * 1000, // 24 hours
-  max: isDev ? 50 : 2,
+  max: getPdfUploadMax,
   keyGenerator: (req) => req.user?.id || ipKeyGenerator(req),
   message: 'You have reached the limit of PDF uploads per day',
   statusCode: 429,
 });
 
-// Image upload rate limiter: 5 images per day per user (relaxed to 100 in dev)
+// Image upload rate limiter: Image uploads per day per user (Free: 20, Plus/Large: Unlimited)
 const uploadImageLimiter = rateLimit({
   store: new RedisStore({
     sendCommand: (...args) => redisClient.call(...args),
     prefix: 'rl:image:',
   }),
   windowMs: 24 * 60 * 60 * 1000, // 24 hours
-  max: isDev ? 100 : 5,
+  max: getImageUploadMax,
   keyGenerator: (req) => req.user?.id || ipKeyGenerator(req),
   message: 'You have reached the limit of image uploads per day',
   statusCode: 429,
@@ -50,13 +78,7 @@ const sessionChatLimiter = rateLimit({
     prefix: 'rl:chat:',
   }),
   windowMs: 60 * 60 * 1000, // 1 hour
-  max: (req) => {
-    if (isDev) return 1000;
-    if (req.user?.role === 'admin' || req.user?.tier === 'pro') {
-      return 500;
-    }
-    return 60;
-  },
+  max: getChatMax,
   keyGenerator: (req) => req.user?.id || ipKeyGenerator(req),
   message: 'Too many messages. Please wait before sending another.',
   statusCode: 429,
@@ -75,14 +97,14 @@ const quizLimiter = rateLimit({
   statusCode: 429,
 });
 
-// Quiz generation rate limiter: 5 generations per day per user (relaxed to 100 in dev)
+// Quiz generation rate limiter: Quiz generations per day per user (Free: 5, Plus: 10, Large: Unlimited)
 const quizGenerationLimiter = rateLimit({
   store: new RedisStore({
     sendCommand: (...args) => redisClient.call(...args),
     prefix: 'rl:quiz_gen:',
   }),
   windowMs: 24 * 60 * 60 * 1000, // 24 hours
-  max: isDev ? 100 : 5,
+  max: getQuizGenMax,
   keyGenerator: (req) => req.user?.id || ipKeyGenerator(req),
   message: 'You have reached the limit of quiz generations per day. Please try again tomorrow.',
   statusCode: 429,
@@ -98,7 +120,7 @@ const createRateLimiter = (prefix, max, windowSeconds) => rateLimit({
     prefix: `rl:${prefix}:`,
   }),
   windowMs: windowSeconds * 1000,
-  max,
+  max: isDev ? 1000 : max,
   keyGenerator: (req) => req.user?.id || ipKeyGenerator(req),
   message: 'Too many requests, please try again later.',
   statusCode: 429,

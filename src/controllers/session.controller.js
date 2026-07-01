@@ -393,13 +393,11 @@ export const chatSession = asyncHandler(async (req, res) => {
   let currentChunk = (document.chunks && document.chunks[session.currentChunkIndex]) || '';
   let referencedChunk = '';
 
-  // 2.1. Semantic RAG: If student sends a query (not 'ready'), perform similarity matching
+  // 2.1. Hybrid RAG: If student sends a query (not 'ready'), perform similarity + keyword matching
   if (message && message !== 'ready' && document.chunks && document.chunks.length > 0) {
     try {
       const queryEmbedding = await AIService.generateEmbedding(message);
-      let bestIndex = session.currentChunkIndex;
-      let highestSimilarity = -1;
-
+      
       // Cosine similarity helper
       const cosineSimilarity = (vecA, vecB) => {
         if (!vecA || !vecB || vecA.length !== vecB.length) return 0;
@@ -415,42 +413,89 @@ export const chatSession = asyncHandler(async (req, res) => {
         return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
       };
 
+      // 1. Calculate Vector Scores & Ranks
       const chunkEmbeddings = document.chunkEmbeddings || [];
-      const scoredChunks = [];
+      const vectorRanked = [];
 
       for (let i = 0; i < document.chunks.length; i++) {
         const chunkEmb = chunkEmbeddings[i];
-        if (chunkEmb && chunkEmb.length > 0) {
-          const score = cosineSimilarity(queryEmbedding, chunkEmb);
-          scoredChunks.push({ index: i, score, content: document.chunks[i] });
-          if (score > highestSimilarity) {
-            highestSimilarity = score;
-            bestIndex = i;
+        const score = chunkEmb && chunkEmb.length > 0 ? cosineSimilarity(queryEmbedding, chunkEmb) : 0;
+        vectorRanked.push({ index: i, score });
+      }
+      vectorRanked.sort((a, b) => b.score - a.score);
+
+      // 2. Calculate Keyword Scores & Ranks (lexical matching helper)
+      const calculateKeywordScore = (query, chunkText) => {
+        const queryWords = query.toLowerCase().match(/\w+/g) || [];
+        const chunkWords = chunkText.toLowerCase().match(/\w+/g) || [];
+        if (queryWords.length === 0 || chunkWords.length === 0) return 0;
+        
+        let score = 0;
+        queryWords.forEach(word => {
+          const count = chunkWords.filter(w => w === word).length;
+          if (count > 0) {
+            score += (count / chunkWords.length);
           }
+        });
+        return score;
+      };
+
+      const keywordRanked = [];
+      for (let i = 0; i < document.chunks.length; i++) {
+        const score = calculateKeywordScore(message, document.chunks[i]);
+        keywordRanked.push({ index: i, score });
+      }
+      keywordRanked.sort((a, b) => b.score - a.score);
+
+      // 3. Merge rankings using Reciprocal Rank Fusion (RRF)
+      const k = 60;
+      const rrfScores = new Map();
+
+      vectorRanked.forEach((item, rank) => {
+        const currentScore = rrfScores.get(item.index) || 0;
+        rrfScores.set(item.index, currentScore + 1 / (k + rank + 1));
+      });
+
+      keywordRanked.forEach((item, rank) => {
+        const currentScore = rrfScores.get(item.index) || 0;
+        rrfScores.set(item.index, currentScore + 1 / (k + rank + 1));
+      });
+
+      const finalRRFList = [];
+      for (let i = 0; i < document.chunks.length; i++) {
+        finalRRFList.push({
+          index: i,
+          rrfScore: rrfScores.get(i) || 0,
+          content: document.chunks[i]
+        });
+      }
+      finalRRFList.sort((a, b) => b.rrfScore - a.rrfScore);
+
+      // 4. Retrieve context if query matches document relevance
+      const topVectorMatch = vectorRanked[0];
+      const isRelevant = topVectorMatch && topVectorMatch.score > 0.18;
+
+      if (isRelevant) {
+        // Select top 3 chunks (excluding active chunk to avoid duplicate context)
+        const topRelevantChunks = finalRRFList
+          .filter(c => c.index !== session.currentChunkIndex)
+          .slice(0, 3);
+
+        if (topRelevantChunks.length > 0) {
+          referencedChunk = topRelevantChunks
+            .map(c => `[Section ${c.index + 1}]:\n${c.content}`)
+            .join('\n\n');
+        }
+
+        // If in ask mode, focus on the closest match
+        const topRRFMatch = finalRRFList[0];
+        if (session.mode === 'ask' && topRRFMatch) {
+          currentChunk = document.chunks[topRRFMatch.index];
+          documentContext.currentChunkIndex = topRRFMatch.index;
         }
       }
-
-      // Sort scored chunks by similarity descending
-      scoredChunks.sort((a, b) => b.score - a.score);
-
-      // Select top 3 chunks with score > 0.25 (excluding the active chunk to avoid duplicate context)
-      const topRelevantChunks = scoredChunks
-        .filter(c => c.score > 0.25 && c.index !== session.currentChunkIndex)
-        .slice(0, 3);
-
-      if (topRelevantChunks.length > 0) {
-        referencedChunk = topRelevantChunks
-          .map(c => `[Section ${c.index + 1} - Relevance: ${Math.round(c.score * 100)}%]:\n${c.content}`)
-          .join('\n\n');
-      }
-
-      // If in ask mode, focus on the closest match
-      if (session.mode === 'ask' && highestSimilarity > 0.1) {
-        currentChunk = document.chunks[bestIndex];
-        documentContext.currentChunkIndex = bestIndex;
-      }
     } catch (err) {
-      console.error('[CHAT SESSION RAG] Failed semantic chunk retrieval, falling back to sequential page:', err.message);
+      console.error('[CHAT SESSION RAG] Failed hybrid chunk retrieval, falling back to sequential page:', err.message);
     }
   }
 

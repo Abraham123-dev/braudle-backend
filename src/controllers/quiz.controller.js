@@ -56,17 +56,17 @@ export const checkAndRecordGenLimit = async (user, document, type) => {
   }
 
   if (plan === 'plus') {
-    // Plus limit: Max 3 generations per day globally
+    // Plus limit: Max 5 generations per day globally
     const count = user.dailyGenerationsCount[type] || 0;
-    if (count >= 3) {
-      throw new AppError(`You've reached your daily limit of 3 ${type} generations for the Plus plan.`, 429);
+    if (count >= 5) {
+      throw new AppError(`You've reached your daily limit of 5 ${type} generations for the Plus plan.`, 429);
     }
     user.dailyGenerationsCount[type] = count + 1;
     await user.save();
     return;
   }
 
-  // Free limit: 1 generation every 3 days per document
+  // Free limit: 1 generation every day per document
   const fieldMap = {
     flashcards: 'lastFlashcardGen',
     practice: 'lastPracticeGen',
@@ -80,20 +80,12 @@ export const checkAndRecordGenLimit = async (user, document, type) => {
 
   const lastGenVal = document.sessionMemory[lastGenField];
   const lastGenTime = lastGenVal ? new Date(lastGenVal).getTime() : 0;
-  const threeDaysMs = 3 * 24 * 60 * 60 * 1000;
+  const oneDayMs = 24 * 60 * 60 * 1000;
 
-  if (lastGenTime > 0 && (Date.now() - lastGenTime < threeDaysMs)) {
-    const remainingMs = threeDaysMs - (Date.now() - lastGenTime);
+  if (lastGenTime > 0 && (Date.now() - lastGenTime < oneDayMs)) {
+    const remainingMs = oneDayMs - (Date.now() - lastGenTime);
     const remainingHours = Math.ceil(remainingMs / (60 * 60 * 1000));
-    let remainingStr = '';
-    if (remainingHours >= 24) {
-      const days = Math.floor(remainingHours / 24);
-      const hours = remainingHours % 24;
-      remainingStr = `${days}d ${hours}h`;
-    } else {
-      remainingStr = `${remainingHours}h`;
-    }
-    throw new AppError(`You've reached the limit. Free users can only generate 1 ${type} every 3 days. Available in ${remainingStr}.`, 429);
+    throw new AppError(`You've reached the limit. Free users can only generate 1 ${type} every day. Available in ${remainingHours}h.`, 429);
   }
 
   document.set(`sessionMemory.${lastGenField}`, now);

@@ -1,7 +1,25 @@
+import { generateEmbeddingsBatch } from '../services/ai.service.js';
+
+// Helper: Cosine similarity
+const cosineSimilarity = (vecA, vecB) => {
+  if (!vecA || !vecB || vecA.length !== vecB.length) return 0;
+  let dotProduct = 0;
+  let normA = 0;
+  let normB = 0;
+  for (let i = 0; i < vecA.length; i++) {
+    dotProduct += vecA[i] * vecB[i];
+    normA += vecA[i] * vecA[i];
+    normB += vecB[i] * vecB[i];
+  }
+  if (normA === 0 || normB === 0) return 0;
+  return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+};
+
+const getWordCount = (str) => str.split(/\s+/).filter(Boolean).length;
+
 // Splits text into chunks for AI processing
 // Note: Updated to word-based chunking for more stable AI context windows.
 // Target: ~400 words per chunk.
-
 const splitIntoChunks = (text, wordLimit = 300) => {
   if (!text || text.length === 0) return [];
   
@@ -9,8 +27,6 @@ const splitIntoChunks = (text, wordLimit = 300) => {
   const chunks = [];
   let currentChunk = [];
   let currentWordCount = 0;
-
-  const getWordCount = (str) => str.split(/\s+/).filter(Boolean).length;
 
   for (const para of paragraphs) {
     const paraWordCount = getWordCount(para);
@@ -80,4 +96,68 @@ const splitIntoChunks = (text, wordLimit = 300) => {
   return chunks;
 };
 
-export { splitIntoChunks };
+/**
+ * Splits text into chunks semantically by grouping sentences with high cosine similarity.
+ *
+ * @param {string} text - Raw input text
+ * @param {object} options - Configuration overrides
+ * @returns {Promise<string[]>} Semantically split text chunks
+ */
+const splitIntoChunksSemantic = async (text, options = {}) => {
+  const {
+    targetWords = 350,
+    minSentences = 2,
+    similarityThreshold = 0.30
+  } = options;
+
+  if (!text || text.trim().length === 0) return [];
+
+  // 1. Split into raw sentences
+  const rawSentences = text.split(/(?<=[.!?])\s+/);
+  const sentences = rawSentences.map(s => s.trim()).filter(Boolean);
+  if (sentences.length <= minSentences) {
+    return [text];
+  }
+
+  // 2. Fetch sentence embeddings in batch
+  const embeddings = await generateEmbeddingsBatch(sentences);
+
+  // 3. Compute similarity differences between consecutive sentences
+  const similarities = [];
+  for (let i = 0; i < sentences.length - 1; i++) {
+    similarities.push(cosineSimilarity(embeddings[i], embeddings[i + 1]));
+  }
+
+  // 4. Group sentences into coherent chunks
+  const chunks = [];
+  let currentChunk = [sentences[0]];
+  let currentWords = getWordCount(sentences[0]);
+
+  for (let i = 0; i < similarities.length; i++) {
+    const nextSentence = sentences[i + 1];
+    const nextWords = getWordCount(nextSentence);
+    const similarity = similarities[i];
+
+    // Determine boundaries based on topic changes or size limits
+    const isTopicShift = similarity < similarityThreshold;
+    const isOverLimit = currentWords + nextWords > targetWords;
+
+    if ((isTopicShift && currentChunk.length >= minSentences) || 
+        (isOverLimit && currentChunk.length >= minSentences)) {
+      chunks.push(currentChunk.join(' '));
+      currentChunk = [nextSentence];
+      currentWords = nextWords;
+    } else {
+      currentChunk.push(nextSentence);
+      currentWords += nextWords;
+    }
+  }
+
+  if (currentChunk.length > 0) {
+    chunks.push(currentChunk.join(' '));
+  }
+
+  return chunks;
+};
+
+export { splitIntoChunks, splitIntoChunksSemantic };

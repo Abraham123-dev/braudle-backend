@@ -756,6 +756,64 @@ export const generateEmbedding = async (text) => {
 };
 
 /**
+ * Generates vector embeddings for a batch of texts in a single API call.
+ * This is highly optimized for semantic chunking sentence processing.
+ */
+export const generateEmbeddingsBatch = async (texts) => {
+  if (!Array.isArray(texts) || texts.length === 0) return [];
+
+  // Filter out empty texts while preserving indices
+  const cleanedTexts = texts.map(t => (t || '').trim()).filter(Boolean);
+  if (cleanedTexts.length === 0) {
+    return texts.map(() => new Array(1536).fill(0));
+  }
+
+  if (!env.openRouter.apiKey) {
+    console.log('[AI SERVICE] OpenRouter API Key missing. Falling back to batch local term-hash embedding.');
+    return texts.map(t => getLocalTfidfEmbedding(t));
+  }
+
+  try {
+    const response = await fetch('https://openrouter.ai/api/v1/embeddings', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${env.openRouter.apiKey}`,
+      },
+      body: JSON.stringify({
+        model: 'openai/text-embedding-3-small',
+        input: cleanedTexts,
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`OpenRouter embeddings HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    if (data.data && Array.isArray(data.data)) {
+      // Map returned embeddings back to original input text array
+      const embeddingsMap = new Map();
+      data.data.forEach((item, idx) => {
+        if (item && item.embedding) {
+          embeddingsMap.set(cleanedTexts[idx], item.embedding);
+        }
+      });
+
+      return texts.map(t => {
+        const trimmed = (t || '').trim();
+        if (!trimmed) return new Array(1536).fill(0);
+        return embeddingsMap.get(trimmed) || getLocalTfidfEmbedding(t);
+      });
+    }
+    throw new Error('Batch embeddings response format invalid');
+  } catch (err) {
+    console.error('[AI SERVICE] OpenRouter batch embedding creation failed, using local hash vectors:', err.message);
+    return texts.map(t => getLocalTfidfEmbedding(t));
+  }
+};
+
+/**
  * Generates a local term-hash based pseudo-embedding vector of 1536 dimensions.
  * Corresponds to a normalized bag-of-words representation using string hashing.
  */
