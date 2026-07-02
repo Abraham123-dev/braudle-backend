@@ -388,6 +388,7 @@ export const chatSession = asyncHandler(async (req, res) => {
     totalChunks:        document.totalChunks || document.chunks?.length || 1,
     preparationStyle:   session.preparationStyle || 'mixed',
     type:               document.type,
+    summaryMemory:      conversation.summaryMemory || '',
   };
 
   let currentChunk = (document.chunks && document.chunks[session.currentChunkIndex]) || '';
@@ -501,7 +502,8 @@ export const chatSession = asyncHandler(async (req, res) => {
 
   documentContext.referencedChunk = referencedChunk;
 
-  const history = (conversation.messages || []).slice(-6); // Last 3 exchanges (saves input tokens)
+  const maxHistoryCount = conversation.summaryMemory ? 6 : 10;
+  const history = (conversation.messages || []).slice(-maxHistoryCount);
 
   // Expensive AI Cache Check — only cache initial "ready" responses, not follow-ups
   const cacheKey = CACHE_KEYS.TEACH(document._id, session.currentChunkIndex, profile.level);
@@ -598,6 +600,46 @@ export const chatSession = asyncHandler(async (req, res) => {
       { role: 'assistant', content: fullAIResponse }
     );
     await conversation.save();
+
+    // Trigger background rolling summarization task on a 6-message modulo threshold
+    const totalSessionMsgs = conversation.messages.length;
+    if (totalSessionMsgs > 12 && (totalSessionMsgs - 1) % 6 === 0) {
+      (async () => {
+        try {
+          const candidateMessages = conversation.messages.slice(0, -6);
+          const formattedHistory = candidateMessages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
+          
+          const systemPrompt = 
+            "You are a conversation memory consolidator. Read the prior summary and the new chat history segments between a student and an AI tutor.\n" +
+            "Generate a consolidated, updated summary of the discussion. Focus on explained concepts, key details, student's preferences, goals, and any student difficulties or weaknesses.\n" +
+            "Keep the summary concise (under 150 words). Return ONLY the new raw summary text.";
+            
+          const userPrompt = 
+            `PRIOR SUMMARY: ${conversation.summaryMemory || 'None'}\n\n` +
+            `NEW CONVERSATION SEGMENT:\n${formattedHistory}`;
+            
+          const rawSummary = await AIService.generateAIResponse({
+            task: 'analysis',
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt }
+            ]
+          });
+          
+          const cleanSummary = rawSummary.trim();
+          if (cleanSummary && cleanSummary.length > 10) {
+            await Conversation.updateOne(
+              { _id: conversation._id },
+              { $set: { summaryMemory: cleanSummary } }
+            );
+            console.log(`[STUDY SESSION MEMORY] Conversation summarized atomically. Length: ${cleanSummary.length} chars.`);
+          }
+        } catch (summaryErr) {
+          console.error('[STUDY SESSION MEMORY] Error updating rolling summary:', summaryErr.message);
+        }
+      })();
+    }
+
   } catch (error) {
     console.error(`[CHAT SESSION] Streaming error in session ${sessionId}:`, error);
     if (!res.writableEnded) {

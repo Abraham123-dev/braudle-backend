@@ -31,6 +31,10 @@ const conversationSchema = new mongoose.Schema(
         },
       }, { _id: false })
     ],
+    summaryMemory: {
+      type: String,
+      default: '',
+    },
   },
   { timestamps: true }
 );

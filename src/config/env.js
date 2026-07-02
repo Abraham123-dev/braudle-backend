@@ -58,6 +58,9 @@ export const env = {
   openRouter: {
     apiKey: process.env.OPENROUTER_API_KEY,
   },
+  nvidia: {
+    apiKey: process.env.NVIDIA_API_KEY,
+  },
   gemini: {
     apiKey: process.env.GEMINI_API_KEY,
   },

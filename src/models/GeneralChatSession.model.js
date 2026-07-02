@@ -56,6 +56,10 @@ const generalChatSessionSchema = new mongoose.Schema(
     },
     messages: [generalChatMessageSchema],
     imageKnowledge: [imageKnowledgeSchema],
+    summaryMemory: {
+      type: String,
+      default: '',
+    },
   },
   { timestamps: true }
 );

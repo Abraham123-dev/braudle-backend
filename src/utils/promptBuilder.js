@@ -43,6 +43,7 @@ const buildTeachPrompt = (chunk, profile, mode = 'understand', documentContext =
     preparationStyle = 'mixed',
     type = 'pdf',
     referencedChunk = '',
+    summaryMemory = '',
   } = documentContext;
 
   // ── Layer 1: Role & Persona ──────────────────────────────────────────────
@@ -225,6 +226,10 @@ Rules:
 - INLINE MICRO-QUIZ: Periodically, at the end of explaining a core concept, or when explicitly asked, you may present a single inline practice question. If you do, you MUST append it at the very end (right before the suggestions tag) in this exact format: '[QUIZ_QUESTION: {"question": "Question text?", "options": ["Option A", "Option B", "Option C", "Option D"], "answer": "Option A", "explanation": "Why Option A is correct"}]'. Always ensure distractors are plausible and the correct answer matches exactly one of the options. Do NOT wrap this tag in markdown code fences or backticks.`;
 
   // Prefix caching layout: Static elements first, dynamic elements last.
+  const priorSummaryText = summaryMemory
+    ? `\n\nSUMMARY OF PRIOR DISCUSSION:\n${summaryMemory}`
+    : '';
+
   return `ROLE:
 ${role}
 
@@ -238,6 +243,7 @@ ${chunkInstruction}
 SEMI-STATIC CONTEXT:
 DOCUMENT CONTEXT:
 ${documentContextStr}
+${priorSummaryText}
 
 STUDENT PROFILE:
 ${studentContext}

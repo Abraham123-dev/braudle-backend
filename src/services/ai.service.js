@@ -83,6 +83,12 @@ const getModelForTask = (provider, task) => {
       analysis: 'mistral-small-latest',
       vision: 'pixtral-large-latest',
       general_chat: 'mistral-small-latest'
+    },
+    nvidia: {
+      tutoring: 'meta/llama-3.3-70b-instruct',
+      analysis: 'meta/llama-3.1-8b-instruct',
+      vision: 'meta/llama-3.2-11b-vision-instruct',
+      general_chat: 'meta/llama-3.3-70b-instruct'
     }
   };
   return mapping[provider]?.[task] || '';
@@ -103,7 +109,10 @@ const getModelDisplayName = (modelSlug) => {
     'qwen/qwen-2.5-vl-72b-instruct': 'Qwen 2.5 VL 72B',
     'mistral-medium-latest': 'Mistral Medium 3',
     'mistral-small-latest': 'Mistral Small 3.1',
-    'pixtral-large-latest': 'Pixtral Large'
+    'pixtral-large-latest': 'Pixtral Large',
+    'meta/llama-3.3-70b-instruct': 'Llama 3.3 70B Instruct (NVIDIA)',
+    'meta/llama-3.1-8b-instruct': 'Llama 3.1 8B Instruct (NVIDIA)',
+    'meta/llama-3.2-11b-vision-instruct': 'Llama 3.2 11B Vision (NVIDIA)'
   };
   return MODEL_DISPLAY_NAMES[modelSlug] || modelSlug;
 };
@@ -112,7 +121,8 @@ const getProviderDisplayName = (providerKey) => {
   const map = {
     groq: 'Groq',
     openrouter: 'OpenRouter',
-    mistral: 'Mistral'
+    mistral: 'Mistral',
+    nvidia: 'NVIDIA'
   };
   return map[providerKey] || providerKey;
 };
@@ -176,8 +186,8 @@ const runWithSignalAndTimeout = async (fn, parentSignal, timeoutMs = 30000) => {
  */
 export const generateAIResponse = async ({ task, messages, temperature = 0.5, max_tokens = 4096, signal }) => {
   const providers = task === 'general_chat'
-    ? ['mistral', 'openrouter']
-    : ['groq', 'groq_secondary', 'openrouter', 'mistral'];
+    ? ['mistral', 'nvidia']
+    : ['groq', 'groq_secondary', 'openrouter', 'mistral', 'nvidia'];
   let lastError = null;
 
   for (const provider of providers) {
@@ -196,6 +206,9 @@ export const generateAIResponse = async ({ task, messages, temperature = 0.5, ma
       continue;
     }
     if (provider === 'mistral' && !env.mistral.apiKey) {
+      continue;
+    }
+    if (provider === 'nvidia' && !env.nvidia.apiKey) {
       continue;
     }
 
@@ -276,6 +289,34 @@ export const generateAIResponse = async ({ task, messages, temperature = 0.5, ma
 
         const data = await response.json();
         resultText = data.choices?.[0]?.message?.content || '';
+      } else if (provider === 'nvidia') {
+        const response = await runWithSignalAndTimeout(
+          (sig) => fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${env.nvidia.apiKey}`,
+            },
+            body: JSON.stringify({
+              model,
+              messages,
+              temperature,
+              max_tokens,
+            }),
+            signal: sig,
+          }),
+          signal,
+          30000
+        );
+
+        if (!response.ok) {
+          const err = new Error(`NVIDIA HTTP ${response.status}`);
+          err.status = response.status;
+          throw err;
+        }
+
+        const data = await response.json();
+        resultText = data.choices?.[0]?.message?.content || '';
       }
 
       const duration = Date.now() - start;
@@ -310,8 +351,8 @@ export const generateAIResponse = async ({ task, messages, temperature = 0.5, ma
  */
 export async function* streamAIResponse({ task, messages, temperature = 0.7, max_tokens = 4096, signal }) {
   const providers = task === 'general_chat'
-    ? ['mistral', 'openrouter']
-    : ['groq', 'groq_secondary', 'openrouter', 'mistral'];
+    ? ['mistral', 'nvidia']
+    : ['groq', 'groq_secondary', 'openrouter', 'mistral', 'nvidia'];
   let lastError = null;
 
   for (const provider of providers) {
@@ -330,6 +371,9 @@ export async function* streamAIResponse({ task, messages, temperature = 0.7, max
       continue;
     }
     if (provider === 'mistral' && !env.mistral.apiKey) {
+      continue;
+    }
+    if (provider === 'nvidia' && !env.nvidia.apiKey) {
       continue;
     }
 
@@ -407,7 +451,7 @@ export async function* streamAIResponse({ task, messages, temperature = 0.7, max
             if (dataStr === '[DONE]') continue;
 
             try {
-              const parsed = JSON.parse(dataStr);
+               const parsed = JSON.parse(dataStr);
               const text = parsed.choices?.[0]?.delta?.content || '';
               if (text) {
                 yield { choices: [{ delta: { content: text } }] };
@@ -444,6 +488,65 @@ export async function* streamAIResponse({ task, messages, temperature = 0.7, max
 
         if (!response.ok) {
           const err = new Error(`Mistral HTTP ${response.status}`);
+          err.status = response.status;
+          throw err;
+        }
+
+        const duration = Date.now() - start;
+        console.log(`[AI GATEWAY] Success | Provider: ${provider} | Fallback Level: ${fallbackLevel} | Response Time (Stream Init): ${duration}ms`);
+
+        const decoder = new TextDecoder();
+        let buffer = '';
+        const bodyStream = response.body;
+
+        for await (const chunk of bodyStream) {
+          buffer += decoder.decode(chunk, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data: ')) continue;
+            const dataStr = trimmed.slice(6).trim();
+            if (dataStr === '[DONE]') continue;
+
+            try {
+              const parsed = JSON.parse(dataStr);
+              const text = parsed.choices?.[0]?.delta?.content || '';
+              if (text) {
+                yield { choices: [{ delta: { content: text } }] };
+              }
+            } catch (e) {
+              // Ignore invalid JSON on SSE lines
+            }
+          }
+        }
+        return;
+      }
+
+      if (provider === 'nvidia') {
+        const response = await runWithSignalAndTimeout(
+          (sig) => fetch('https://integrate.api.nvidia.com/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${env.nvidia.apiKey}`,
+            },
+            body: JSON.stringify({
+              model,
+              messages,
+              temperature,
+              max_tokens,
+              stream: true,
+            }),
+            signal: sig,
+          }),
+          signal,
+          30000
+        );
+
+        if (!response.ok) {
+          const err = new Error(`NVIDIA HTTP ${response.status}`);
           err.status = response.status;
           throw err;
         }

@@ -545,8 +545,9 @@ Do not wrap in markdown backticks or add any conversational filler. Return only 
     fullUserContent = `${retrievedContext}\n\n[USER QUERY]:\n${fullUserContent}`;
   }
 
-  // 9. Map last 10 messages for short-term chat context
-  const recentHistory = session.messages.slice(-10).map((m) => ({
+  // 9. Map short-term chat context. If summary memory is present, keep last 6 messages. Otherwise last 10.
+  const maxHistoryCount = session.summaryMemory ? 6 : 10;
+  const recentHistory = session.messages.slice(-maxHistoryCount).map((m) => ({
     role: m.role,
     content: m.content,
   }));
@@ -568,10 +569,16 @@ Do not wrap in markdown backticks or add any conversational filler. Return only 
   if (weakTopics) profileContext += `\nNeeds help with: ${weakTopics}`;
   if (strongTopics) profileContext += `\nStrong in: ${strongTopics}`;
 
-  const systemInstructions = 
+  const hasImages = session.imageKnowledge && session.imageKnowledge.length > 0;
+  const priorSummary = session.summaryMemory 
+    ? `[SUMMARY OF PRIOR DISCUSSION]:\n${session.summaryMemory}\n\n` 
+    : '';
+
+  let systemInstructions = 
     `You are Braudle AI.\n` +
     `You are a helpful, intelligent assistant.\n` +
     `Your goal is to help users quickly, clearly, and accurately.\n\n` +
+    priorSummary +
     `${profileContext}\n\n` +
     `PERSONALITY:\n` +
     `- Be friendly, smart, practical, clear, and fast.\n` +
@@ -582,31 +589,43 @@ Do not wrap in markdown backticks or add any conversational filler. Return only 
     `- Do not make users work hard to get simple answers.\n\n` +
     `LENGTH CONTROL:\n` +
     `- Default to concise responses (simple answers ≤150 words, explanations ≤300 words).\n` +
-    `- Expand only when the user asks for details, the task requires depth, or the user requests step-by-step help.\n\n` +
-    `IMAGE UNDERSTANDING & FOCUS SHIFTING & GROUNDING:\n` +
-    `- You are BRAUDLE, an intelligent study assistant. You help students understand their study material by answering questions based on content they have uploaded.\n` +
-    `- You have been given extracted content from one or more images the student uploaded. This is your ONLY source of truth for answering. Do not answer from general knowledge unless the retrieved content is genuinely insufficient and you clearly say so.\n` +
-    `- WHEN ANSWERING:\n` +
-    `  * Answer directly and clearly based on the retrieved image content.\n` +
-    `  * Always reference where your answer is coming from — e.g. "Based on your diagram..." or "From your notes on [topic]..." or "Your uploaded image shows that..."\n` +
-    `  * If the answer is spread across multiple images, reference each one clearly — "From Image 1 (the diagram)... and from Image 2 (your notes)..."\n` +
-    `  * Break down complex concepts into simple language — you are a study assistant, not a textbook.\n` +
-    `  * If a formula, definition, or list was in the image, reproduce it exactly as extracted.\n` +
-    `  * If the image had a diagram, explain it step by step using the description.\n` +
-    `- WHEN CONTENT IS NOT ENOUGH:\n` +
-    `  * If the retrieved content partially answers the question, answer what you can and clearly say "Your uploaded material does not cover [specific part] — you may want to check your textbook for that".\n` +
-    `  * Never hallucinate or fill gaps with invented information. Never pretend the image said something it did not.\n` +
-    `- WHEN THE STUDENT IS CONFUSED:\n` +
-    `  * If the question suggests the student misunderstood something in their material, gently correct it and explain using what the image actually shows.\n` +
-    `  * Use analogies and simple examples to reinforce concepts from the image.\n` +
-    `- RESPONSE FORMAT:\n` +
-    `  * Keep responses focused and not unnecessarily long.\n` +
-    `  * Use bullet points or numbered steps when explaining processes or lists from the image.\n` +
-    `  * Bold key terms when you first use them.\n` +
-    `  * End with a follow-up prompt when appropriate — e.g. "Would you like me to break down any part of this further?" or "Do you want me to quiz you on this?"\n` +
-    `- An image is labeled as [ACTIVE IMAGE CURRENTLY BEING ASKED ABOUT] if the user just uploaded it or is currently referring to it. Shift your focus primarily to this active image for the current turn.\n` +
-    `- Other images are labeled as [HISTORICAL IMAGE IN SESSION] and represent past context. If the user asks to "go back to the first image", "compare them", or refers to their filenames/content, dynamically shift your focus back to the relevant historical image using its historical context.\n` +
-    `- Never ignore uploaded images. Do not repeat OCR text back.\n\n` +
+    `- Expand only when the user asks for details, the task requires depth, or the user requests step-by-step help.\n\n`;
+
+  if (hasImages) {
+    systemInstructions += 
+      `IMAGE UNDERSTANDING & FOCUS SHIFTING & GROUNDING:\n` +
+      `- You are BRAUDLE, an intelligent study assistant. You help students understand their study material by answering questions based on content they have uploaded.\n` +
+      `- You have been given extracted content from one or more images the student uploaded. This is your ONLY source of truth for answering. Do not answer from general knowledge unless the retrieved content is genuinely insufficient and you clearly say so.\n` +
+      `- WHEN ANSWERING:\n` +
+      `  * Answer directly and clearly based on the retrieved image content.\n` +
+      `  * Always reference where your answer is coming from — e.g. "Based on your diagram..." or "From your notes on [topic]..." or "Your uploaded image shows that..."\n` +
+      `  * If the answer is spread across multiple images, reference each one clearly — "From Image 1 (the diagram)... and from Image 2 (your notes)..."\n` +
+      `  * Break down complex concepts into simple language — you are a study assistant, not a textbook.\n` +
+      `  * If a formula, definition, or list was in the image, reproduce it exactly as extracted.\n` +
+      `  * If the image had a diagram, explain it step by step using the description.\n` +
+      `- WHEN CONTENT IS NOT ENOUGH:\n` +
+      `  * If the retrieved content partially answers the question, answer what you can and clearly say "Your uploaded material does not cover [specific part] — you may want to check your textbook for that".\n` +
+      `  * Never hallucinate or fill gaps with invented information. Never pretend the image said something it did not.\n` +
+      `- WHEN THE STUDENT IS CONFUSED:\n` +
+      `  * If the question suggests the student misunderstood something in their material, gently correct it and explain using what the image actually shows.\n` +
+      `  * Use analogies and simple examples to reinforce concepts from the image.\n` +
+      `- RESPONSE FORMAT:\n` +
+      `  * Keep responses focused and not unnecessarily long.\n` +
+      `  * Use bullet points or numbered steps when explaining processes or lists from the image.\n` +
+      `  * Bold key terms when you first use them.\n` +
+      `  * End with a follow-up prompt when appropriate — e.g. "Would you like me to break down any part of this further?" or "Do you want me to quiz you on this?"\n` +
+      `- An image is labeled as [ACTIVE IMAGE CURRENTLY BEING ASKED ABOUT] if the user just uploaded it or is currently referring to it. Shift your focus primarily to this active image for the current turn.\n` +
+      `- Other images are labeled as [HISTORICAL IMAGE IN SESSION] and represent past context. If the user asks to "go back to the first image", "compare them", or refers to their filenames/content, dynamically shift your focus back to the relevant historical image using its historical context.\n` +
+      `- Never ignore uploaded images. Do not repeat OCR text back.\n\n`;
+  } else {
+    systemInstructions +=
+      `GENERAL KNOWLEDGE ANSWERS:\n` +
+      `- The student has NOT uploaded any visual notes or files for this chat yet. Answer their questions directly, using your general knowledge.\n` +
+      `- Explain academic concepts using simple, student-friendly terms, real-world analogies, and practical examples.\n` +
+      `- End with a natural follow-up check to help them learn.\n\n`;
+  }
+
+  systemInstructions += 
     `FOLLOW-UP QUESTIONS:\n` +
     `- Remember information from the current conversation. Use relevant session context when available. Do not ask the user to repeat information already provided.\n\n` +
     `PROBLEM SOLVING:\n` +
@@ -696,13 +715,79 @@ Do not wrap in markdown backticks or add any conversational filler. Return only 
     session.messages.push(userMsgObj);
     session.messages.push(assistantMsgObj);
 
-    // Auto-rename session title on the first message
+    // Auto-rename session title asynchronously on the first message
     if (session.title === 'New Chat' && message) {
       const cleanMsg = message.trim().replace(/\s+/g, ' ');
-      session.title = cleanMsg.length > 30 ? cleanMsg.slice(0, 30) + '...' : cleanMsg;
+      session.title = cleanMsg.length > 25 ? cleanMsg.slice(0, 25) + '...' : cleanMsg;
+      
+      // Async title generator (Atomic update)
+      (async () => {
+        try {
+          const systemPrompt = "You are a session title generator. Read the user's first prompt and return a concise, descriptive title representing the core topic. Keep it to 2 to 4 words. Do not include quotes, periods, or punctuation. Return ONLY the raw title text.";
+          const userPrompt = `User Prompt: ${message}`;
+          
+          const rawTitle = await AIService.generateAIResponse({
+            task: 'analysis',
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt }
+            ]
+          });
+          
+          const cleanTitle = rawTitle.trim().replace(/^["']|["']$/g, '');
+          if (cleanTitle && cleanTitle.length < 50) {
+            await GeneralChatSession.updateOne(
+              { _id: session._id },
+              { $set: { title: cleanTitle } }
+            );
+            console.log(`[GENERAL CHAT] Auto-renamed chat to: "${cleanTitle}"`);
+          }
+        } catch (titleError) {
+          console.error('[GENERAL CHAT] Error auto-generating title:', titleError.message);
+        }
+      })();
     }
 
     await session.save();
+
+    // Trigger background rolling summarization task on a 6-message modulo threshold
+    const totalMsgs = session.messages.length;
+    if (totalMsgs > 12 && (totalMsgs - 1) % 6 === 0) {
+      (async () => {
+        try {
+          const candidateMessages = session.messages.slice(0, -6);
+          const formattedHistory = candidateMessages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
+          
+          const systemPrompt = 
+            "You are a conversation memory consolidator. Read the prior summary and the new chat history segments between a student and an AI tutor.\n" +
+            "Generate a consolidated, updated summary of the discussion. Focus on explained concepts, key details, student's preferences, goals, and any student difficulties or weaknesses.\n" +
+            "Keep the summary concise (under 150 words). Return ONLY the new raw summary text.";
+            
+          const userPrompt = 
+            `PRIOR SUMMARY: ${session.summaryMemory || 'None'}\n\n` +
+            `NEW CONVERSATION SEGMENT:\n${formattedHistory}`;
+            
+          const rawSummary = await AIService.generateAIResponse({
+            task: 'analysis',
+            messages: [
+              { role: 'system', content: systemPrompt },
+              { role: 'user', content: userPrompt }
+            ]
+          });
+          
+          const cleanSummary = rawSummary.trim();
+          if (cleanSummary && cleanSummary.length > 10) {
+            await GeneralChatSession.updateOne(
+              { _id: session._id },
+              { $set: { summaryMemory: cleanSummary } }
+            );
+            console.log(`[GENERAL CHAT MEMORY] Conversation summarized atomically. Length: ${cleanSummary.length} chars.`);
+          }
+        } catch (summaryErr) {
+          console.error('[GENERAL CHAT MEMORY] Error updating rolling summary:', summaryErr.message);
+        }
+      })();
+    }
 
     // Track token counts
     const outputTokens = estimateTokens(accumulatedResponse);
