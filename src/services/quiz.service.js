@@ -52,7 +52,7 @@ export const generateCustomAssessment = async (documentId, options, sessionId = 
     sessionId || documentId,
     options.difficulty,
     options.format,
-    `${options.numQuestions}_${instructionsHash}`
+    `${options.numQuestions}_${options.isExam ? 'exam' : 'practice'}_${instructionsHash}`
   );
   
   return await Cache.getOrSet(

@@ -42,7 +42,7 @@ export const checkAndRecordGenLimit = async (user, document, type) => {
   const plan = user.plan || 'free';
   const now = new Date();
 
-  if (plan === 'large') {
+  if (plan === 'pro') {
     return; // Unlimited!
   }
 
@@ -350,37 +350,40 @@ export const generateCustomAssessment = asyncHandler(async (req, res) => {
     const limitType = isExam ? 'exam' : 'practice';
     await checkAndRecordGenLimit(user, document, limitType);
 
-    // Build cache if missing
-    if (!document.knowledgeCache || !document.knowledgeCache.questionBank || document.knowledgeCache.questionBank.length === 0) {
-      await generateAndSaveCacheOnTheFly(document);
-    }
+    // We can only use the cached question bank if:
+    // 1. There are no custom instructions.
+    // 2. We are generating a standard practice quiz (not exam mode).
+    // 3. The requested format is mixed or standard objective/theory that matches cache availability.
+    const isStandardFormat = format === 'mixed' || format === 'objective' || format === 'theory' || format === 'subjective';
+    const canUseCache = !instructions && !isExam && isStandardFormat;
 
-    // Assemble questions from cache
-    const cachedQuestions = assembleQuizFromCache(document, numQuestions || 10, !!isExam, format || 'mixed');
-    if (cachedQuestions && cachedQuestions.length > 0) {
-      const mongoose = (await import('mongoose')).default;
-      const questionsWithIds = cachedQuestions.map(q => ({
-        _id: new mongoose.Types.ObjectId(),
-        ...q
-      }));
+    if (canUseCache) {
+      const cachedQuestions = assembleQuizFromCache(document, numQuestions || 10, !!isExam, format || 'mixed');
+      if (cachedQuestions && cachedQuestions.length > 0) {
+        const mongoose = (await import('mongoose')).default;
+        const questionsWithIds = cachedQuestions.map(q => ({
+          _id: new mongoose.Types.ObjectId(),
+          ...q
+        }));
 
-      const quiz = await Quiz.create({
-        sessionId: activeSessionId,
-        documentId: documentId,
-        isExam: !!isExam,
-        questions: questionsWithIds,
-        totalQuestions: questionsWithIds.length,
-      });
+        const quiz = await Quiz.create({
+          sessionId: activeSessionId,
+          documentId: documentId,
+          isExam: !!isExam,
+          questions: questionsWithIds,
+          totalQuestions: questionsWithIds.length,
+        });
 
-      await document.save();
+        await document.save();
 
-      return res.status(201).json({
-        status: 'success',
-        quiz: {
-          ...quiz.toObject(),
-          questions: stripAnswers(quiz.questions),
-        },
-      });
+        return res.status(201).json({
+          status: 'success',
+          quiz: {
+            ...quiz.toObject(),
+            questions: stripAnswers(quiz.questions),
+          },
+        });
+      }
     }
 
     const quizData = await QuizService.generateCustomAssessment(documentId, { 
@@ -388,6 +391,7 @@ export const generateCustomAssessment = asyncHandler(async (req, res) => {
       difficulty, 
       numQuestions,
       instructions,
+      isExam: !!isExam,
       documentTopics: document.topics || []
     }, activeSessionId.toString());
 

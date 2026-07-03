@@ -10,20 +10,20 @@ const isDev = env.nodeEnv === 'development';
 
 export const getPdfUploadMax = (req) => {
   if (isDev) return 50;
-  if (req.user?.role === 'admin' || req.user?.plan === 'large') return 1000;
+  if (req.user?.role === 'admin' || req.user?.plan === 'pro') return 1000;
   if (req.user?.plan === 'plus') return 10;
   return 5;
 };
 
 export const getImageUploadMax = (req) => {
   if (isDev) return 100;
-  if (req.user?.role === 'admin' || req.user?.plan === 'plus' || req.user?.plan === 'large') return 1000;
+  if (req.user?.role === 'admin' || req.user?.plan === 'plus' || req.user?.plan === 'pro') return 1000;
   return 20;
 };
 
 export const getChatMax = (req) => {
   if (isDev) return 1000;
-  if (req.user?.role === 'admin' || req.user?.plan === 'plus' || req.user?.plan === 'large') {
+  if (req.user?.role === 'admin' || req.user?.plan === 'plus' || req.user?.plan === 'pro') {
     return 500;
   }
   return 60;
@@ -31,7 +31,7 @@ export const getChatMax = (req) => {
 
 export const getQuizGenMax = (req) => {
   if (isDev) return 100;
-  if (req.user?.role === 'admin' || req.user?.plan === 'large') return 1000;
+  if (req.user?.role === 'admin' || req.user?.plan === 'pro') return 1000;
   if (req.user?.plan === 'plus') return 5;
   return 5;
 };

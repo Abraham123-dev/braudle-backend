@@ -16,7 +16,7 @@ const userSchema = new mongoose.Schema(
     onboardingComplete: { type: Boolean, default: false },
     plan: {
       type: String,
-      enum: ['free', 'plus', 'large'],
+      enum: ['free', 'plus', 'pro'],
       default: 'free',
     },
     dailyTokenUsage: {

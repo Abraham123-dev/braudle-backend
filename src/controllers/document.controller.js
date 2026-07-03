@@ -33,8 +33,8 @@ export const uploadDocument = asyncHandler(async (req, res) => {
 
   let user;
   if (isPdf) {
-    const sizeLimits = { free: 10, plus: 25, large: 50 };
-    const uploadLimits = { free: 5, plus: 10, large: Infinity };
+    const sizeLimits = { free: 10, plus: 25, pro: 50 };
+    const uploadLimits = { free: 5, plus: 10, pro: Infinity };
 
     const maxSize = sizeLimits[plan] * 1024 * 1024;
     if (file.size > maxSize) {

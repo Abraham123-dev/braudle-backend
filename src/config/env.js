@@ -84,4 +84,8 @@ export const env = {
   youtube: {
     apiKey: process.env.YOUTUBE_API_KEY || null,
   },
+
+  paystack: {
+    secretKey: process.env.PAYSTACK_SECRET_KEY || null,
+  },
 };

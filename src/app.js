@@ -17,6 +17,7 @@ import sessionRoutes from './routes/session.routes.js';
 import quizRoutes from './routes/quiz.routes.js';
 import dashboardRoutes from './routes/dashboard.routes.js';
 import generalChatRoutes from './routes/generalChat.routes.js';
+import paymentRoutes from './routes/payment.routes.js';
 import { AppError } from './utils/AppError.js';
 
 
@@ -33,7 +34,14 @@ app.use(
 app.use(hpp());
 app.use((req, res, next) => {
   if (req.method === 'GET' || req.method === 'DELETE') return next();
-  express.json({ limit: '10mb' })(req, res, next);
+  express.json({
+    limit: '10mb',
+    verify: (req, res, buf) => {
+      if (req.originalUrl && req.originalUrl.includes('/api/payments/webhook')) {
+        req.rawBody = buf.toString();
+      }
+    }
+  })(req, res, next);
 });
 app.use(express.urlencoded({ limit: '10mb', extended: true }));
 app.use(cookieParser());
@@ -57,6 +65,7 @@ app.use('/api/sessions', sessionRoutes);
 app.use('/api/quiz', quizRoutes);
 app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/general-chat', generalChatRoutes);
+app.use('/api/payments', paymentRoutes);
 
 app.get('/api/health', (req, res) => {
   const mongoState = mongoose.connection.readyState;

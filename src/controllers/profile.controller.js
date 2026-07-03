@@ -26,12 +26,19 @@ export const updateProfile = asyncHandler(async (req, res) => {
 
   const userUpdate = { onboardingComplete: true };
 
-  // If avatar file is uploaded, upload to R2 and set User avatar
+  // If avatar file is uploaded, upload to R2 and set User avatar (with base64 fallback)
   if (file) {
-    const sanitizedName = StorageService.sanitizeFilename(file.originalname);
-    const fileKey = `avatars/${userId}/${Date.now()}-${sanitizedName}`;
-    const avatarUrl = await StorageService.uploadToR2(file.buffer, fileKey, file.mimetype);
-    userUpdate.avatar = avatarUrl;
+    try {
+      const sanitizedName = StorageService.sanitizeFilename(file.originalname);
+      const fileKey = `avatars/${userId}/${Date.now()}-${sanitizedName}`;
+      const avatarUrl = await StorageService.uploadToR2(file.buffer, fileKey, file.mimetype);
+      userUpdate.avatar = avatarUrl;
+    } catch (uploadError) {
+      console.error('[PROFILE UPLOAD] Cloudflare R2 upload failed. Falling back to base64 data URI:', uploadError.message);
+      const base64Image = file.buffer.toString('base64');
+      const dataUri = `data:${file.mimetype};base64,${base64Image}`;
+      userUpdate.avatar = dataUri;
+    }
   }
 
   const updatedUser = await User.findByIdAndUpdate(userId, userUpdate, { new: true });
