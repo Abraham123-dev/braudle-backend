@@ -7,6 +7,7 @@ import Document from '../src/models/Document.model.js';
 import Session from '../src/models/Session.model.js';
 import Conversation from '../src/models/Conversation.model.js';
 import StudentProfile from '../src/models/StudentProfile.model.js';
+import User from '../src/models/User.model.js';
 import * as AIService from '../src/services/ai.service.js';
 import { chatSession } from '../src/controllers/session.controller.js';
 
@@ -52,6 +53,16 @@ const callController = (controllerFn, req) => {
 async function testSemanticRag() {
   console.log('--- Connecting to database... ---');
   await connectDB();
+
+  console.log('--- Creating mock User... ---');
+  await User.deleteOne({ _id: mockUserId });
+  await User.create({
+    _id: mockUserId,
+    email: 'mockuser@example.com',
+    name: 'Oluwaniyi',
+    authProvider: 'email',
+    onboardingComplete: true
+  });
 
   console.log('--- Creating mock Student Profile... ---');
   // Ensure we delete any leftover profile first
@@ -149,6 +160,7 @@ async function testSemanticRag() {
     await Document.findByIdAndDelete(document._id);
     await Session.findByIdAndDelete(session._id);
     await StudentProfile.deleteOne({ userId: mockUserId });
+    await User.deleteOne({ _id: mockUserId });
     await Conversation.findOneAndDelete({ sessionId: session._id });
     console.log('Test records deleted.');
     

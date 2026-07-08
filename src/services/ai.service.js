@@ -818,44 +818,155 @@ Do NOT include markdown, backticks, or any explanation. Return only the raw JSON
 };
 
 /**
- * Generates vector embedding from OpenRouter (or falls back to local term-hash embedding)
+ * Generic fetch wrapper with a retry mechanism for transient network and API errors.
+ */
+const fetchWithRetry = async (url, options, maxRetries = 3, delay = 1000) => {
+  let lastError;
+  for (let i = 0; i < maxRetries; i++) {
+    try {
+      const response = await fetch(url, options);
+      return response;
+    } catch (err) {
+      lastError = err;
+      if (i < maxRetries - 1) {
+        console.warn(`[AI SERVICE] Fetch attempt ${i + 1} failed for ${url}: ${err.message || err}. Retrying in ${delay}ms...`);
+        await new Promise(resolve => setTimeout(resolve, delay));
+      } else {
+        console.error(`[AI SERVICE] Fetch attempt ${i + 1} failed for ${url}: ${err.message || err}. All attempts failed.`);
+      }
+    }
+  }
+  throw lastError;
+};
+
+/**
+ * Normalizes an embedding vector to target dimensions (padding with zeros or truncating).
+ */
+const normalizeVectorDimension = (vector, targetDim = 1536) => {
+  if (!Array.isArray(vector)) return new Array(targetDim).fill(0);
+  if (vector.length === targetDim) return vector;
+  if (vector.length > targetDim) return vector.slice(0, targetDim);
+  return [...vector, ...new Array(targetDim - vector.length).fill(0)];
+};
+
+/**
+ * Calls Mistral embeddings API for a single text.
+ */
+const getMistralEmbedding = async (text) => {
+  if (!env.mistral.apiKey) {
+    throw new Error('Mistral API Key missing');
+  }
+  const response = await fetchWithRetry('https://api.mistral.ai/v1/embeddings', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${env.mistral.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'mistral-embed',
+      input: text.trim(),
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Mistral embeddings HTTP ${response.status}`);
+  }
+
+  const data = await response.json();
+  if (data.data && data.data[0] && data.data[0].embedding) {
+    return normalizeVectorDimension(data.data[0].embedding, 1536);
+  }
+  throw new Error('Mistral embeddings data format invalid');
+};
+
+/**
+ * Calls Mistral embeddings API for a batch of texts.
+ */
+const getMistralEmbeddingsBatch = async (cleanedTexts) => {
+  if (!env.mistral.apiKey) {
+    throw new Error('Mistral API Key missing');
+  }
+  const response = await fetchWithRetry('https://api.mistral.ai/v1/embeddings', {
+    method: 'POST',
+    headers: {
+      'Content-Type': 'application/json',
+      'Authorization': `Bearer ${env.mistral.apiKey}`,
+    },
+    body: JSON.stringify({
+      model: 'mistral-embed',
+      input: cleanedTexts,
+    }),
+  });
+
+  if (!response.ok) {
+    throw new Error(`Mistral embeddings HTTP ${response.status}`);
+  }
+
+  const data = await response.json();
+  if (data.data && Array.isArray(data.data)) {
+    const embeddingsMap = new Map();
+    data.data.forEach((item, idx) => {
+      if (item && item.embedding) {
+        embeddingsMap.set(cleanedTexts[idx], normalizeVectorDimension(item.embedding, 1536));
+      }
+    });
+    return embeddingsMap;
+  }
+  throw new Error('Mistral batch embeddings response format invalid');
+};
+
+/**
+ * Generates vector embedding from OpenRouter (falls back to Mistral, and then local term-hash embedding)
  */
 export const generateEmbedding = async (text) => {
   if (!text || text.trim().length === 0) {
     return new Array(1536).fill(0);
   }
-  
-  if (!env.openRouter.apiKey) {
-    console.log('[AI SERVICE] OpenRouter API Key missing. Falling back to local term-hash embedding.');
-    return getLocalTfidfEmbedding(text);
+
+  // 1. Try OpenRouter (Primary)
+  if (env.openRouter.apiKey) {
+    try {
+      const response = await fetchWithRetry('https://openrouter.ai/api/v1/embeddings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${env.openRouter.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: 'openai/text-embedding-3-small',
+          input: text.trim(),
+        }),
+      });
+
+      if (!response.ok) {
+        throw new Error(`OpenRouter embeddings HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      if (data.data && data.data[0] && data.data[0].embedding) {
+        return normalizeVectorDimension(data.data[0].embedding, 1536);
+      }
+      throw new Error('Embeddings data format invalid');
+    } catch (err) {
+      console.warn('[AI SERVICE] OpenRouter embedding creation failed:', err.message);
+    }
+  } else {
+    console.log('[AI SERVICE] OpenRouter API Key missing. Skipping primary embedding provider.');
   }
 
-  try {
-    const response = await fetch('https://openrouter.ai/api/v1/embeddings', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${env.openRouter.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'openai/text-embedding-3-small',
-        input: text.trim(),
-      }),
-    });
-
-    if (!response.ok) {
-      throw new Error(`OpenRouter embeddings HTTP ${response.status}`);
+  // 2. Try Mistral (Secondary Fallback)
+  if (env.mistral.apiKey) {
+    try {
+      console.log('[AI SERVICE] Attempting Mistral secondary embedding fallback...');
+      return await getMistralEmbedding(text);
+    } catch (err) {
+      console.error('[AI SERVICE] Mistral secondary embedding fallback failed:', err.message);
     }
-
-    const data = await response.json();
-    if (data.data && data.data[0] && data.data[0].embedding) {
-      return data.data[0].embedding;
-    }
-    throw new Error('Embeddings data format invalid');
-  } catch (err) {
-    console.error('[AI SERVICE] OpenRouter embedding creation failed, using local hash-based vector:', err.message);
-    return getLocalTfidfEmbedding(text);
   }
+
+  // 3. Try Local TF-IDF (Tertiary Fallback)
+  console.log('[AI SERVICE] Falling back to local term-hash embedding.');
+  return getLocalTfidfEmbedding(text);
 };
 
 /**
@@ -871,49 +982,66 @@ export const generateEmbeddingsBatch = async (texts) => {
     return texts.map(() => new Array(1536).fill(0));
   }
 
-  if (!env.openRouter.apiKey) {
-    console.log('[AI SERVICE] OpenRouter API Key missing. Falling back to batch local term-hash embedding.');
-    return texts.map(t => getLocalTfidfEmbedding(t));
-  }
-
-  try {
-    const response = await fetch('https://openrouter.ai/api/v1/embeddings', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': `Bearer ${env.openRouter.apiKey}`,
-      },
-      body: JSON.stringify({
-        model: 'openai/text-embedding-3-small',
-        input: cleanedTexts,
-      }),
+  // Helper mapping function to construct final output array using a retrieved map of embeddings
+  const buildResultFromMap = (embeddingsMap) => {
+    return texts.map(t => {
+      const trimmed = (t || '').trim();
+      if (!trimmed) return new Array(1536).fill(0);
+      return embeddingsMap.get(trimmed) || getLocalTfidfEmbedding(t);
     });
+  };
 
-    if (!response.ok) {
-      throw new Error(`OpenRouter embeddings HTTP ${response.status}`);
-    }
-
-    const data = await response.json();
-    if (data.data && Array.isArray(data.data)) {
-      // Map returned embeddings back to original input text array
-      const embeddingsMap = new Map();
-      data.data.forEach((item, idx) => {
-        if (item && item.embedding) {
-          embeddingsMap.set(cleanedTexts[idx], item.embedding);
-        }
+  // 1. Try OpenRouter (Primary)
+  if (env.openRouter.apiKey) {
+    try {
+      const response = await fetchWithRetry('https://openrouter.ai/api/v1/embeddings', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${env.openRouter.apiKey}`,
+        },
+        body: JSON.stringify({
+          model: 'openai/text-embedding-3-small',
+          input: cleanedTexts,
+        }),
       });
 
-      return texts.map(t => {
-        const trimmed = (t || '').trim();
-        if (!trimmed) return new Array(1536).fill(0);
-        return embeddingsMap.get(trimmed) || getLocalTfidfEmbedding(t);
-      });
+      if (!response.ok) {
+        throw new Error(`OpenRouter embeddings HTTP ${response.status}`);
+      }
+
+      const data = await response.json();
+      if (data.data && Array.isArray(data.data)) {
+        const embeddingsMap = new Map();
+        data.data.forEach((item, idx) => {
+          if (item && item.embedding) {
+            embeddingsMap.set(cleanedTexts[idx], normalizeVectorDimension(item.embedding, 1536));
+          }
+        });
+        return buildResultFromMap(embeddingsMap);
+      }
+      throw new Error('Batch embeddings response format invalid');
+    } catch (err) {
+      console.warn('[AI SERVICE] OpenRouter batch embedding creation failed:', err.message);
     }
-    throw new Error('Batch embeddings response format invalid');
-  } catch (err) {
-    console.error('[AI SERVICE] OpenRouter batch embedding creation failed, using local hash vectors:', err.message);
-    return texts.map(t => getLocalTfidfEmbedding(t));
+  } else {
+    console.log('[AI SERVICE] OpenRouter API Key missing. Skipping primary batch embedding provider.');
   }
+
+  // 2. Try Mistral (Secondary Fallback)
+  if (env.mistral.apiKey) {
+    try {
+      console.log('[AI SERVICE] Attempting Mistral secondary batch embedding fallback...');
+      const embeddingsMap = await getMistralEmbeddingsBatch(cleanedTexts);
+      return buildResultFromMap(embeddingsMap);
+    } catch (err) {
+      console.error('[AI SERVICE] Mistral secondary batch embedding fallback failed:', err.message);
+    }
+  }
+
+  // 3. Try Local TF-IDF (Tertiary Fallback)
+  console.log('[AI SERVICE] Falling back to batch local term-hash embedding.');
+  return texts.map(t => getLocalTfidfEmbedding(t));
 };
 
 /**

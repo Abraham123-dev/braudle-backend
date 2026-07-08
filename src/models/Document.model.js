@@ -136,6 +136,10 @@ const documentSchema = new mongoose.Schema(
       lastPracticeGen: { type: Date },
       lastExamGen: { type: Date }
     },
+    conceptMap: {
+      type: mongoose.Schema.Types.Mixed,
+      default: null
+    },
   },
   { 
     timestamps: true,

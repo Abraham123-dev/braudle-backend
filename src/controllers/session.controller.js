@@ -314,8 +314,17 @@ export const chatSession = asyncHandler(async (req, res) => {
       const shuffled = available.sort(() => Math.random() - 0.5);
       const selectedCards = shuffled.slice(0, cardCount);
 
-      const cardLines = selectedCards.map(fc => `FLASHCARD | TOPIC: ${fc.concept || 'General'} | FRONT: ${fc.front} | BACK: ${fc.back}`).join('\n');
-      const fullAIResponse = `${cardLines}\n\n💡 These flashcards have been saved to your profile. Want to keep studying, try a practice question, or move to the next section?`;
+      const jsonResponse = {
+        type: 'flashcards',
+        message: "💡 These flashcards have been saved to your profile. Want to keep studying, try a practice question, or move to the next section?",
+        cards: selectedCards.map(fc => ({
+          topic: fc.concept || fc.topic || 'General',
+          front: fc.front,
+          back: fc.back
+        }))
+      };
+
+      const fullAIResponse = JSON.stringify(jsonResponse);
 
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
@@ -414,15 +423,28 @@ export const chatSession = asyncHandler(async (req, res) => {
         return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
       };
 
-      // 1. Calculate Vector Scores & Ranks
+      // Non-blocking batch loop helper
+      const processAsyncBatch = async (items, batchSize, fn) => {
+        for (let i = 0; i < items.length; i += batchSize) {
+          const batch = items.slice(i, i + batchSize);
+          fn(batch, i);
+          await new Promise(resolve => setImmediate(resolve));
+        }
+      };
+
+      // 1. Calculate Vector Scores & Ranks in async batches (15 at a time)
       const chunkEmbeddings = document.chunkEmbeddings || [];
       const vectorRanked = [];
 
-      for (let i = 0; i < document.chunks.length; i++) {
-        const chunkEmb = chunkEmbeddings[i];
-        const score = chunkEmb && chunkEmb.length > 0 ? cosineSimilarity(queryEmbedding, chunkEmb) : 0;
-        vectorRanked.push({ index: i, score });
-      }
+      const processVectorBatch = (batch, startIndex) => {
+        batch.forEach((chunkEmb, offset) => {
+          const idx = startIndex + offset;
+          const score = chunkEmb && chunkEmb.length > 0 ? cosineSimilarity(queryEmbedding, chunkEmb) : 0;
+          vectorRanked.push({ index: idx, score });
+        });
+      };
+
+      await processAsyncBatch(chunkEmbeddings, 15, processVectorBatch);
       vectorRanked.sort((a, b) => b.score - a.score);
 
       // 2. Calculate Keyword Scores & Ranks (lexical matching helper)
@@ -442,10 +464,15 @@ export const chatSession = asyncHandler(async (req, res) => {
       };
 
       const keywordRanked = [];
-      for (let i = 0; i < document.chunks.length; i++) {
-        const score = calculateKeywordScore(message, document.chunks[i]);
-        keywordRanked.push({ index: i, score });
-      }
+      const processKeywordBatch = (batch, startIndex) => {
+        batch.forEach((chunkText, offset) => {
+          const idx = startIndex + offset;
+          const score = calculateKeywordScore(message, chunkText);
+          keywordRanked.push({ index: idx, score });
+        });
+      };
+
+      await processAsyncBatch(document.chunks, 15, processKeywordBatch);
       keywordRanked.sort((a, b) => b.score - a.score);
 
       // 3. Merge rankings using Reciprocal Rank Fusion (RRF)

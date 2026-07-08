@@ -25,6 +25,7 @@ export const uploadDocument = asyncHandler(async (req, res) => {
   // 1. Determine type based on mimetype
   const isPdf = file.mimetype === 'application/pdf';
   const type = isPdf ? 'pdf' : 'image';
+  const countField = isPdf ? 'uploadCount.pdf' : 'uploadCount.image';
 
   const userRecord = await User.findById(userId);
   if (!userRecord) throw new AppError('User not found', 404);
@@ -197,7 +198,20 @@ export const getPresignedUrl = asyncHandler(async (req, res) => {
 
   let user;
   if (isPdf) {
-    const limit = 5;
+    const userRecord = await User.findById(userId);
+    if (!userRecord) throw new AppError('User not found', 404);
+    const plan = userRecord.plan || 'free';
+    const isDev = env.nodeEnv === 'development';
+
+    let limit = 5;
+    if (isDev) {
+      limit = 50;
+    } else if (userRecord.role === 'admin' || plan === 'pro') {
+      limit = 1000;
+    } else if (plan === 'plus') {
+      limit = 10;
+    }
+
     user = await User.findOneAndUpdate(
       { 
         _id: userId, 
@@ -211,9 +225,7 @@ export const getPresignedUrl = asyncHandler(async (req, res) => {
     );
 
     if (!user) {
-      const userExists = await User.exists({ _id: userId });
-      if (!userExists) throw new AppError('User not found', 404);
-      throw new AppError("You've reached your maximum PDF upload for the day. Come back tomorrow!", 429);
+      throw new AppError(`You've reached your maximum daily limit of ${limit} PDF uploads for the ${plan.toUpperCase()} plan.`, 429);
     }
   } else {
     // Images are unlimited
@@ -311,7 +323,20 @@ export const initiateMultipart = asyncHandler(async (req, res) => {
 
   let user;
   if (isPdf) {
-    const limit = 5;
+    const userRecord = await User.findById(userId);
+    if (!userRecord) throw new AppError('User not found', 404);
+    const plan = userRecord.plan || 'free';
+    const isDev = env.nodeEnv === 'development';
+
+    let limit = 5;
+    if (isDev) {
+      limit = 50;
+    } else if (userRecord.role === 'admin' || plan === 'pro') {
+      limit = 1000;
+    } else if (plan === 'plus') {
+      limit = 10;
+    }
+
     user = await User.findOneAndUpdate(
       { 
         _id: userId, 
@@ -325,9 +350,7 @@ export const initiateMultipart = asyncHandler(async (req, res) => {
     );
 
     if (!user) {
-      const userExists = await User.exists({ _id: userId });
-      if (!userExists) throw new AppError('User not found', 404);
-      throw new AppError("You've reached your maximum PDF upload for the day. Come back tomorrow!", 429);
+      throw new AppError(`You've reached your maximum daily limit of ${limit} PDF uploads for the ${plan.toUpperCase()} plan.`, 429);
     }
   } else {
     // Images are unlimited
@@ -464,5 +487,170 @@ export const abortMultipart = asyncHandler(async (req, res) => {
   return res.status(200).json({
     success: true,
     message: 'Multipart upload aborted and resources cleaned up.',
+  });
+});
+
+/**
+ * Retrieves the concept map for a document.
+ * If not already generated, it dynamically builds it using cached concepts and topics.
+ * GET /api/documents/:id/concept-map
+ */
+export const getDocumentConceptMap = asyncHandler(async (req, res) => {
+  const userId = req.user.id;
+  const { id } = req.params;
+
+  const document = await Document.findById(id);
+  if (!document) {
+    throw new AppError('Document not found', 404);
+  }
+
+  // Ensure user owns document
+  if (document.userId.toString() !== userId) {
+    throw new AppError('Forbidden: Access denied', 403);
+  }
+
+  // 1. If concept map exists, return it
+  if (document.conceptMap && document.conceptMap.chapters && document.conceptMap.chapters.length > 0) {
+    return res.status(200).json({
+      status: 'success',
+      conceptMap: document.conceptMap
+    });
+  }
+
+  // 2. Lazy Generation Fallback
+  console.log(`[CONCEPT MAP] Lazy generating map for document: ${id}`);
+  const cache = document.knowledgeCache || {};
+  const examTopics = cache.examTopics || [];
+  const concepts = cache.concepts || [];
+
+  try {
+    const { generateAIResponse } = await import('../services/ai.service.js');
+    const { parseAIJson } = await import('../utils/parseAIJson.js');
+
+    let prompt = '';
+
+    // If we have concepts in DB cache, build curriculum map from cache (fast/efficient)
+    if (concepts.length > 0) {
+      prompt = `You are an expert curriculum designer.
+Analyze the following document topics and key concepts and structure them into a hierarchical learning map (Subject ➔ Chapters/Topics ➔ Concepts).
+
+Subject Title: "${document.title}"
+Exam/Major Topics: ${JSON.stringify(examTopics)}
+Key Concepts: ${JSON.stringify(concepts.map(c => ({ name: c.name, explanation: c.explanation })))}
+
+Organize this information into a logical, hierarchical structure suitable for visual exploration. Group each concept under its most relevant exam topic/chapter. If an exam topic doesn't have matching concepts from the list, you can define 1-2 important concepts for it.
+
+Return ONLY a valid JSON object matching this schema. No markdown code blocks, no explanation, no trailing characters.
+
+Schema:
+{
+  "title": "Subject Title",
+  "chapters": [
+    {
+      "id": "ch-1",
+      "title": "Chapter/Topic Title",
+      "summary": "Short 1-sentence recap...",
+      "concepts": [
+        {
+          "id": "concept-1.1",
+          "name": "Concept Name",
+          "explanation": "Brief 1-sentence definition..."
+        }
+      ]
+    }
+  ]
+}
+`;
+    } else if (document.chunks && document.chunks.length > 0) {
+      // Fallback: If knowledgeCache is empty, generate map directly from document chunks (NotebookLM style)
+      console.log(`[CONCEPT MAP] knowledgeCache empty, fallback to raw chunk ingestion mapping.`);
+      const sampleText = document.chunks.slice(0, 15).join('\n\n');
+      prompt = `You are an expert curriculum designer.
+Analyze the following document text and structure it into a hierarchical learning map (Subject ➔ Chapters/Topics ➔ Concepts).
+
+Subject Title: "${document.title}"
+
+DOCUMENT TEXT (sampled):
+${sampleText}
+
+Organize the document contents into a logical, hierarchical structure suitable for visual exploration. Group each key concept under its most relevant chapter/topic. Extract 3-6 chapters, and 2-4 key concepts per chapter.
+
+Return ONLY a valid JSON object matching this schema. No markdown code blocks, no explanation, no trailing characters.
+
+Schema:
+{
+  "title": "Subject Title",
+  "chapters": [
+    {
+      "id": "ch-1",
+      "title": "Chapter/Topic Title",
+      "summary": "Short 1-sentence recap...",
+      "concepts": [
+        {
+          "id": "concept-1.1",
+          "name": "Concept Name",
+          "explanation": "Brief 1-sentence definition..."
+        }
+      ]
+    }
+  ]
+}
+`;
+    }
+
+    if (prompt) {
+      // Using 'tutoring' task to target the larger, smarter 70B parameter model!
+      const cacheResponse = await generateAIResponse({
+        task: 'tutoring',
+        messages: [{ role: 'user', content: prompt }],
+        temperature: 0.2,
+        max_tokens: 3000
+      });
+
+      const parsedMap = parseAIJson(cacheResponse, null);
+      if (parsedMap && Array.isArray(parsedMap.chapters) && parsedMap.chapters.length > 0) {
+        document.conceptMap = parsedMap;
+        await document.save();
+        return res.status(200).json({
+          status: 'success',
+          conceptMap: parsedMap
+        });
+      }
+    }
+  } catch (err) {
+    console.error('[CONCEPT MAP] Lazy generation failed:', err.message);
+  }
+
+  // Final placeholder fallback if everything else fails
+  const basicMap = {
+    title: document.title,
+    chapters: [
+      {
+        id: 'ch-1',
+        title: 'Core Topics',
+        summary: 'Fundamental topics in this study material.',
+        concepts: concepts.length > 0 
+          ? concepts.slice(0, 6).map((c, idx) => ({
+              id: `concept-${idx}`,
+              name: c.name,
+              explanation: c.explanation
+            }))
+          : [
+              {
+                id: 'concept-1',
+                name: document.title,
+                explanation: 'Explore the details and study this note in the tutor chat.'
+              }
+            ]
+      }
+    ]
+  };
+  
+  document.conceptMap = basicMap;
+  await document.save();
+
+  return res.status(200).json({
+    status: 'success',
+    conceptMap: basicMap
   });
 });

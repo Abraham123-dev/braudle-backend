@@ -211,6 +211,7 @@ const documentWorker = new Worker(
         summary,
         misconceptions: [],
         knowledgeCache,
+        conceptMap: (parsedCache && parsedCache.conceptMap) || null,
         sessionMemory: {
           flashcardsShown: [],
           questionsServed: [],
