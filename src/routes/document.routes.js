@@ -24,6 +24,7 @@ import {
   completeMultipart,
   abortMultipart,
   getDocumentConceptMap,
+  getDocumentProgressStream,
 } from '../controllers/document.controller.js';
 
 const router = Router();
@@ -45,6 +46,7 @@ router.post('/multipart/abort', verifyJWT, validate(abortMultipartSchema), abort
 router.get('/', verifyJWT, getDocuments);
 router.get('/:id', verifyJWT, getDocument);
 router.get('/:id/status', verifyJWT, getDocumentStatus);
+router.get('/:id/progress', verifyJWT, getDocumentProgressStream);
 router.get('/:id/concept-map', verifyJWT, getDocumentConceptMap);
 router.delete('/:id', verifyJWT, deleteDocument);
 

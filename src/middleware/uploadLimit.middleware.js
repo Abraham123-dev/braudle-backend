@@ -6,24 +6,5 @@ import { asyncHandler } from '../utils/asyncHandler.js';
  * This ensures daily limits (2 PDFs, 5 images) are enforced per calendar day.
  */
 export const resetUploadCountersIfNeeded = asyncHandler(async (req, res, next) => {
-  const user = await User.findById(req.user.id);
-  
-  if (!user) {
-    return next();
-  }
-
-  const today = new Date().toISOString().split('T')[0];
-  const lastDate = user.lastUploadDate ? user.lastUploadDate.toISOString().split('T')[0] : null;
-
-  if (lastDate !== today) {
-    console.log(`[AUTH] Resetting upload and generation counters for user: ${user._id}`);
-    user.uploadCount.pdf = 0;
-    user.uploadCount.image = 0;
-    user.dailyGenerationsCount = { flashcards: 0, practice: 0, exam: 0 };
-    user.lastGenerationResetDate = new Date();
-    user.lastUploadDate = new Date(); // Update to today so we don't reset again on every request today
-    await user.save();
-  }
-
   next();
 });

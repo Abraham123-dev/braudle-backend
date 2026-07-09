@@ -46,15 +46,6 @@ export const checkAndRecordGenLimit = async (user, document, type) => {
     return; // Unlimited!
   }
 
-  // Reset daily counts if a new day has started
-  const lastReset = user.lastGenerationResetDate ? new Date(user.lastGenerationResetDate) : new Date(0);
-  const isNewDay = lastReset.toDateString() !== now.toDateString();
-
-  if (isNewDay) {
-    user.dailyGenerationsCount = { flashcards: 0, practice: 0, exam: 0 };
-    user.lastGenerationResetDate = now;
-  }
-
   if (plan === 'plus') {
     // Plus limit: Max 5 generations per day globally
     const count = user.dailyGenerationsCount[type] || 0;
@@ -62,6 +53,7 @@ export const checkAndRecordGenLimit = async (user, document, type) => {
       throw new AppError(`You've reached your daily limit of 5 ${type} generations for the Plus plan.`, 429);
     }
     user.dailyGenerationsCount[type] = count + 1;
+    user.markModified('dailyGenerationsCount');
     await user.save();
     return;
   }
@@ -95,30 +87,45 @@ export const checkAndRecordGenLimit = async (user, document, type) => {
 
 const generateAndSaveCacheOnTheFly = async (document) => {
   try {
-    const { buildMasterKnowledgeCachePrompt } = await import('../utils/promptBuilder.js');
-    const cachePrompt = buildMasterKnowledgeCachePrompt(document.chunks);
-    const cacheResponse = await AIService.generateAIResponse({
-      task: 'analysis',
-      messages: [{ role: 'user', content: cachePrompt }],
-      temperature: 0.2,
-      max_tokens: 4096
-    });
-    const parsed = parseAIJson(cacheResponse, null);
-    if (parsed) {
-      document.knowledgeCache = {
-        concepts: parsed.concepts || [],
-        definitions: parsed.definitions || [],
-        learningObjectives: parsed.learningObjectives || [],
-        keyFacts: parsed.keyFacts || [],
-        importantExamples: parsed.importantExamples || [],
-        formulae: parsed.formulae || [],
-        flashcards: parsed.flashcards || [],
-        questionBank: parsed.questionBank || [],
-        examTopics: parsed.examTopics || []
-      };
-      document.markModified('knowledgeCache');
-      await document.save();
-    }
+    const { buildKnowledgeCachePromptA, buildKnowledgeCachePromptB } = await import('../utils/promptBuilder.js');
+    const { parseAIJson } = await import('../utils/parseAIJson.js');
+
+    const promptA = buildKnowledgeCachePromptA(document.chunks);
+    const promptB = buildKnowledgeCachePromptB(document.chunks);
+
+    const [resA, resB] = await Promise.all([
+      AIService.generateAIResponse({
+        task: 'analysis',
+        messages: [{ role: 'user', content: promptA }],
+        temperature: 0.2,
+        max_tokens: 2500
+      }),
+      AIService.generateAIResponse({
+        task: 'analysis',
+        messages: [{ role: 'user', content: promptB }],
+        temperature: 0.2,
+        max_tokens: 3500
+      })
+    ]);
+
+    const parsedA = parseAIJson(resA, {});
+    const parsedB = parseAIJson(resB, {});
+
+    document.knowledgeCache = {
+      concepts: Array.isArray(parsedA.concepts) ? parsedA.concepts : [],
+      definitions: Array.isArray(parsedA.definitions) ? parsedA.definitions : [],
+      learningObjectives: Array.isArray(parsedA.learningObjectives) ? parsedA.learningObjectives : [],
+      keyFacts: Array.isArray(parsedA.keyFacts) ? parsedA.keyFacts : [],
+      importantExamples: Array.isArray(parsedA.importantExamples) ? parsedA.importantExamples : [],
+      formulae: Array.isArray(parsedB.formulae) ? parsedB.formulae : [],
+      flashcards: Array.isArray(parsedB.flashcards) ? parsedB.flashcards : [],
+      questionBank: Array.isArray(parsedB.questionBank) ? parsedB.questionBank : [],
+      examTopics: Array.isArray(parsedA.examTopics) ? parsedA.examTopics : []
+    };
+    document.conceptMap = parsedB.conceptMap || null;
+    document.knowledgeCacheStatus = 'ready';
+    document.markModified('knowledgeCache');
+    await document.save();
   } catch (err) {
     console.error('Failed to generate cache on the fly:', err.message);
   }

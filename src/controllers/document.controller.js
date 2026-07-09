@@ -1,12 +1,13 @@
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { AppError } from '../utils/AppError.js';
+import Redis from 'ioredis';
 import User from '../models/User.model.js';
 import Document from '../models/Document.model.js';
 import Session from '../models/Session.model.js';
 import Conversation from '../models/Conversation.model.js';
 import Quiz from '../models/Quiz.model.js';
 import * as StorageService from '../services/storage.service.js';
-import { documentQueue } from '../queues/document.queue.js';
+import { extractionQueue } from '../queues/document.queue.js';
 import { env } from '../config/env.js';
 import { deleteCached, CACHE_KEYS } from '../utils/cache.js';
 
@@ -94,7 +95,7 @@ export const uploadDocument = asyncHandler(async (req, res) => {
     });
 
     // 5. Queue the background processing job
-    await documentQueue.add('process-document', {
+    await extractionQueue.add('process-document', {
       documentId: document._id,
       fileKey: document.fileKey,
       userId: document.userId,
@@ -140,7 +141,7 @@ export const getDocument = asyncHandler(async (req, res) => {
 
 export const getDocumentStatus = asyncHandler(async (req, res) => {
   const document = await Document.findById(req.params.id)
-    .select('processingStatus processingStage topics summary userId');
+    .select('processingStatus processingStage knowledgeCacheStatus topics summary userId');
 
   if (!document) throw new AppError('Document not found', 404);
   if (document.userId.toString() !== req.user.id) throw new AppError('Forbidden: Access denied', 403);
@@ -149,6 +150,7 @@ export const getDocumentStatus = asyncHandler(async (req, res) => {
     documentId: document._id,
     processingStatus: document.processingStatus,
     processingStage: document.processingStage,
+    knowledgeCacheStatus: document.knowledgeCacheStatus,
     // Returned once stage reaches 'ready' — frontend uses these to render the welcome card
     topics: document.topics,
     summary: document.summary,
@@ -297,7 +299,7 @@ export const confirmUpload = asyncHandler(async (req, res) => {
   }
 
   // Queue the background processing job
-  await documentQueue.add('process-document', {
+  await extractionQueue.add('process-document', {
     documentId: document._id,
     fileKey: document.fileKey,
     userId: document.userId,
@@ -440,7 +442,7 @@ export const completeMultipart = asyncHandler(async (req, res) => {
   await document.save();
 
   // Queue background processing
-  await documentQueue.add('process-document', {
+  await extractionQueue.add('process-document', {
     documentId: document._id,
     fileKey: document.fileKey,
     userId: document.userId,
@@ -654,3 +656,90 @@ Schema:
     conceptMap: basicMap
   });
 });
+
+export const getDocumentProgressStream = (req, res) => {
+  const { id } = req.params;
+  const userId = req.user.id;
+
+  // Set SSE headers
+  res.writeHead(200, {
+    'Content-Type': 'text/event-stream',
+    'Cache-Control': 'no-cache',
+    'Connection': 'keep-alive',
+    'Content-Encoding': 'none',
+  });
+
+  // Keep-alive heartbeat interval every 15s to keep proxy/gateway connections alive
+  const heartbeat = setInterval(() => {
+    res.write(': heartbeat\n\n');
+  }, 15000);
+
+  let subscriberClient = null;
+
+  (async () => {
+    try {
+      const document = await Document.findById(id);
+      if (!document) {
+        res.write(`data: ${JSON.stringify({ error: 'Document not found' })}\n\n`);
+        return res.end();
+      }
+
+      if (document.userId.toString() !== userId) {
+        res.write(`data: ${JSON.stringify({ error: 'Forbidden: Access denied' })}\n\n`);
+        return res.end();
+      }
+
+      // 1. Instantly push current state
+      res.write(`data: ${JSON.stringify({
+        documentId: document._id,
+        stage: document.processingStage,
+        status: document.processingStatus,
+        topics: document.topics,
+        summary: document.summary
+      })}\n\n`);
+
+      // If document is already completed or failed AND knowledge cache is finished, close the stream immediately
+      if (['ready', 'failed'].includes(document.processingStatus) && ['ready', 'failed'].includes(document.knowledgeCacheStatus)) {
+        res.write(`data: [DONE]\n\n`);
+        return res.end();
+      }
+
+      // 2. Subscribe to Redis for real-time progress updates
+      subscriberClient = new Redis(env.redisUrl, {
+        enableReadyCheck: false,
+        maxRetriesPerRequest: null,
+      });
+
+      const channel = `doc:progress:${id}`;
+      await subscriberClient.subscribe(channel);
+
+      subscriberClient.on('message', (chan, message) => {
+        res.write(`data: ${message}\n\n`);
+        
+        try {
+          const parsed = JSON.parse(message);
+          if (['ready_cache', 'failed_cache', 'failed'].includes(parsed.status)) {
+            res.write(`data: [DONE]\n\n`);
+            res.end();
+          }
+        } catch (e) {
+          // Ignore parse errors
+        }
+      });
+
+    } catch (err) {
+      console.error(`[SSE STREAM] Error setting up progress stream for doc ${id}:`, err);
+      res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+      res.end();
+    }
+  })();
+
+  // Clean up resources when request closes
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    if (subscriberClient) {
+      subscriberClient.unsubscribe().catch(() => {});
+      subscriberClient.quit().catch(() => {});
+    }
+  });
+};

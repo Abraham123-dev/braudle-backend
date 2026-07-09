@@ -261,30 +261,45 @@ export const chatSession = asyncHandler(async (req, res) => {
   if (isFlashcardRequest) {
     const generateAndSaveCacheOnTheFly = async (doc) => {
       try {
-        const { buildMasterKnowledgeCachePrompt } = await import('../utils/promptBuilder.js');
-        const cachePrompt = buildMasterKnowledgeCachePrompt(doc.chunks);
-        const cacheResponse = await AIService.generateAIResponse({
-          task: 'analysis',
-          messages: [{ role: 'user', content: cachePrompt }],
-          temperature: 0.2,
-          max_tokens: 4096
-        });
-        const parsed = parseAIJson(cacheResponse, null);
-        if (parsed) {
-          doc.knowledgeCache = {
-            concepts: parsed.concepts || [],
-            definitions: parsed.definitions || [],
-            learningObjectives: parsed.learningObjectives || [],
-            keyFacts: parsed.keyFacts || [],
-            importantExamples: parsed.importantExamples || [],
-            formulae: parsed.formulae || [],
-            flashcards: parsed.flashcards || [],
-            questionBank: parsed.questionBank || [],
-            examTopics: parsed.examTopics || []
-          };
-          doc.markModified('knowledgeCache');
-          await doc.save();
-        }
+        const { buildKnowledgeCachePromptA, buildKnowledgeCachePromptB } = await import('../utils/promptBuilder.js');
+        const { parseAIJson } = await import('../utils/parseAIJson.js');
+
+        const promptA = buildKnowledgeCachePromptA(doc.chunks);
+        const promptB = buildKnowledgeCachePromptB(doc.chunks);
+
+        const [resA, resB] = await Promise.all([
+          AIService.generateAIResponse({
+            task: 'analysis',
+            messages: [{ role: 'user', content: promptA }],
+            temperature: 0.2,
+            max_tokens: 2500
+          }),
+          AIService.generateAIResponse({
+            task: 'analysis',
+            messages: [{ role: 'user', content: promptB }],
+            temperature: 0.2,
+            max_tokens: 3500
+          })
+        ]);
+
+        const parsedA = parseAIJson(resA, {});
+        const parsedB = parseAIJson(resB, {});
+
+        doc.knowledgeCache = {
+          concepts: Array.isArray(parsedA.concepts) ? parsedA.concepts : [],
+          definitions: Array.isArray(parsedA.definitions) ? parsedA.definitions : [],
+          learningObjectives: Array.isArray(parsedA.learningObjectives) ? parsedA.learningObjectives : [],
+          keyFacts: Array.isArray(parsedA.keyFacts) ? parsedA.keyFacts : [],
+          importantExamples: Array.isArray(parsedA.importantExamples) ? parsedA.importantExamples : [],
+          formulae: Array.isArray(parsedB.formulae) ? parsedB.formulae : [],
+          flashcards: Array.isArray(parsedB.flashcards) ? parsedB.flashcards : [],
+          questionBank: Array.isArray(parsedB.questionBank) ? parsedB.questionBank : [],
+          examTopics: Array.isArray(parsedA.examTopics) ? parsedA.examTopics : []
+        };
+        doc.conceptMap = parsedB.conceptMap || null;
+        doc.knowledgeCacheStatus = 'ready';
+        doc.markModified('knowledgeCache');
+        await doc.save();
       } catch (err) {
         console.error('Failed to generate cache on the fly:', err.message);
       }
@@ -680,7 +695,7 @@ export const chatSession = asyncHandler(async (req, res) => {
 
 export const getSession = asyncHandler(async (req, res) => {
   const session = await Session.findOne({ _id: req.params.id, userId: req.user.id })
-    .populate('documentId', 'title subject processingStatus processingStage');
+    .populate('documentId', 'title subject processingStatus processingStage knowledgeCacheStatus');
   
   if (!session) throw new AppError('Session not found', 404);
   if (session.userId.toString() !== req.user.id) throw new AppError('Forbidden: Access denied', 403);

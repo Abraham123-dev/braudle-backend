@@ -92,6 +92,11 @@ const documentSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    knowledgeCacheStatus: {
+      type: String,
+      enum: ['pending', 'processing', 'ready', 'failed'],
+      default: 'pending'
+    },
     knowledgeCache: {
       concepts: [{
         name: { type: String },

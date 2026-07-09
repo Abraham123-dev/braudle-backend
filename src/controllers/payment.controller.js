@@ -187,15 +187,26 @@ export const handlePaystackWebhook = async (req, res) => {
         const { reference, amount, customer, metadata } = payload.data;
         const email = customer.email;
         
-        // Derive target plan from metadata, custom fields, or default to plus
-        let targetPlan = 'plus';
-        if (metadata && metadata.plan) {
-          targetPlan = metadata.plan;
-        } else if (amount >= 1499900) { // ₦14,999 in Kobo
-          targetPlan = 'pro';
+        // Derive target plan from metadata, custom fields, or default to plus/pro via amount comparison
+        let parsedMetadata = metadata;
+        if (typeof metadata === 'string') {
+          try {
+            parsedMetadata = JSON.parse(metadata);
+          } catch (e) {
+            parsedMetadata = {};
+          }
         }
 
-        console.log(`[PAYSTACK WEBHOOK] Processing charge.success for ${email} (amount: ${amount}, reference: ${reference})`);
+        let targetPlan = 'plus';
+        if (parsedMetadata && parsedMetadata.plan) {
+          targetPlan = parsedMetadata.plan.toLowerCase().trim();
+        } else if (amount >= 1499900) { // ₦14,999 in Kobo
+          targetPlan = 'pro';
+        } else if (amount >= 599900) { // ₦5,999 in Kobo
+          targetPlan = 'plus';
+        }
+
+        console.log(`[PAYSTACK WEBHOOK] Processing charge.success for ${email} (amount: ${amount}, reference: ${reference}, derivedPlan: ${targetPlan})`);
         await upgradeUserPlan(email, reference, targetPlan, amount, eventId);
       } else {
         console.log(`[PAYSTACK WEBHOOK] Ignored unsupported event type: ${payload.event}`);

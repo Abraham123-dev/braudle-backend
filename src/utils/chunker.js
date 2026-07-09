@@ -119,8 +119,14 @@ const splitIntoChunksSemantic = async (text, options = {}) => {
     return [text];
   }
 
-  // 2. Fetch sentence embeddings in batch
-  const embeddings = await generateEmbeddingsBatch(sentences);
+  // 2. Fetch sentence embeddings in batch (capped at 100 sentences per call to avoid payload sizes and API timeouts)
+  const embeddings = [];
+  const BATCH_SIZE = 100;
+  for (let i = 0; i < sentences.length; i += BATCH_SIZE) {
+    const batch = sentences.slice(i, i + BATCH_SIZE);
+    const batchEmbeddings = await generateEmbeddingsBatch(batch);
+    embeddings.push(...batchEmbeddings);
+  }
 
   // 3. Compute similarity differences between consecutive sentences
   const similarities = [];

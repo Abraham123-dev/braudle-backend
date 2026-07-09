@@ -5,11 +5,16 @@ import { connectDB } from '../config/db.js';
 import Document from '../models/Document.model.js';
 import * as StorageService from '../services/storage.service.js';
 import { splitIntoChunksSemantic } from '../utils/chunker.js';
-import { buildDocumentUnderstandingPrompt, buildMasterKnowledgeCachePrompt } from '../utils/promptBuilder.js';
+import { 
+  buildDocumentUnderstandingPrompt, 
+  buildKnowledgeCachePromptA, 
+  buildKnowledgeCachePromptB 
+} from '../utils/promptBuilder.js';
 import { PDFParse } from 'pdf-parse';
 import * as AIService from '../services/ai.service.js';
 import { GROQ_MODELS } from '../config/models.js';
 import { parseAIJson } from '../utils/parseAIJson.js';
+import { extractionQueue, embeddingQueue, cacheQueue } from '../queues/document.queue.js';
 
 // Connect to MongoDB
 await connectDB();
@@ -22,12 +27,6 @@ const workerConnection = new Redis(env.redisUrl, {
 
 /**
  * Cleans raw text extracted from PDFs and OCR.
- * PDFs frequently produce: hyphenated line-breaks ("com-\nputer"), excessive whitespace,
- * null bytes, and ligature artifacts. Fixing these before chunking produces much better
- * AI context windows and improves quiz/topic quality significantly.
- *
- * @param {string} text - Raw extracted text
- * @returns {string} Cleaned text
  */
 const cleanExtractedText = (text) => {
   if (!text) return '';
@@ -46,27 +45,37 @@ const cleanExtractedText = (text) => {
 };
 
 /**
- * Helper: Update a single stage field atomically.
- * Keeps stage transitions readable and prevents partial state.
+ * Helper: Publish progress state to Redis channel.
  */
-const setStage = (documentId, stage) =>
-  Document.findByIdAndUpdate(documentId, { processingStage: stage });
+const publishProgress = async (documentId, stage, status, extra = {}) => {
+  try {
+    const channel = `doc:progress:${documentId}`;
+    const payload = JSON.stringify({
+      documentId,
+      stage,
+      status,
+      ...extra,
+      timestamp: Date.now()
+    });
+    await workerConnection.publish(channel, payload);
+    console.log(`[WORKER] Published progress to Redis [Channel: ${channel}]: ${stage} - ${status}`);
+  } catch (err) {
+    console.error(`[WORKER] Redis publish failed:`, err.message);
+  }
+};
 
 /**
- * The Document Worker processes background jobs for file extraction and AI understanding.
- * It walks the document through 6 named stages so the frontend can display rich progress.
+ * 1. Extraction Worker: Handles OCR, text extraction, semantic chunking, and AI summary.
+ * Marks document as ready quickly and triggers embedding & caching background jobs.
  */
-const documentWorker = new Worker(
-  'document-processing',
+export const extractionWorker = new Worker(
+  'document-extraction',
   async (job) => {
     const { documentId, fileKey } = job.data;
-
-    console.log(`[WORKER] Processing document: ${documentId}`);
+    console.log(`[WORKER: EXTRACTION] Job ${job.id} started for document: ${documentId}`);
 
     try {
-      // ── Stage 1 ─────────────────────────────────────────────────────────────
-      // Atomic status transition: pending -> processing
-      // If this fails, the document was already picked up by another worker instance.
+      // 1. Atomic status transition: pending -> processing
       const doc = await Document.findOneAndUpdate(
         { _id: documentId, processingStatus: 'pending' },
         { processingStatus: 'processing', processingStage: 'file_received' },
@@ -74,15 +83,17 @@ const documentWorker = new Worker(
       );
 
       if (!doc) {
-        console.log(`[WORKER] Document ${documentId} already processing or completed. Skipping.`);
+        console.log(`[WORKER: EXTRACTION] Document ${documentId} already processing or completed. Skipping.`);
         return { success: false, reason: 'Already processed or invalid state' };
       }
 
-      // ── Stage 2 ─────────────────────────────────────────────────────────────
-      await setStage(documentId, 'extracting_content');
+      await publishProgress(documentId, 'file_received', 'processing');
+
+      // 2. Extract content
+      await Document.findByIdAndUpdate(documentId, { processingStage: 'extracting_content' });
+      await publishProgress(documentId, 'extracting_content', 'processing');
 
       const fileBuffer = await StorageService.downloadFromR2(fileKey);
-
       let extractedText = '';
 
       if (doc.type === 'pdf') {
@@ -107,17 +118,17 @@ const documentWorker = new Worker(
         throw new Error('Failed to extract text from document');
       }
 
-      // Clean raw text: fix PDF layout artifacts, hyphenation, excessive whitespace
       extractedText = cleanExtractedText(extractedText);
 
-      // ── Stage 3 ─────────────────────────────────────────────────────────────
-      await setStage(documentId, 'identifying_concepts');
+      // 3. Chunk text
+      await Document.findByIdAndUpdate(documentId, { processingStage: 'identifying_concepts' });
+      await publishProgress(documentId, 'identifying_concepts', 'processing');
 
       const chunks = await splitIntoChunksSemantic(extractedText);
 
-      // ── Stage 4 ─────────────────────────────────────────────────────────────
-      // AI Document Understanding: Extract topics and a student-facing summary.
-      await setStage(documentId, 'building_learning_map');
+      // 4. Topic extraction & summary
+      await Document.findByIdAndUpdate(documentId, { processingStage: 'building_learning_map' });
+      await publishProgress(documentId, 'building_learning_map', 'processing');
 
       let topics = [];
       let summary = '';
@@ -130,37 +141,147 @@ const documentWorker = new Worker(
         );
 
         const understanding = parseAIJson(aiResponse, { topics: [], summary: '' });
-
         topics = Array.isArray(understanding.topics) ? understanding.topics : [];
         summary = typeof understanding.summary === 'string' ? understanding.summary : '';
       } catch (aiErr) {
-        // Non-fatal: If AI understanding fails, the document is still usable for teaching.
-        console.error(`[WORKER] AI understanding failed for ${documentId}:`, aiErr.message);
-        // Mark in DB so the frontend knows the summary/topics section may be empty
+        console.error(`[WORKER: EXTRACTION] AI understanding failed for ${documentId}:`, aiErr.message);
         await Document.findByIdAndUpdate(documentId, { aiUnderstandingFailed: true });
       }
 
-      // ── Stage 5 ─────────────────────────────────────────────────────────────
-      await setStage(documentId, 'preparing_tutor');
+      // 5. Mark document as READY. The user can now view it and start study chats immediately!
+      await Document.findByIdAndUpdate(documentId, {
+        rawText: extractedText,
+        chunks,
+        totalChunks: chunks.length,
+        topics,
+        summary,
+        misconceptions: [],
+        processingStatus: 'ready',
+        processingStage: 'ready',
+        knowledgeCacheStatus: 'pending'
+      });
+
+      await publishProgress(documentId, 'ready', 'ready', { topics, summary });
+
+      // 6. Queue Stage B and C as independent, parallel non-blocking background jobs
+      console.log(`[WORKER: EXTRACTION] Document ${documentId} is READY. Queuing embeddings and cache generation...`);
+      
+      await embeddingQueue.add('generate-embeddings', { documentId, chunks }, {
+        attempts: 3,
+        backoff: { type: 'exponential', delay: 2000 }
+      });
+
+      await cacheQueue.add('build-knowledge-cache', { documentId, chunks }, {
+        attempts: 2,
+        backoff: { type: 'exponential', delay: 5000 }
+      });
+
+      return { success: true, status: 'ready', chunks: chunks.length };
+
+    } catch (error) {
+      console.error(`[WORKER: EXTRACTION] Error processing document ${documentId}:`, error);
+
+      await Document.findByIdAndUpdate(documentId, {
+        processingStatus: 'failed',
+        processingStage: 'failed',
+        'metadata.lastError': error.message
+      });
+      await publishProgress(documentId, 'failed', 'failed', { error: error.message });
+
+      throw error;
+    }
+  },
+  {
+    connection: workerConnection,
+    concurrency: 4,
+  }
+);
+
+/**
+ * 2. Embeddings Worker: Handles chunk embedding generation.
+ * Rate-limited using BullMQ's worker limiter to prevent OpenRouter/LLM provider 429 errors.
+ */
+export const embeddingWorker = new Worker(
+  'document-embeddings',
+  async (job) => {
+    const { documentId, chunks } = job.data;
+    console.log(`[WORKER: EMBEDDINGS] Job ${job.id} started for document: ${documentId}`);
+
+    try {
+      const document = await Document.findById(documentId);
+      if (!document) {
+        throw new Error(`Document ${documentId} not found for embedding generation`);
+      }
+
+      console.log(`[WORKER: EMBEDDINGS] Generating embeddings for ${chunks.length} chunks of document: ${documentId}`);
 
       const chunkEmbeddings = [];
-      try {
-        const embeddingPromises = chunks.map(chunk => AIService.generateEmbedding(chunk));
-        const resolvedEmbeddings = await Promise.all(embeddingPromises);
-        chunkEmbeddings.push(...resolvedEmbeddings);
-      } catch (embErr) {
-        console.error(`[WORKER] Generating chunk embeddings failed for ${documentId}, falling back to local TF-IDF:`, embErr.message);
-        for (const chunk of chunks) {
-          try {
-            const fbEmb = await AIService.generateEmbedding(chunk).catch(() => AIService.getLocalTfidfEmbedding(chunk));
-            chunkEmbeddings.push(fbEmb);
-          } catch (localErr) {
-            chunkEmbeddings.push(new Array(1536).fill(0));
+      const BATCH_SIZE = 20;
+
+      for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
+        const batch = chunks.slice(i, i + BATCH_SIZE);
+        
+        try {
+          const batchEmbs = await AIService.generateEmbeddingsBatch(batch);
+          chunkEmbeddings.push(...batchEmbs);
+        } catch (batchErr) {
+          console.warn(`[WORKER: EMBEDDINGS] Batch embedding failed at index ${i}, generating individually:`, batchErr.message);
+          for (const chunk of batch) {
+            try {
+              const emb = await AIService.generateEmbedding(chunk).catch(() => AIService.getLocalTfidfEmbedding(chunk));
+              chunkEmbeddings.push(emb);
+            } catch (localErr) {
+              chunkEmbeddings.push(new Array(1536).fill(0));
+            }
           }
+        }
+
+        // Delay 300ms between batches to strictly avoid rate limiting (429) cascades
+        if (i + BATCH_SIZE < chunks.length) {
+          await new Promise(resolve => setTimeout(resolve, 300));
         }
       }
 
-      // ── Stage 5.5: Master Knowledge Cache Generation ─────────────────────────
+      await Document.findByIdAndUpdate(documentId, { chunkEmbeddings });
+      console.log(`[WORKER: EMBEDDINGS] Completed embeddings for document: ${documentId}`);
+      return { success: true, embeddingsCount: chunkEmbeddings.length };
+
+    } catch (error) {
+      console.error(`[WORKER: EMBEDDINGS] Error generating embeddings for document ${documentId}:`, error);
+      throw error;
+    }
+  },
+  {
+    connection: workerConnection,
+    concurrency: 2,
+    limiter: {
+      max: 20,       // Max 20 embedding jobs per second across workers
+      duration: 1000,
+    },
+  }
+);
+
+/**
+ * 3. Cache Worker: Generates deep study materials (concepts, definitions, flashcards, quizzes).
+ * Employs parallel prompt splitting to prevent Groq API 30s gateway timeouts.
+ */
+export const cacheWorker = new Worker(
+  'document-cache',
+  async (job) => {
+    const { documentId, chunks } = job.data;
+    console.log(`[WORKER: CACHE] Job ${job.id} started for document: ${documentId}`);
+
+    try {
+      const document = await Document.findById(documentId);
+      if (!document) {
+        throw new Error(`Document ${documentId} not found for knowledge cache generation`);
+      }
+
+      await Document.findByIdAndUpdate(documentId, { knowledgeCacheStatus: 'processing' });
+      await publishProgress(documentId, 'preparing_tutor', 'processing_cache');
+
+      console.log(`[WORKER: CACHE] Building split knowledge cache for document: ${documentId}`);
+
       let knowledgeCache = {
         concepts: [],
         definitions: [],
@@ -172,81 +293,81 @@ const documentWorker = new Worker(
         questionBank: [],
         examTopics: []
       };
+      let conceptMap = null;
 
-      let parsedCache = null;
+      const promptA = buildKnowledgeCachePromptA(chunks);
+      const promptB = buildKnowledgeCachePromptB(chunks);
 
-      try {
-        console.log(`[WORKER] Generating Master Knowledge Cache for document ${documentId}...`);
-        const cachePrompt = buildMasterKnowledgeCachePrompt(chunks);
-        const cacheResponse = await AIService.generateAIResponse({
+      const [resA, resB] = await Promise.all([
+        AIService.generateAIResponse({
           task: 'analysis',
-          messages: [{ role: 'user', content: cachePrompt }],
+          messages: [{ role: 'user', content: promptA }],
           temperature: 0.2,
-          max_tokens: 4096
-        });
+          max_tokens: 2500
+        }),
+        AIService.generateAIResponse({
+          task: 'analysis',
+          messages: [{ role: 'user', content: promptB }],
+          temperature: 0.2,
+          max_tokens: 3500
+        })
+      ]);
 
-        parsedCache = parseAIJson(cacheResponse, null);
-        if (parsedCache) {
-          knowledgeCache = {
-            concepts: Array.isArray(parsedCache.concepts) ? parsedCache.concepts : [],
-            definitions: Array.isArray(parsedCache.definitions) ? parsedCache.definitions : [],
-            learningObjectives: Array.isArray(parsedCache.learningObjectives) ? parsedCache.learningObjectives : [],
-            keyFacts: Array.isArray(parsedCache.keyFacts) ? parsedCache.keyFacts : [],
-            importantExamples: Array.isArray(parsedCache.importantExamples) ? parsedCache.importantExamples : [],
-            formulae: Array.isArray(parsedCache.formulae) ? parsedCache.formulae : [],
-            flashcards: Array.isArray(parsedCache.flashcards) ? parsedCache.flashcards : [],
-            questionBank: Array.isArray(parsedCache.questionBank) ? parsedCache.questionBank : [],
-            examTopics: Array.isArray(parsedCache.examTopics) ? parsedCache.examTopics : []
-          };
-        }
-      } catch (cacheErr) {
-        console.error(`[WORKER] Generating Master Knowledge Cache failed for ${documentId}:`, cacheErr.message);
-      }
+      const parsedA = parseAIJson(resA, {});
+      const parsedB = parseAIJson(resB, {});
 
-      // ── Stage 6 ─────────────────────────────────────────────────────────────
+      knowledgeCache = {
+        concepts: Array.isArray(parsedA.concepts) ? parsedA.concepts : [],
+        definitions: Array.isArray(parsedA.definitions) ? parsedA.definitions : [],
+        learningObjectives: Array.isArray(parsedA.learningObjectives) ? parsedA.learningObjectives : [],
+        keyFacts: Array.isArray(parsedA.keyFacts) ? parsedA.keyFacts : [],
+        importantExamples: Array.isArray(parsedA.importantExamples) ? parsedA.importantExamples : [],
+        formulae: Array.isArray(parsedB.formulae) ? parsedB.formulae : [],
+        flashcards: Array.isArray(parsedB.flashcards) ? parsedB.flashcards : [],
+        questionBank: Array.isArray(parsedB.questionBank) ? parsedB.questionBank : [],
+        examTopics: Array.isArray(parsedA.examTopics) ? parsedA.examTopics : []
+      };
+
+      conceptMap = parsedB.conceptMap || null;
+
       await Document.findByIdAndUpdate(documentId, {
-        rawText: extractedText,
-        chunks,
-        chunkEmbeddings,
-        totalChunks: chunks.length,
-        topics,
-        summary,
-        misconceptions: [],
         knowledgeCache,
-        conceptMap: (parsedCache && parsedCache.conceptMap) || null,
-        sessionMemory: {
-          flashcardsShown: [],
-          questionsServed: [],
-          practiceGuidesGenerated: []
-        },
-        processingStatus: 'ready',
-        processingStage: 'ready',
+        conceptMap,
+        knowledgeCacheStatus: 'ready'
       });
 
-      // ── Done ────────────────────────────────────────────────────────────────
-      console.log(`[WORKER] Successfully processed document: ${documentId} | Topics: ${topics.join(', ')}`);
-      return { success: true, chunks: chunks.length, topics };
+      await publishProgress(documentId, 'ready', 'ready_cache');
+      console.log(`[WORKER: CACHE] Completed knowledge cache for document: ${documentId}`);
+      return { success: true };
 
     } catch (error) {
-      console.error(`[WORKER] Error processing document ${documentId}:`, error);
-
-      await Document.findByIdAndUpdate(documentId, {
-        processingStatus: 'failed',
-        processingStage: 'failed',
-        'metadata.lastError': error.message
-      });
-
-      throw error; // Let BullMQ handle retry logic
+      console.error(`[WORKER: CACHE] Master cache generation failed:`, error.message);
+      await Document.findByIdAndUpdate(documentId, { knowledgeCacheStatus: 'failed' });
+      await publishProgress(documentId, 'ready', 'failed_cache');
+      throw error;
     }
   },
   {
     connection: workerConnection,
-    concurrency: 4,
+    concurrency: 2,
   }
 );
 
-documentWorker.on('failed', (job, err) => {
-  console.error(`[WORKER] Job ${job.id} failed permanently: ${err.message}`);
+// Worker failure events reporting
+extractionWorker.on('failed', (job, err) => {
+  console.error(`[WORKER: EXTRACTION] Job ${job?.id} failed permanently: ${err.message}`);
 });
 
-export default documentWorker;
+embeddingWorker.on('failed', (job, err) => {
+  console.error(`[WORKER: EMBEDDINGS] Job ${job?.id} failed permanently: ${err.message}`);
+});
+
+cacheWorker.on('failed', (job, err) => {
+  console.error(`[WORKER: CACHE] Job ${job?.id} failed permanently: ${err.message}`);
+});
+
+export default {
+  extractionWorker,
+  embeddingWorker,
+  cacheWorker,
+};

@@ -24,9 +24,24 @@ const verifyJWT = async (req, res, next) => {
     }
 
     // Security fix: Verify user still exists in DB and pull the name, role and plan for controllers and rate limiters
-    const user = await User.findById(decoded.id).select('_id name role plan');
+    const user = await User.findById(decoded.id).select('_id name role plan lastUploadDate uploadCount dailyGenerationsCount lastGenerationResetDate');
     if (!user) {
       return next(new AppError('User account no longer exists or is inactive', 401));
+    }
+
+    // Check if daily reset is needed
+    const today = new Date().toISOString().split('T')[0];
+    const lastUpload = user.lastUploadDate ? user.lastUploadDate.toISOString().split('T')[0] : null;
+    const lastGen = user.lastGenerationResetDate ? user.lastGenerationResetDate.toISOString().split('T')[0] : null;
+
+    if (lastUpload !== today || lastGen !== today) {
+      user.uploadCount = { pdf: 0, image: 0 };
+      user.dailyGenerationsCount = { flashcards: 0, practice: 0, exam: 0 };
+      user.lastUploadDate = new Date();
+      user.lastGenerationResetDate = new Date();
+      user.markModified('uploadCount');
+      user.markModified('dailyGenerationsCount');
+      await user.save();
     }
 
     req.user = { id: user._id.toString(), name: user.name, role: user.role, plan: user.plan || 'free' };
