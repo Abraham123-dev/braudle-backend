@@ -362,7 +362,7 @@ export const chatSession = asyncHandler(async (req, res) => {
       await StudentProfile.findOneAndUpdate(
         { userId },
         { $push: { savedFlashcards: { $each: parsedCards } } },
-        { new: true, upsert: true }
+        { returnDocument: 'after', upsert: true }
       );
 
       // Save to shown tracking
@@ -533,7 +533,7 @@ export const chatSession = asyncHandler(async (req, res) => {
   const history = (conversation.messages || []).slice(-maxHistoryCount);
 
   // Expensive AI Cache Check — only cache initial "ready" responses, not follow-ups
-  const cacheKey = CACHE_KEYS.TEACH(document._id, session.currentChunkIndex, profile.level);
+  const cacheKey = CACHE_KEYS.TEACH(document._id, session.currentChunkIndex);
   const cachedResponse = await getCached(cacheKey);
 
   // 4. Setup SSE Headers

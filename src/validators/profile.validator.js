@@ -6,22 +6,12 @@ import { z } from 'zod';
 
 export const onboardingSchema = z
   .object({
-    studyLevel: z
-      .string()
-      .trim()
-      .min(1, 'Study level is required')
-      .max(200, 'Study level is too long'),
-    learningStyle: z
-      .string()
-      .trim()
-      .min(1, 'Learning style is required')
-      .max(200, 'Learning style is too long'),
-    goal: z
-      .string()
-      .trim()
-      .min(1, 'Goal is required')
-      .max(200, 'Goal is too long'),
-    level: z.enum(['beginner', 'intermediate', 'advanced']),
+    studyLevel: z.string().trim().max(200).optional(),
+    learningStyle: z.string().trim().max(200).optional(),
+    goal: z.string().trim().max(200).optional(),
+    level: z.enum(['beginner', 'intermediate', 'advanced']).optional(),
+    dailyStudyTarget: z.number().optional(),
+    motivation: z.string().trim().max(200).optional(),
   })
   .strict();
 
@@ -30,5 +20,8 @@ export const updateProfileSchema = z
     level: z.enum(['beginner', 'intermediate', 'advanced']).optional(),
     learningStyle: z.string().trim().min(1).max(200).optional(),
     goal: z.string().trim().min(1).max(200).optional(),
+    studyLevel: z.string().trim().min(1).max(200).optional(),
+    dailyStudyTarget: z.number().optional(),
+    motivation: z.string().trim().min(1).max(200).optional(),
   })
   .strict();

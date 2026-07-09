@@ -6,7 +6,7 @@ import { z } from 'zod';
 export const startSessionSchema = z.object({
   documentId: z.string()
     .regex(/^[0-9a-fA-F]{24}$/, 'Invalid document ID format'),
-  mode: z.enum(['understand', 'review', 'practice', 'prepare', 'ask', 'flashcards'])
+  mode: z.enum(['understand', 'explain_simply', 'review', 'practice', 'prepare', 'ask', 'flashcards'])
     .default('understand'),
 });
 
@@ -23,7 +23,7 @@ export const chatSchema = z.object({
  * Validator for updating session state (accepting mentor suggestions)
  */
 export const updateStateSchema = z.object({
-  mode: z.enum(['understand', 'review', 'practice', 'prepare', 'ask', 'flashcards'])
+  mode: z.enum(['understand', 'explain_simply', 'review', 'practice', 'prepare', 'ask', 'flashcards'])
     .optional(),
   currentChunkIndex: z.number().min(0).optional(),
   mentorSuggestion: z.string().optional(),

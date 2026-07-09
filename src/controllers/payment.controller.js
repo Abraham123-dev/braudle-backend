@@ -22,7 +22,7 @@ const upgradeUserPlan = async (email, reference, planName, amount, eventId = nul
   const updatedUser = await User.findOneAndUpdate(
     { _id: user._id },
     { $set: { plan: planName } },
-    { new: true }
+    { returnDocument: 'after' }
   );
 
   // Log transaction to database as idempotency guard

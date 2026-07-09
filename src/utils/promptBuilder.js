@@ -94,11 +94,10 @@ GOAL:
 The student should feel "This finally makes sense." rather than "The AI gave me an answer."`;
 
   // ── Layer 2: Student Context ──────────────────────────────────────────────
-  const levelInstructions = {
-    beginner:     'ADAPTIVE TEACHING: Continuously estimate student understanding level. If student struggles, reduce complexity. Use simple everyday language. Define technical terms. Analogy-driven teaching.',
-    intermediate: 'ADAPTIVE TEACHING: Continuously estimate student understanding level. Maintain standard academic language with clear concepts.',
-    advanced:     'ADAPTIVE TEACHING: Continuously estimate student understanding level. If student shows understanding, increase depth. Deep conceptual explanations.',
-  }[profile?.level || 'beginner'];
+  const adaptiveTeachingInstructions = `ADAPTIVE TEACHING: Continuously estimate the student's level and learning needs dynamically based on their messages.
+Do NOT stick to a static explanation style. Start by using clear everyday language, real-world analogies, and step-by-step explanations.
+If the student demonstrates a strong grasp or asks advanced questions, dynamically scale up the technical details, depth, and challenge level.
+If the student struggles or shows confusion, simplify technical terms, break down the concept into smaller pieces, and guide discovery.`;
 
   const goalContext = profile?.goal
     ? `The student's learning goal is: "${profile.goal}". Tailor every example and emphasis toward this goal.`
@@ -108,8 +107,8 @@ The student should feel "This finally makes sense." rather than "The AI gave me 
     ? `The student is at the following academic stage: "${profile.studyLevel}". Use examples appropriate for this level.`
     : '';
 
-  const styleContext = profile?.learningStyle
-    ? `The student's preferred learning style is: "${profile.learningStyle}". Honour this preference in how you explain things.`
+  const motivationContext = profile?.motivation
+    ? `The student's motivation and target outcome is: "${profile.motivation}". Adapt your encouragement style, study guides, and lesson pacing to help them achieve this outcome.`
     : '';
 
   const misconceptionsContext = profile?.misconceptionHistory?.length
@@ -123,11 +122,10 @@ The student should feel "This finally makes sense." rather than "The AI gave me 
     : '';
 
   const studentContext = [
-    `Student level: ${profile?.level || 'beginner'}.`,
-    levelInstructions,
+    adaptiveTeachingInstructions,
     goalContext,
     studyLevelContext,
-    styleContext,
+    motivationContext,
     misconceptionsContext,
     strongTopicsNote,
   ].filter(Boolean).join('\n');
@@ -155,6 +153,10 @@ Keep your response conversational, highly engaging, and bite-sized (under 250 wo
 Ensure you are fully grounded in the document context.
 Do NOT output rigid tutorial greetings or ask the student to select study pillars. Introduce and explain the content directly, and conclude by inviting the student to discuss or ask questions.
 YOUTUBE RULE: If this section contains a complex concept that would benefit significantly from a visual explanation (e.g. a process, a diagram-heavy topic, a mechanism), AND you have not suggested a video in the last 3 responses, add a 🎥 YOUTUBE_SEARCH marker at the end of your response in this format: [YOUTUBE_SEARCH: "search query for the concept"]`,
+
+    explain_simply: `MODE — EXPLAIN SIMPLY:
+You are in direct explanation mode. Explain the concepts in the section below step-by-step using extremely plain, simple language and clear everyday analogies.
+Do NOT play a Socratic role (do not answer with questions). Be direct, conversational, and under 250 words total. Help the student understand with maximum clarity, and end by asking if they would like to test their understanding.`,
 
     review: `MODE — REVIEW:
 Help the student quickly revisit the core takeaways from this section. Summarise the 3-5 most important concepts, highlight key terms, formulas, dates, or definitions. Be concise — this is a recap, not a re-teach. End by asking if there is anything they want to go deeper on.`,
@@ -205,6 +207,12 @@ Rules:
   - Use LaTeX: display math $$ ... $$ for key formulas, inline $ ... $ for variables
   - Use \\\\frac{}{}, \\\\sqrt{}, \\\\int, \\\\sum, x^2 etc. Never use ASCII math or Unicode symbols
   - Separate multi-step solutions onto individual lines
+- RICH CALLOUT TEMPLATES (CRITICAL - BREAK UP TEXT):
+  - Periodically package key insights, tips, analogies, and warnings in blockquotes prefixed with these exact markers:
+    * Key Takeaway: "> [!KEY] Takeaway summary..."
+    * Study Tip: "> [!TIP] Memory trick or exam tip..."
+    * Analogy: "> [!ANALOGY] Socratic analogy..."
+    * Warning: "> [!WARNING] Common misconception or warning..."
 - QUESTION SOLVING: When solving questions:
   1. Explain what the question is asking.
   2. Identify key information.
@@ -338,6 +346,9 @@ Keep the entire interaction friendly and supportive.`;
  * Builds the prompt for quiz generation (formal, saved to DB, appears on dashboard).
  * This is for the /api/quiz endpoint — not the inline chat practice.
  *
+ * Chunks are passed as numbered sections so the LLM can cite the sourceSection
+ * index (1-based) of each question for provenance tracking.
+ *
  * @param {string[]} chunks - Array of document chunk strings.
  * @param {Object} profile - The StudentProfile document from MongoDB.
  * @param {number} count - Number of questions to generate (default 5).
@@ -346,69 +357,82 @@ Keep the entire interaction friendly and supportive.`;
  */
 const buildQuizPrompt = (chunks, profile, count = 5, documentTopics = []) => {
   const levelNote = profile?.level === 'advanced'
-    ? 'Questions should be challenging and require deep understanding.'
+    ? 'STUDENT LEVEL: Advanced. Questions MUST require multi-step reasoning, synthesis of multiple concepts, or critique of arguments. Avoid surface-level recall.'
     : profile?.level === 'intermediate'
-    ? 'Questions should require application of knowledge, not just recall.'
-    : 'Questions should test basic understanding using simple, clear language.';
+    ? 'STUDENT LEVEL: Intermediate. Questions MUST require application of knowledge, not just recall. Include scenario or formula-application questions.'
+    : 'STUDENT LEVEL: Beginner. Questions MUST test basic understanding using clear language. Focus on definitions, examples, and single-step reasoning.';
 
   const topicsNote = documentTopics.length > 0
     ? `STRICT REQUIREMENT: Map each question to exactly one topic from this list: [${documentTopics.join(', ')}]. Do not create new topics.`
-    : 'Assign a specific topic name (1-3 words) to each question based on its content.';
+    : 'Assign a specific topic name (1-3 words) to each question based on the section it came from.';
 
-    const sample = sampleDocumentChunks(chunks, 15);
-  return `You are a professional exam question writer for students.
-Generate exactly ${count} questions based ONLY on the content provided below.
+  const sample = sampleDocumentChunks(chunks, 15);
+  const numberedSections = sample.map((s, i) => `[SECTION ${i + 1}]\n${s}`).join('\n\n---\n\n');
 
-QUIZZES REQUIREMENTS:
-- Questions should test understanding, not test memorization.
-- Increase difficulty gradually.
-- In the "explanation" field for each generated question, you MUST explain why the answer is correct or incorrect.
+  return `You are a professional exam question writer creating a quiz for a student using their uploaded study material.
+Generate exactly ${count} questions based ONLY on the numbered content sections provided below.
+
+CORE REQUIREMENTS:
+- Questions MUST test deep understanding, not surface memorization.
+- Each question must be clearly anchored in the provided sections — do not invent facts.
+- Gradually increase difficulty from question 1 to question ${count}.
+- The "explanation" field MUST explain both WHY the correct answer is right AND why common wrong answers are wrong.
 
 COGNITIVE LEVEL DISTRIBUTION (BLOOM'S TAXONOMY):
-- 30% Remembering & Understanding (factual recall, definitions).
-- 40% Applying & Analyzing (applying formulas, comparing two concepts).
-- 30% Evaluating & Creating (critiquing arguments, predicting outcomes).
+- 30% Remembering & Understanding: factual recall, definitions, identifying correct descriptions.
+- 40% Applying & Analyzing: applying formulas, comparing concepts, identifying cause-and-effect.
+- 30% Evaluating & Creating: critiquing arguments, predicting outcomes, synthesising across sections.
 
 Mix question types: 60% MCQ, 40% short theory.
 ${levelNote}
 
 QUESTION CONSTRAINTS:
-- For MCQ (multiple choice) questions, generate exactly 4 options.
-- DISTRACTOR QUALITY: The 3 incorrect options must represent plausible misconceptions, calculation errors, or common logical fallacies. Do not use silly or obviously wrong options.
-- All options must be structurally similar and comparable in length.
+- For MCQ, generate exactly 4 options.
+- DISTRACTOR QUALITY (CRITICAL): Each of the 3 wrong options MUST represent a REAL, PLAUSIBLE misconception that a student who only skimmed the material would believe. Think: "What wrong conclusion would a confused student reach?" Examples of good distractors:
+  * Reversing cause and effect
+  * Off-by-one calculation errors
+  * Confusing two similar terms from the same section
+  * Applying the right formula in the wrong context
+  DO NOT use obviously absurd or unrelated options.
+- All MCQ options must be similar in length and grammatical structure.
 
-Each question MUST include these fields: topic, question, type (mcq/true_false/theory), options (only for mcq), answer, explanation.
+SOURCE SECTION REQUIREMENT:
+- For each question, you MUST include a "sourceSection" field: a 1-based integer indicating which [SECTION N] above was the primary source of that question.
+- This allows the student to trace exactly where in their uploaded document the question came from.
+
+Each question MUST include: topic, question, type (mcq/true_false/theory), options (only for mcq), answer, explanation, sourceSection.
 ${topicsNote}
 
 MATHEMATICAL FORMULAS REQUIREMENT:
-When displaying mathematical expressions, you MUST follow these guidelines:
 - Use LaTeX: display math $$ ... $$ for key formulas, inline $ ... $ for variables
-- Use \\\\frac{}{}, \\\\sqrt{}, \\\\int, \\\\sum, x^2 etc. Never use ASCII math or Unicode symbols
+- Use \\\\frac{}{}, \\\\sqrt{}, \\\\int, \\\\sum, x^2 etc. Never ASCII math or Unicode symbols
 - Separate multi-step solutions onto individual lines
 
-Return ONLY a valid JSON array containing the questions. Do NOT wrap it in markdown code fences, do not write "Here is your JSON", do not write any preambles or explanations.
+Return ONLY a valid JSON array. NO markdown fences. NO preamble. NO trailing text.
 
 JSON SCHEMA EXAMPLE:
 [
   {
     "topic": "Topic Name",
+    "sourceSection": 2,
     "question": "The question text here...",
     "type": "mcq",
-    "options": ["Option A", "Option B", "Option C", "Option D"],
-    "answer": "Option A",
-    "explanation": "Detailed explanation of why this answer is correct or incorrect."
+    "options": ["Plausible wrong answer A", "Plausible wrong answer B", "Correct answer C", "Plausible wrong answer D"],
+    "answer": "Correct answer C",
+    "explanation": "C is correct because... A is wrong because it confuses X with Y... B is wrong because it reverses the cause and effect..."
   },
   {
     "topic": "Topic Name",
+    "sourceSection": 5,
     "question": "The question text here...",
     "type": "theory",
     "answer": "Expected model answer description...",
-    "explanation": "Detailed explanation of key concepts tested and why the answer is correct/incorrect."
+    "explanation": "Detailed explanation of key concepts tested and what makes a complete answer."
   }
 ]
 
-CONTENT TO USE:
-${sample.join('\n\n---\n\n')}`;
+NUMBERED CONTENT SECTIONS:
+${numberedSections}`;
 };
 
 /**
@@ -480,50 +504,63 @@ ${transcript}`;
 
 /**
  * Builds the prompt for custom practice quizzes or exams.
+ *
+ * Chunks are indexed as numbered sections so the LLM can cite sourceSection
+ * per question, enabling the student to trace back to their uploaded material.
  */
 const buildCustomAssessmentPrompt = (chunks, options) => {
   const { format, difficulty, numQuestions, instructions, documentTopics = [] } = options;
 
-  let difficultyNote = '';
-  switch(difficulty) {
-    case 'easy':   difficultyNote = 'Focus on basic recall and definitions. Simple vocabulary.'; break;
-    case 'medium': difficultyNote = 'Test comprehension and basic application. Standard difficulty.'; break;
-    case 'hard':   difficultyNote = 'Test analysis and deep understanding. Require connecting concepts.'; break;
-    case 'expert': difficultyNote = 'Rigorous, exam-level difficulty. Test evaluation and synthesis of complex ideas.'; break;
-    default:       difficultyNote = 'Standard difficulty.';
-  }
+  // Difficulty-calibrated Bloom's taxonomy cognitive level ratios
+  const difficultyBloomsMap = {
+    easy:   'BLOOM\'S DISTRIBUTION FOR EASY: 60% Remembering & Understanding (recall, definitions, matching). 30% Applying (direct formula use, simple examples). 10% Analyzing (compare two related concepts).',
+    medium: 'BLOOM\'S DISTRIBUTION FOR MEDIUM: 20% Remembering & Understanding. 50% Applying & Analyzing (scenario questions, multi-step problems, cause-and-effect). 30% Evaluating (explain why, critique a statement, predict an outcome).',
+    hard:   'BLOOM\'S DISTRIBUTION FOR HARD: 10% Remembering. 30% Applying & Analyzing. 60% Evaluating & Creating (cross-concept synthesis, error identification, designing solutions, multi-variable reasoning).',
+    expert: 'BLOOM\'S DISTRIBUTION FOR EXPERT: 0% Remembering. 20% Applying. 80% Evaluating & Creating. Questions must require critiquing arguments, resolving contradictions between concepts, and performing multi-step analysis under assumptions.',
+  };
+
+  const difficultyInstructionMap = {
+    easy:   'Use clear simple language. Test basic recall and single-concept identification. Avoid complex scenarios.',
+    medium: 'Test comprehension and application. Include scenario-based questions requiring students to apply learned concepts to new situations.',
+    hard:   'Test deep analysis. Require connecting two or more concepts. Include questions where students must identify flaws in reasoning, apply formulas in context, or compare/contrast mechanisms.',
+    expert: 'Rigorous exam-level difficulty. Require synthesis, critique, and advanced reasoning. Questions should challenge students who memorised the material but lack deep understanding.',
+  };
+
+  const bloomsNote = difficultyBloomsMap[difficulty] || difficultyBloomsMap.medium;
+  const difficultyNote = difficultyInstructionMap[difficulty] || difficultyInstructionMap.medium;
 
   let formatNote = '';
-  if (format === 'objective')  formatNote = 'ALL questions MUST be multiple choice (mcq) or true_false.';
-  else if (format === 'subjective') formatNote = 'ALL questions MUST be short answer theory (theory).';
-  else if (format === 'theory') formatNote = 'ALL questions MUST be long-form conceptual essays (theory) with detailed answers expected.';
-  else if (format === 'story-based') formatNote = 'ALL questions MUST be story-based or case study scenario questions. Each question must present a brief real-world scenario or story (3-5 sentences) and then test the student\'s understanding of key concepts in that scenario. Make the questions tricky to test the student\'s level of thinking and deep reasoning.';
-  else formatNote = 'Mix question types: 60% MCQ, 40% short theory.';
+  if (format === 'objective')    formatNote = 'ALL questions MUST be multiple choice (mcq) or true_false. No theory questions.';
+  else if (format === 'subjective') formatNote = 'ALL questions MUST be short answer theory (theory). No MCQ questions.';
+  else if (format === 'theory')  formatNote = 'ALL questions MUST be long-form conceptual theory (theory). Expect detailed written answers from students.';
+  else if (format === 'story-based') formatNote = 'ALL questions MUST be story-based or case study scenario questions. Each question MUST open with a 3-5 sentence real-world narrative or scenario, then pose a question that requires applying learned concepts to that specific scenario. Make the scenario tricky — the answer should require careful reasoning, not surface recall.';
+  else formatNote = 'Mix question types: 60% MCQ, 40% short theory. Distribute thoughtfully — theory questions should test concepts that need written explanation, MCQ should cover application and recall.';
 
   const topicsNote = documentTopics.length > 0
-    ? `Map each question to one of these topics: ${documentTopics.join(', ')}.`
-    : 'Assign a specific topic name (1-3 words) to each question based on its content.';
+    ? `STRICT REQUIREMENT: Map each question to exactly one topic from this list: [${documentTopics.join(', ')}]. Do not create new topics.`
+    : 'Assign a specific topic name (1-3 words) to each question based on the section it came from.';
 
   const customInstructionsNote = instructions
-    ? `ADDITIONAL STUDENT CUSTOM FOCUS / INSTRUCTIONS:
+    ? `STUDENT CUSTOM FOCUS / INSTRUCTIONS (HIGHEST PRIORITY):
 "${instructions}"
-Strictly ensure that the questions generated align with this custom focus.`
+Strictly ensure that questions align with this focus. If the focus narrows scope, only generate questions within that scope.`
     : '';
 
-    const sample = sampleDocumentChunks(chunks, 15);
-  return `You are an expert exam setter.
-Generate exactly ${numQuestions} questions based ONLY on the content provided below.
+  const sample = sampleDocumentChunks(chunks, 15);
+  const numberedSections = sample.map((s, i) => `[SECTION ${i + 1}]\n${s}`).join('\n\n---\n\n');
 
-QUIZZES REQUIREMENTS:
-- Questions should test understanding, not test memorization.
-- Increase difficulty gradually.
-- In the "explanation" field for each generated question, you MUST explain why the answer is correct or incorrect.
+  return `You are an expert academic exam setter creating a ${difficulty.toUpperCase()}-level assessment for a student using their own uploaded study material.
+Generate exactly ${numQuestions} questions based ONLY on the numbered content sections provided below.
 
-COGNITIVE LEVEL DISTRIBUTION (BLOOM'S TAXONOMY):
-- 30% Remembering & Understanding (factual recall, definitions).
-- 40% Applying & Analyzing (applying formulas, comparing two concepts).
-- 30% Evaluating & Creating (critiquing arguments, predicting outcomes).
+CORE REQUIREMENTS:
+- Questions MUST test genuine understanding, NOT surface memorisation.
+- Every question must be directly anchored in the provided sections. Do not invent facts.
+- Increase difficulty gradually from question 1 to question ${numQuestions}.
+- The "explanation" field MUST explain why the correct answer is right AND identify what misconception each wrong option targets.
 
+${bloomsNote}
+
+DIFFICULTY CALIBRATION:
 DIFFICULTY LEVEL: ${difficulty.toUpperCase()}
 ${difficultyNote}
 
@@ -532,43 +569,50 @@ ${formatNote}
 
 ${customInstructionsNote}
 
-QUESTION CONSTRAINTS:
-- For MCQ (multiple choice) questions, generate exactly 4 options.
-- DISTRACTOR QUALITY: The 3 incorrect options must represent plausible misconceptions, calculation errors, or common logical fallacies. Do not use silly or obviously wrong options.
-- All options must be structurally similar and comparable in length.
+DISTRACTOR QUALITY (CRITICAL FOR MCQ):
+The 3 wrong options must each represent a SPECIFIC, PLAUSIBLE misconception or error a real student would make. Think carefully:
+  * What wrong conclusion would someone who skimmed this section reach?
+  * What calculation error is common in this topic?
+  * What two terms in this section are easily confused?
+  * What happens if you apply the right rule to the wrong context?
+DO NOT use obviously absurd or unrelated options. All options must be similar in length and grammatical form.
 
-Each question MUST include these fields: topic, question, type (mcq/true_false/theory), options (only for mcq), answer, explanation.
+SOURCE SECTION REQUIREMENT:
+For each question, include a "sourceSection" field: a 1-based integer indicating which [SECTION N] was the primary source. This helps students trace their question back to their uploaded material.
+
+Each question MUST include: topic, sourceSection, question, type (mcq/true_false/theory), options (only for mcq), answer, explanation.
 ${topicsNote}
 
-MATHEMATICAL FORMULAS REQUIREMENT:
-When displaying mathematical expressions, you MUST follow these guidelines:
-- Use LaTeX: display math $$ ... $$ for key formulas, inline $ ... $ for variables
-- Use \\\\frac{}{}, \\\\sqrt{}, \\\\int, \\\\sum, x^2 etc. Never use ASCII math or Unicode symbols
-- Separate multi-step solutions onto individual lines
+MATHEMATICAL FORMULAS:
+- Display math: $$ ... $$ | Inline math: $ ... $
+- Use \\\\frac{}{}, \\\\sqrt{}, \\\\int, \\\\sum, x^2 — never ASCII math or Unicode
+- Multi-step solutions: one step per line
 
-Return ONLY a valid JSON array containing the questions. Do NOT wrap it in markdown code fences, do not write "Here is your JSON", do not write any preambles or explanations.
+Return ONLY a valid JSON array. NO markdown fences. NO preamble. NO trailing text.
 
 JSON SCHEMA EXAMPLE:
 [
   {
     "topic": "Topic Name",
+    "sourceSection": 3,
     "question": "The question text here...",
     "type": "mcq",
-    "options": ["Option A", "Option B", "Option C", "Option D"],
-    "answer": "Option A",
-    "explanation": "Detailed explanation of why this answer is correct."
+    "options": ["Plausible wrong A", "Correct answer B", "Plausible wrong C", "Plausible wrong D"],
+    "answer": "Correct answer B",
+    "explanation": "B is correct because... A is wrong because it confuses X with Y... C misapplies the formula in context Z..."
   },
   {
     "topic": "Topic Name",
+    "sourceSection": 7,
     "question": "The question text here...",
     "type": "theory",
-    "answer": "Expected model answer description...",
-    "explanation": "Detailed explanation of key concepts tested."
+    "answer": "Expected model answer...",
+    "explanation": "A complete answer should cover A, B, and C. Common mistakes include confusing D with E."
   }
 ]
 
-CONTENT TO USE:
-${sample.join('\n\n---\n\n')}`;
+NUMBERED CONTENT SECTIONS:
+${numberedSections}`;
 };
 
 /**

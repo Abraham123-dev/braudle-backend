@@ -312,7 +312,10 @@ export const generateQuiz = asyncHandler(async (req, res) => {
  * Generate a custom practice assessment (exam/quiz)
  */
 export const generateCustomAssessment = asyncHandler(async (req, res) => {
-  const { documentId, sessionId, format, difficulty, numQuestions, isExam, instructions } = req.body;
+  const { 
+    documentId, sessionId, format, difficulty, numQuestions, isExam, instructions,
+    timeLimit, revealStyle
+  } = req.body;
   const userId = req.user.id;
 
   const document = await Document.findOne({ _id: documentId, userId });
@@ -350,12 +353,12 @@ export const generateCustomAssessment = asyncHandler(async (req, res) => {
     const limitType = isExam ? 'exam' : 'practice';
     await checkAndRecordGenLimit(user, document, limitType);
 
-    // We can only use the cached question bank if:
-    // 1. There are no custom instructions.
-    // 2. We are generating a standard practice quiz (not exam mode).
-    // 3. The requested format is mixed or standard objective/theory that matches cache availability.
+    // Only use the cached question bank for standard, generic quiz requests.
+    // If the student chose a custom difficulty, custom instructions, or exam mode,
+    // we ALWAYS go to the LLM to generate a fresh, calibrated assessment.
+    const isDefaultDifficulty = !difficulty || difficulty === 'medium';
     const isStandardFormat = format === 'mixed' || format === 'objective' || format === 'theory' || format === 'subjective';
-    const canUseCache = !instructions && !isExam && isStandardFormat;
+    const canUseCache = !instructions && !isExam && isStandardFormat && isDefaultDifficulty;
 
     if (canUseCache) {
       const cachedQuestions = assembleQuizFromCache(document, numQuestions || 10, !!isExam, format || 'mixed');
@@ -372,6 +375,9 @@ export const generateCustomAssessment = asyncHandler(async (req, res) => {
           isExam: !!isExam,
           questions: questionsWithIds,
           totalQuestions: questionsWithIds.length,
+          timeLimit: Number(timeLimit) || 0,
+          revealStyle: revealStyle || 'instant',
+          difficulty: difficulty || 'medium',
         });
 
         await document.save();
@@ -404,6 +410,9 @@ export const generateCustomAssessment = asyncHandler(async (req, res) => {
       isExam: !!isExam,
       questions: normalizedQuestions,
       totalQuestions: normalizedQuestions.length,
+      timeLimit: Number(timeLimit) || 0,
+      revealStyle: revealStyle || 'instant',
+      difficulty: difficulty || 'medium',
     });
 
     return res.status(201).json({
@@ -536,11 +545,24 @@ export const submitQuiz = asyncHandler(async (req, res) => {
   // Invalidate performance cache so the dashboard reflects the new score immediately
   await deleteCached(CACHE_KEYS.DASHBOARD_PERF(userId));
 
+  // Compute weakTopics: topics where the student answered < 75% correctly
+  const topicStats = {};
+  quiz.questions.forEach(q => {
+    const topic = q.topic || 'General';
+    if (!topicStats[topic]) topicStats[topic] = { correct: 0, total: 0, sourceSection: q.sourceSection };
+    topicStats[topic].total++;
+    if (q.isCorrect) topicStats[topic].correct++;
+  });
+  const weakTopics = Object.entries(topicStats)
+    .filter(([, s]) => s.total > 0 && (s.correct / s.total) < 0.75)
+    .map(([topic, s]) => ({ topic, accuracy: Math.round((s.correct / s.total) * 100), sourceSection: s.sourceSection }));
+
   res.status(200).json({
     status: 'success',
     score: quiz.score,
     quiz,
-    newLevel
+    newLevel,
+    weakTopics
   });
 });
 
@@ -599,6 +621,19 @@ export const gradeQuestion = asyncHandler(async (req, res) => {
 
   await quiz.save();
 
+  // Compute live weakTopics for instant-reveal mode feedback
+  const topicStats = {};
+  quiz.questions.forEach(q => {
+    if (!q.studentAnswer || !q.studentAnswer.trim()) return;
+    const topic = q.topic || 'General';
+    if (!topicStats[topic]) topicStats[topic] = { correct: 0, total: 0, sourceSection: q.sourceSection };
+    topicStats[topic].total++;
+    if (q.isCorrect) topicStats[topic].correct++;
+  });
+  const weakTopics = Object.entries(topicStats)
+    .filter(([, s]) => s.total > 0 && (s.correct / s.total) < 0.75)
+    .map(([topic, s]) => ({ topic, accuracy: Math.round((s.correct / s.total) * 100), sourceSection: s.sourceSection }));
+
   res.status(200).json({
     status: 'success',
     isCorrect,
@@ -606,7 +641,8 @@ export const gradeQuestion = asyncHandler(async (req, res) => {
     feedback,
     explanation: question.explanation || '',
     quizScore: quiz.score,
-    newLevel
+    newLevel,
+    weakTopics
   });
 });
 

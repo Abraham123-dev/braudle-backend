@@ -96,7 +96,7 @@ export const getOrSet = async (key, fetchFn, ttl = 86400) => {
 };
 
 export const CACHE_KEYS = {
-  TEACH:                (docId, chunkIdx, level) => `v1:teach:${docId}:${chunkIdx}:${level}`,
+  TEACH:                (docId, chunkIdx) => `v1:teach:${docId}:${chunkIdx}`,
   QUIZ:                 (documentId) => `v1:quiz:${documentId}`,
   QUIZ_GENERATED:       (sessionId, level, count) => `v1:quiz:${sessionId}:${level}:${count}`,
   QUIZ_CUSTOM:          (sessionId, difficulty, format, numQuestions) => `v1:custom_quiz:${sessionId}:${difficulty}:${format}:${numQuestions}`,

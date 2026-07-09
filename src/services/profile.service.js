@@ -151,7 +151,7 @@ export const updateProfileAfterQuiz = async (userId, score, questions = []) => {
           strongTopics: profile.strongTopics
         }
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (updatedProfile) {
@@ -219,7 +219,7 @@ export const updateProfileAfterSessionAnalysis = async (userId, { weakTopics = [
           misconceptionHistory: profile.misconceptionHistory
         }
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (updatedProfile) {
@@ -287,7 +287,7 @@ export const recordStudyActivity = async (userId) => {
           longestStreak: profile.longestStreak
         }
       },
-      { new: true }
+      { returnDocument: 'after' }
     );
 
     if (updatedProfile) {

@@ -46,6 +46,16 @@ const studentProfileSchema = new Schema(
       default: 'pass_exams',
       maxlength: [256, 'Goal is too long'],
     },
+    dailyStudyTarget: {
+      type: Number,
+      default: 15,
+    },
+    motivation: {
+      type: String,
+      trim: true,
+      default: 'deep_understanding',
+      maxlength: [256, 'Motivation is too long'],
+    },
     weakTopics: { type: [String], default: [] },
     strongTopics: { type: [String], default: [] },
     // Tracks last 5 quiz scores for adaptive level-up calculation.

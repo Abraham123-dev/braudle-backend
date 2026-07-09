@@ -173,6 +173,8 @@ const documentWorker = new Worker(
         examTopics: []
       };
 
+      let parsedCache = null;
+
       try {
         console.log(`[WORKER] Generating Master Knowledge Cache for document ${documentId}...`);
         const cachePrompt = buildMasterKnowledgeCachePrompt(chunks);
@@ -183,7 +185,7 @@ const documentWorker = new Worker(
           max_tokens: 4096
         });
 
-        const parsedCache = parseAIJson(cacheResponse, null);
+        parsedCache = parseAIJson(cacheResponse, null);
         if (parsedCache) {
           knowledgeCache = {
             concepts: Array.isArray(parsedCache.concepts) ? parsedCache.concepts : [],

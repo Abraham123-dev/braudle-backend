@@ -9,7 +9,8 @@ const questionSchema = new mongoose.Schema({
   explanation: { type: String },
   studentAnswer: { type: String, default: '' },
   isCorrect: { type: Boolean, default: false },
-  feedback: { type: String, default: '' }
+  feedback: { type: String, default: '' },
+  sourceSection: { type: Number }
 });
 
 const quizSchema = new mongoose.Schema(
@@ -29,6 +30,10 @@ const quizSchema = new mongoose.Schema(
     totalQuestions: { type: Number, required: true },
     score: { type: Number },
     submittedAt: { type: Date },
+    timeLimit: { type: Number, default: 0 },
+    timeSpent: { type: Number, default: 0 },
+    revealStyle: { type: String, enum: ['instant', 'end'], default: 'instant' },
+    difficulty: { type: String, enum: ['easy', 'medium', 'hard', 'expert'], default: 'medium' },
   },
   { timestamps: true }
 );
