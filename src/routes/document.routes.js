@@ -25,6 +25,7 @@ import {
   abortMultipart,
   getDocumentConceptMap,
   getDocumentProgressStream,
+  generateConceptFlashcards,
 } from '../controllers/document.controller.js';
 
 const router = Router();
@@ -48,6 +49,7 @@ router.get('/:id', verifyJWT, getDocument);
 router.get('/:id/status', verifyJWT, getDocumentStatus);
 router.get('/:id/progress', verifyJWT, getDocumentProgressStream);
 router.get('/:id/concept-map', verifyJWT, getDocumentConceptMap);
+router.post('/:id/concept-flashcards', verifyJWT, generateConceptFlashcards);
 router.delete('/:id', verifyJWT, deleteDocument);
 
 export default router;

@@ -355,22 +355,46 @@ Keep the entire interaction friendly and supportive.`;
  * @param {string[]} documentTopics - Available topics for strict topic-mapping.
  * @returns {string} Full quiz generation prompt.
  */
-const buildQuizPrompt = (chunks, profile, count = 5, documentTopics = []) => {
+const buildQuizPrompt = (chunks, profile, count = 5, documentTopics = [], conceptFocus = '', learningObjectives = [], definitions = []) => {
   const levelNote = profile?.level === 'advanced'
-    ? 'STUDENT LEVEL: Advanced. Questions MUST require multi-step reasoning, synthesis of multiple concepts, or critique of arguments. Avoid surface-level recall.'
+    ? `STUDENT LEVEL: Advanced (EXPERT / RIGOROUS EXAM DIFFICULTY).
+- ABSOLUTELY NO BASIC RECALL: Questions must NOT ask "What is...", "Define...", "State...", "List...", or "Which of the following defines...". Stems like "What is X?" are strictly forbidden.
+- HARVARD/MIT EXAM STYLE: Formulate questions as challenging hypothetical scenarios, technical problem-solving tasks, or case studies based on the specific details in the text. The student must analyze the context and apply the concepts to solve it.
+- REASONING LEVEL: Focus on multi-step reasoning, synthesis of multiple concepts, and evaluation of evidence.
+- NO TRIVIAL DISTRACTORS: For MCQs, wrong options must be highly plausible. One distractor must be "correct under different assumptions," another must represent a "common misconception," and another a "subtle logical error." They must look extremely realistic and require deep thinking to eliminate.
+- SPECIFICITY: The questions must be deeply rooted in the details of the provided text. A general AI with general knowledge should not be able to answer them without reading this specific document.
+- AVOID GENERIC QUESTIONS: Do not write simple questions that could apply to any general document. The questions must depend on the specific data, case studies, formulas, or details present in the provided sections.`
     : profile?.level === 'intermediate'
-    ? 'STUDENT LEVEL: Intermediate. Questions MUST require application of knowledge, not just recall. Include scenario or formula-application questions.'
+    ? `STUDENT LEVEL: Intermediate. Questions MUST require application of knowledge, not just recall. Include scenario or formula-application questions. Stems like "What is X?" should be minimized in favor of situational application.`
     : 'STUDENT LEVEL: Beginner. Questions MUST test basic understanding using clear language. Focus on definitions, examples, and single-step reasoning.';
 
   const topicsNote = documentTopics.length > 0
     ? `STRICT REQUIREMENT: Map each question to exactly one topic from this list: [${documentTopics.join(', ')}]. Do not create new topics.`
     : 'Assign a specific topic name (1-3 words) to each question based on the section it came from.';
 
+  const conceptLockNote = conceptFocus
+    ? `⚡ CONCEPT LOCK: ALL questions MUST be exclusively about "${conceptFocus}". Do not include questions from any other concept or chapter.`
+    : '';
+
+  const objectivesNote = Array.isArray(learningObjectives) && learningObjectives.length > 0
+    ? `🎯 TARGET LEARNING OBJECTIVES:\n- ${learningObjectives.slice(0, 8).join('\n- ')}\nEnsure questions directly test these learning objectives.`
+    : '';
+
+  const definitionsNote = Array.isArray(definitions) && definitions.length > 0
+    ? `📖 KEY DEFINITIONS & TERMINOLOGY:\n- ${definitions.slice(0, 10).map(d => `${d.term || d.concept || d.name}: ${d.definition || d.explanation}`).join('\n- ')}\nIncorporate this precise terminology where appropriate.`
+    : '';
+
   const sample = sampleDocumentChunks(chunks, 15);
   const numberedSections = sample.map((s, i) => `[SECTION ${i + 1}]\n${s}`).join('\n\n---\n\n');
 
   return `You are a professional exam question writer creating a quiz for a student using their uploaded study material.
 Generate exactly ${count} questions based ONLY on the numbered content sections provided below.
+
+${objectivesNote}
+
+${definitionsNote}
+
+${conceptLockNote}
 
 CORE REQUIREMENTS:
 - Questions MUST test deep understanding, not surface memorization.
@@ -509,7 +533,19 @@ ${transcript}`;
  * per question, enabling the student to trace back to their uploaded material.
  */
 const buildCustomAssessmentPrompt = (chunks, options) => {
-  const { format, difficulty, numQuestions, instructions, documentTopics = [] } = options;
+  const { format, difficulty, numQuestions, instructions, documentTopics = [], conceptFocus = '', learningObjectives = [], definitions = [] } = options;
+
+  const objectivesNote = Array.isArray(learningObjectives) && learningObjectives.length > 0
+    ? `🎯 TARGET LEARNING OBJECTIVES:\n- ${learningObjectives.slice(0, 8).join('\n- ')}\nEnsure questions directly test these learning objectives.`
+    : '';
+
+  const definitionsNote = Array.isArray(definitions) && definitions.length > 0
+    ? `📖 KEY DEFINITIONS & TERMINOLOGY:\n- ${definitions.slice(0, 10).map(d => `${d.term || d.concept || d.name}: ${d.definition || d.explanation}`).join('\n- ')}\nIncorporate this precise terminology where appropriate.`
+    : '';
+
+  const conceptLockNote = conceptFocus
+    ? `⚡ CONCEPT LOCK: ALL questions MUST be exclusively about "${conceptFocus}". Do not include questions from any other concept or chapter.`
+    : '';
 
   // Difficulty-calibrated Bloom's taxonomy cognitive level ratios
   const difficultyBloomsMap = {
@@ -551,6 +587,12 @@ Strictly ensure that questions align with this focus. If the focus narrows scope
 
   return `You are an expert academic exam setter creating a ${difficulty.toUpperCase()}-level assessment for a student using their own uploaded study material.
 Generate exactly ${numQuestions} questions based ONLY on the numbered content sections provided below.
+
+${objectivesNote}
+
+${definitionsNote}
+
+${conceptLockNote}
 
 CORE REQUIREMENTS:
 - Questions MUST test genuine understanding, NOT surface memorisation.
@@ -814,6 +856,84 @@ DOCUMENT CONTENT (sampled):
 ${sample}`;
 }
 
+/**
+ * Builds the prompt for generating concept-focused flashcards.
+ *
+ * @param {string[]} chunks - The source document chunks.
+ * @param {string} conceptName - The concept to focus on.
+ * @param {number} count - The number of flashcards to generate.
+ * @returns {string} Concept flashcards prompt.
+ */
+const buildConceptFlashcardsPrompt = (chunks, conceptName, count = 10) => {
+  const sample = sampleDocumentChunks(chunks, 15);
+  const numberedSections = sample.map((s, i) => `[SECTION ${i + 1}]\n${s}`).join('\n\n---\n\n');
+
+  return `You are a professional educational content designer.
+Your task is to analyze the provided document content and generate exactly ${count} high-quality study flashcards focusing exclusively on the concept/topic: "${conceptName}".
+
+For each flashcard, define:
+- topic: The name of the concept or subtopic (use "${conceptName}" or a closely related subtopic from the text).
+- front: A clear, high-quality question, term, or prompt.
+- back: The corresponding answer, explanation, or definition.
+
+Return ONLY a valid JSON array of objects. No markdown, no preamble, no trailing explanation.
+Schema:
+[
+  {
+    "topic": "${conceptName}",
+    "front": "Question or term...",
+    "back": "Answer or definition..."
+  }
+]
+
+DOCUMENT CONTENT (sampled):
+${numberedSections}`;
+};
+
+/**
+ * Builds the prompt for the Critic agent to review and refine drafted quiz questions.
+ *
+ * @param {Object[]} questions - The draft questions JSON.
+ * @param {string[]} chunks - The source document chunks.
+ * @param {string} difficulty - The requested difficulty level (easy, medium, hard, expert).
+ * @returns {string} Critic prompt.
+ */
+const buildCriticPrompt = (questions, chunks, difficulty = 'medium') => {
+  const sample = sampleDocumentChunks(chunks, 15);
+  const numberedSections = sample.map((s, i) => `[SECTION ${i + 1}]\n${s}`).join('\n\n---\n\n');
+
+  return `You are a Senior Academic Evaluator and Quality Controller at a top-tier university.
+Your task is to review and refine a draft set of quiz questions generated from the student's study material.
+
+DRAFT QUESTIONS (IN JSON FORMAT):
+${JSON.stringify(questions, null, 2)}
+
+SOURCE STUDY MATERIAL SECTIONS:
+${numberedSections}
+
+DIFFICULTY LEVEL: ${difficulty.toUpperCase()}
+
+YOUR QUALITY ASSESSMENT INSTRUCTIONS:
+1. ELIMINATE BASIC RECALL (FOR HARD/EXPERT): Verify that no question asks for simple factual recall or definitions (e.g. "What is...", "Define X"). If a question is too generic or simple, you MUST rewrite it into a challenging, scenario-based or problem-solving application question.
+2. DISTRACTOR EXCELLENCE: Examine the multiple-choice options (options). Absurd or obviously wrong distractors are unacceptable. Rewrite distractors so they represent highly plausible misconceptions (e.g. calculation errors, reversed cause-and-effect, or confusion between closely related terms from the text).
+3. FACTUAL ALIGNMENT: Ensure all questions, correct answers, and distractors are 100% accurate to the provided source sections. Do not let the generator invent facts.
+4. EXPLANATION CLARITY: Ensure the "explanation" field clearly states why the correct answer is correct AND identifies the specific student error/misconception each wrong option targets.
+5. FORMAT COMPLIANCE: Do not change the JSON structure. Maintain the exact key format:
+   [
+     {
+       "topic": "Topic Name",
+       "sourceSection": 1-based integer,
+       "question": "Question text...",
+       "type": "mcq" | "true_false" | "theory",
+       "options": ["A", "B", "C", "D"], // only for mcq
+       "answer": "Correct Answer",
+       "explanation": "Explanation..."
+     }
+   ]
+
+Return ONLY the final, polished, highly-calibrated JSON array of questions. NO markdown fences. NO preamble. NO trailing explanation text.`;
+};
+
 export {
   buildTeachPrompt,
   buildInlinePracticePrompt,
@@ -825,4 +945,6 @@ export {
   buildMasterKnowledgeCachePrompt,
   buildKnowledgeCachePromptA,
   buildKnowledgeCachePromptB,
+  buildConceptFlashcardsPrompt,
+  buildCriticPrompt,
 };

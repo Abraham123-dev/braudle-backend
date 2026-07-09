@@ -76,7 +76,7 @@ const advancedProfile = { level: 'advanced' };
 const advancedPrompt = buildQuizPrompt(fakeChunks, advancedProfile, 3, []);
 assert(
   'Advanced profile produces challenging question instruction',
-  advancedPrompt.includes('challenging and require deep understanding')
+  advancedPrompt.includes('multi-step reasoning, synthesis of multiple concepts')
 );
 
 const intermediateProfile = { level: 'intermediate' };
@@ -84,6 +84,13 @@ const intermediatePrompt = buildQuizPrompt(fakeChunks, intermediateProfile, 3, [
 assert(
   'Intermediate profile produces application question instruction',
   intermediatePrompt.includes('application of knowledge')
+);
+
+// Case 5: With conceptFocus — should inject CONCEPT LOCK note
+const promptWithConcept = buildQuizPrompt(fakeChunks, fakeProfile, 5, [], 'Photosynthesis');
+assert(
+  'Prompt contains CONCEPT LOCK when conceptFocus is provided',
+  promptWithConcept.includes('⚡ CONCEPT LOCK: ALL questions MUST be exclusively about "Photosynthesis"')
 );
 
 console.log(`\n── Results: ${passed} passed, ${failed} failed ──`);

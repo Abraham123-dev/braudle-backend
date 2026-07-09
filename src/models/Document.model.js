@@ -141,6 +141,11 @@ const documentSchema = new mongoose.Schema(
       lastPracticeGen: { type: Date },
       lastExamGen: { type: Date }
     },
+    conceptMapStatus: {
+      type: String,
+      enum: ['none', 'generating', 'ready', 'failed'],
+      default: 'none'
+    },
     conceptMap: {
       type: mongoose.Schema.Types.Mixed,
       default: null

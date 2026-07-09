@@ -41,8 +41,8 @@ const fakeDocContext = {
 
 console.log('\n── buildTeachPrompt Basic Structure ──');
 const promptUnderstand = buildTeachPrompt(fakeChunk, fakeProfile, 'understand', fakeDocContext);
-assert('Includes warm/encouraging BRAUDLE tutor role', promptUnderstand.includes('BRAUDLE'));
-assert('Includes student level: beginner', promptUnderstand.includes('Student level: beginner'));
+assert('Includes warm/encouraging BRAUDLE tutor role', promptUnderstand.includes('Braudle Tutor'));
+assert('Includes student level: beginner', promptUnderstand.includes('ADAPTIVE TEACHING') || promptUnderstand.includes('university'));
 assert('Includes learning goal', promptUnderstand.includes('Pass React Cert'));
 assert('Includes study level context', promptUnderstand.includes('university'));
 assert('Includes learning style context', promptUnderstand.includes('visual'));

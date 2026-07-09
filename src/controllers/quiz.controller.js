@@ -38,9 +38,8 @@ const normalizeQuestions = (questions) => {
 };
 
 // Helper to check and record generation limits
-export const checkAndRecordGenLimit = async (user, document, type) => {
+export const checkGenLimit = async (user, document, type) => {
   const plan = user.plan || 'free';
-  const now = new Date();
 
   if (plan === 'pro') {
     return; // Unlimited!
@@ -52,37 +51,38 @@ export const checkAndRecordGenLimit = async (user, document, type) => {
     if (count >= 5) {
       throw new AppError(`You've reached your daily limit of 5 ${type} generations for the Plus plan.`, 429);
     }
+    return;
+  }
+
+  if (plan === 'free') {
+    // Free limit: Max 3 generations per day globally
+    const count = user.dailyGenerationsCount[type] || 0;
+    if (count >= 3) {
+      throw new AppError(`You've reached your daily limit of 3 ${type} generations. Available tomorrow.`, 429);
+    }
+    return;
+  }
+};
+
+export const recordGenLimit = async (user, document, type) => {
+  const plan = user.plan || 'free';
+
+  if (plan === 'pro') {
+    return;
+  }
+
+  if (plan === 'plus' || plan === 'free') {
+    const count = user.dailyGenerationsCount[type] || 0;
     user.dailyGenerationsCount[type] = count + 1;
     user.markModified('dailyGenerationsCount');
     await user.save();
     return;
   }
+};
 
-  // Free limit: 1 generation every day per document
-  const fieldMap = {
-    flashcards: 'lastFlashcardGen',
-    practice: 'lastPracticeGen',
-    exam: 'lastExamGen'
-  };
-  const lastGenField = fieldMap[type];
-
-  if (!document.sessionMemory) {
-    document.sessionMemory = { flashcardsShown: [], questionsServed: [], practiceGuidesGenerated: [] };
-  }
-
-  const lastGenVal = document.sessionMemory[lastGenField];
-  const lastGenTime = lastGenVal ? new Date(lastGenVal).getTime() : 0;
-  const oneDayMs = 24 * 60 * 60 * 1000;
-
-  if (lastGenTime > 0 && (Date.now() - lastGenTime < oneDayMs)) {
-    const remainingMs = oneDayMs - (Date.now() - lastGenTime);
-    const remainingHours = Math.ceil(remainingMs / (60 * 60 * 1000));
-    throw new AppError(`You've reached the limit. Free users can only generate 1 ${type} every day. Available in ${remainingHours}h.`, 429);
-  }
-
-  document.set(`sessionMemory.${lastGenField}`, now);
-  document.markModified('sessionMemory');
-  await document.save();
+export const checkAndRecordGenLimit = async (user, document, type) => {
+  await checkGenLimit(user, document, type);
+  await recordGenLimit(user, document, type);
 };
 
 const generateAndSaveCacheOnTheFly = async (document) => {
@@ -131,7 +131,7 @@ const generateAndSaveCacheOnTheFly = async (document) => {
   }
 };
 
-const assembleQuizFromCache = (document, count, isExam, format) => {
+const assembleQuizFromCache = (document, count, isExam, format, difficulty = 'medium', conceptFocus = '') => {
   if (!document.knowledgeCache || !Array.isArray(document.knowledgeCache.questionBank) || document.knowledgeCache.questionBank.length === 0) {
     return null; 
   }
@@ -142,6 +142,22 @@ const assembleQuizFromCache = (document, count, isExam, format) => {
     bank = bank.filter(q => q.type === 'mcq' || q.type === 'true_false');
   } else if (format === 'theory' || format === 'subjective') {
     bank = bank.filter(q => q.type === 'theory');
+  }
+
+  if (conceptFocus) {
+    const focusLower = conceptFocus.toLowerCase().trim();
+    const conceptBank = bank.filter(q => (q.topic || '').toLowerCase().trim().includes(focusLower) || (q.question || '').toLowerCase().trim().includes(focusLower));
+    if (conceptBank.length > 0) {
+      bank = conceptBank;
+    }
+  }
+
+  if (!isExam && difficulty) {
+    const diffLower = difficulty.toLowerCase().trim();
+    const difficultyBank = bank.filter(q => (q.difficulty || '').toLowerCase().trim() === diffLower);
+    if (difficultyBank.length > 0) {
+      bank = difficultyBank;
+    }
   }
 
   if (bank.length === 0) {
@@ -233,8 +249,8 @@ export const generateQuiz = asyncHandler(async (req, res) => {
     const document = await Document.findById(session.documentId);
     if (!document) throw new AppError('Document not found', 404);
 
-    // Enforce practice generation limits
-    await checkAndRecordGenLimit(user, document, 'practice');
+    // Enforce practice generation limits — check only
+    await checkGenLimit(user, document, 'practice');
 
     // Build cache if missing
     if (!document.knowledgeCache || !document.knowledgeCache.questionBank || document.knowledgeCache.questionBank.length === 0) {
@@ -243,7 +259,7 @@ export const generateQuiz = asyncHandler(async (req, res) => {
 
     // Attempt to assemble from cache
     const cachedQuestions = assembleQuizFromCache(document, 5, false, 'mixed');
-    if (cachedQuestions && cachedQuestions.length > 0) {
+    if (cachedQuestions && cachedQuestions.length === 5) {
       const mongoose = (await import('mongoose')).default;
       const questionsWithIds = cachedQuestions.map(q => ({
         _id: new mongoose.Types.ObjectId(),
@@ -258,6 +274,8 @@ export const generateQuiz = asyncHandler(async (req, res) => {
         totalQuestions: questionsWithIds.length,
       });
 
+      // Successful generation: consume limit
+      await recordGenLimit(user, document, 'practice');
       await document.save();
 
       return res.status(201).json({
@@ -280,12 +298,16 @@ export const generateQuiz = asyncHandler(async (req, res) => {
 
     // Call the AI service as fallback
     const profile = await ProfileService.getProfile(userId);
+    const learningObjectives = document.knowledgeCache?.learningObjectives || [];
+    const definitions = document.knowledgeCache?.definitions || [];
     const quizData = await QuizService.generateQuiz(
       session.documentId, 
       profile, 
       5, 
       document?.topics || [],
-      session._id.toString()
+      session._id.toString(),
+      learningObjectives,
+      definitions
     );
 
     const questions = quizData.questions || quizData;
@@ -298,6 +320,9 @@ export const generateQuiz = asyncHandler(async (req, res) => {
       questions: normalizedQuestions,
       totalQuestions: normalizedQuestions.length,
     });
+
+    // Successful generation: consume limit
+    await recordGenLimit(user, document, 'practice');
 
     return res.status(201).json({
       status: 'success',
@@ -321,7 +346,7 @@ export const generateQuiz = asyncHandler(async (req, res) => {
 export const generateCustomAssessment = asyncHandler(async (req, res) => {
   const { 
     documentId, sessionId, format, difficulty, numQuestions, isExam, instructions,
-    timeLimit, revealStyle
+    timeLimit, revealStyle, conceptFocus
   } = req.body;
   const userId = req.user.id;
 
@@ -356,20 +381,26 @@ export const generateCustomAssessment = asyncHandler(async (req, res) => {
   }
 
   try {
-    // Enforce generation limits
+    // Enforce generation limits — check only
     const limitType = isExam ? 'exam' : 'practice';
-    await checkAndRecordGenLimit(user, document, limitType);
+    await checkGenLimit(user, document, limitType);
 
     // Only use the cached question bank for standard, generic quiz requests.
-    // If the student chose a custom difficulty, custom instructions, or exam mode,
+    // If the student wrote custom free-form instructions, or requested exam mode,
     // we ALWAYS go to the LLM to generate a fresh, calibrated assessment.
-    const isDefaultDifficulty = !difficulty || difficulty === 'medium';
     const isStandardFormat = format === 'mixed' || format === 'objective' || format === 'theory' || format === 'subjective';
-    const canUseCache = !instructions && !isExam && isStandardFormat && isDefaultDifficulty;
+    const canUseCache = !instructions && !isExam && isStandardFormat && numQuestions < 15;
 
     if (canUseCache) {
-      const cachedQuestions = assembleQuizFromCache(document, numQuestions || 10, !!isExam, format || 'mixed');
-      if (cachedQuestions && cachedQuestions.length > 0) {
+      const cachedQuestions = assembleQuizFromCache(
+        document,
+        numQuestions,
+        !!isExam,
+        format || 'mixed',
+        difficulty || 'medium',
+        conceptFocus
+      );
+      if (cachedQuestions && cachedQuestions.length === numQuestions) {
         const mongoose = (await import('mongoose')).default;
         const questionsWithIds = cachedQuestions.map(q => ({
           _id: new mongoose.Types.ObjectId(),
@@ -387,6 +418,8 @@ export const generateCustomAssessment = asyncHandler(async (req, res) => {
           difficulty: difficulty || 'medium',
         });
 
+        // Successful generation: consume limit
+        await recordGenLimit(user, document, limitType);
         await document.save();
 
         return res.status(201).json({
@@ -399,17 +432,32 @@ export const generateCustomAssessment = asyncHandler(async (req, res) => {
       }
     }
 
+    const learningObjectives = document.knowledgeCache?.learningObjectives || [];
+    const definitions = document.knowledgeCache?.definitions || [];
+
     const quizData = await QuizService.generateCustomAssessment(documentId, { 
       format, 
       difficulty, 
       numQuestions,
       instructions,
       isExam: !!isExam,
-      documentTopics: document.topics || []
+      documentTopics: document.topics || [],
+      conceptFocus,
+      learningObjectives,
+      definitions
     }, activeSessionId.toString());
 
     const questions = quizData.questions || quizData;
-    const normalizedQuestions = normalizeQuestions(questions);
+    let normalizedQuestions = normalizeQuestions(questions);
+
+    // Safety format filter
+    if (format === 'objective') {
+      const filtered = normalizedQuestions.filter(q => q.type === 'mcq' || q.type === 'true_false');
+      if (filtered.length > 0) normalizedQuestions = filtered;
+    } else if (format === 'theory' || format === 'subjective') {
+      const filtered = normalizedQuestions.filter(q => q.type === 'theory');
+      if (filtered.length > 0) normalizedQuestions = filtered;
+    }
 
     const quiz = await Quiz.create({
       sessionId: activeSessionId,
@@ -421,6 +469,9 @@ export const generateCustomAssessment = asyncHandler(async (req, res) => {
       revealStyle: revealStyle || 'instant',
       difficulty: difficulty || 'medium',
     });
+
+    // Successful generation: consume limit
+    await recordGenLimit(user, document, limitType);
 
     return res.status(201).json({
       status: 'success',

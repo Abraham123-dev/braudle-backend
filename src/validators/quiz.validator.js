@@ -14,7 +14,10 @@ export const generateCustomAssessmentSchema = z
     difficulty: z.enum(['easy', 'medium', 'hard', 'expert']).optional().default('medium'),
     numQuestions: z.number().min(1).max(20).optional().default(15),
     isExam: z.boolean().optional().default(false),
-    instructions: z.string().max(1000).optional()
+    instructions: z.string().max(1000).optional(),
+    timeLimit: z.number().min(0).optional().default(0),
+    revealStyle: z.enum(['instant', 'end']).optional().default('instant'),
+    conceptFocus: z.string().max(200).optional()
   })
   .strict();
 

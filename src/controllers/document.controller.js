@@ -519,6 +519,13 @@ export const getDocumentConceptMap = asyncHandler(async (req, res) => {
     });
   }
 
+  if (document.conceptMapStatus === 'generating') {
+    return res.status(202).json({
+      status: 'generating',
+      message: 'Concept map is currently being generated. Please check back shortly.'
+    });
+  }
+
   // 2. Lazy Generation Fallback
   console.log(`[CONCEPT MAP] Lazy generating map for document: ${id}`);
   const cache = document.knowledgeCache || {};
@@ -526,6 +533,9 @@ export const getDocumentConceptMap = asyncHandler(async (req, res) => {
   const concepts = cache.concepts || [];
 
   try {
+    document.conceptMapStatus = 'generating';
+    await document.save();
+
     const { generateAIResponse } = await import('../services/ai.service.js');
     const { parseAIJson } = await import('../utils/parseAIJson.js');
 
@@ -612,6 +622,7 @@ Schema:
       const parsedMap = parseAIJson(cacheResponse, null);
       if (parsedMap && Array.isArray(parsedMap.chapters) && parsedMap.chapters.length > 0) {
         document.conceptMap = parsedMap;
+        document.conceptMapStatus = 'ready';
         await document.save();
         return res.status(200).json({
           status: 'success',
@@ -621,6 +632,8 @@ Schema:
     }
   } catch (err) {
     console.error('[CONCEPT MAP] Lazy generation failed:', err.message);
+    document.conceptMapStatus = 'failed';
+    await document.save();
   }
 
   // Final placeholder fallback if everything else fails
@@ -649,6 +662,7 @@ Schema:
   };
   
   document.conceptMap = basicMap;
+  document.conceptMapStatus = 'ready';
   await document.save();
 
   return res.status(200).json({
@@ -743,3 +757,88 @@ export const getDocumentProgressStream = (req, res) => {
     }
   });
 };
+
+export const generateConceptFlashcards = asyncHandler(async (req, res) => {
+  const { conceptName, sessionId } = req.body;
+  const { id } = req.params;
+  const userId = req.user.id;
+
+  if (!conceptName) {
+    throw new AppError('Concept name is required', 400);
+  }
+
+  const document = await Document.findOne({ _id: id, userId });
+  if (!document) {
+    throw new AppError('Document not found or access denied', 404);
+  }
+
+  const user = await User.findById(userId);
+  if (!user) {
+    throw new AppError('User not found', 404);
+  }
+
+  // 1. Enforce flashcards generation limit — check only
+  const { checkGenLimit, recordGenLimit } = await import('./quiz.controller.js');
+  await checkGenLimit(user, document, 'flashcards');
+
+  // 2. Call AI service to generate flashcards
+  const { generateAIResponse } = await import('../services/ai.service.js');
+  const { buildConceptFlashcardsPrompt } = await import('../utils/promptBuilder.js');
+  const { parseAIJson } = await import('../utils/parseAIJson.js');
+
+  const prompt = buildConceptFlashcardsPrompt(document.chunks, conceptName, 10);
+  const aiResponse = await generateAIResponse({
+    task: 'tutoring',
+    messages: [{ role: 'user', content: prompt }],
+    temperature: 0.3,
+    max_tokens: 2000
+  });
+
+  const flashcards = parseAIJson(aiResponse, []);
+
+  if (!Array.isArray(flashcards) || flashcards.length === 0) {
+    throw new AppError('Failed to generate valid concept flashcards. Please try again.', 500);
+  }
+
+  const normalizedCards = flashcards.map(fc => ({
+    topic: fc.topic || conceptName,
+    front: fc.front,
+    back: fc.back
+  }));
+
+  // Consume limit upon successful generation
+  await recordGenLimit(user, document, 'flashcards');
+
+  // 3. Persist messages in the session conversation if sessionId is provided
+  if (sessionId) {
+    const conversation = await Conversation.findOne({ sessionId, userId });
+    if (conversation) {
+      const userText = `Please generate exactly 10 flashcards from our study materials. Focus on the concept: "${conceptName}"`;
+      
+      const formattedLines = normalizedCards.map(fc => 
+        `FLASHCARD | TOPIC: ${fc.topic} | FRONT: ${fc.front} | BACK: ${fc.back}`
+      );
+      formattedLines.push(`💡 These flashcards have been saved to your profile. Want to keep studying, try a practice question, or move to the next section?`);
+      const assistantText = formattedLines.join('\n');
+
+      conversation.messages.push({
+        role: 'user',
+        content: userText,
+        timestamp: new Date()
+      });
+
+      conversation.messages.push({
+        role: 'assistant',
+        content: assistantText,
+        timestamp: new Date()
+      });
+
+      await conversation.save();
+    }
+  }
+
+  return res.status(200).json({
+    status: 'success',
+    flashcards: normalizedCards
+  });
+});
