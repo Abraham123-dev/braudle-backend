@@ -14,6 +14,7 @@ import { PDFParse } from 'pdf-parse';
 import * as AIService from '../services/ai.service.js';
 import { GROQ_MODELS } from '../config/models.js';
 import { parseAIJson } from '../utils/parseAIJson.js';
+import crypto from 'crypto';
 import { extractionQueue, embeddingQueue, cacheQueue } from '../queues/document.queue.js';
 
 // Connect to MongoDB
@@ -71,7 +72,7 @@ const publishProgress = async (documentId, stage, status, extra = {}) => {
 export const extractionWorker = new Worker(
   'document-extraction',
   async (job) => {
-    const { documentId, fileKey } = job.data;
+    const { documentId, fileKey, plan = 'free' } = job.data;
     console.log(`[WORKER: EXTRACTION] Job ${job.id} started for document: ${documentId}`);
 
     try {
@@ -94,6 +95,42 @@ export const extractionWorker = new Worker(
       await publishProgress(documentId, 'extracting_content', 'processing');
 
       const fileBuffer = await StorageService.downloadFromR2(fileKey);
+      const fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
+
+      // Check if there is an existing fully processed document with this hash
+      const existingDoc = await Document.findOne({
+        fileHash,
+        processingStatus: 'ready',
+        knowledgeCacheStatus: 'ready'
+      });
+
+      if (existingDoc) {
+        console.log(`[WORKER: EXTRACTION] Found matching ready document cache for hash ${fileHash}. Copying cached understanding.`);
+        await Document.findByIdAndUpdate(documentId, {
+          fileHash,
+          rawText: existingDoc.rawText,
+          chunks: existingDoc.chunks,
+          chunkEmbeddings: existingDoc.chunkEmbeddings,
+          totalChunks: existingDoc.totalChunks,
+          topics: existingDoc.topics,
+          summary: existingDoc.summary,
+          detailedSummary: existingDoc.detailedSummary,
+          aiUnderstandingFailed: existingDoc.aiUnderstandingFailed,
+          knowledgeCacheStatus: existingDoc.knowledgeCacheStatus,
+          knowledgeCache: existingDoc.knowledgeCache,
+          conceptMapStatus: existingDoc.conceptMapStatus,
+          conceptMap: existingDoc.conceptMap,
+          processingStatus: 'ready',
+          processingStage: 'ready'
+        });
+
+        await publishProgress(documentId, 'ready', 'ready', {
+          topics: existingDoc.topics,
+          summary: existingDoc.summary
+        });
+        return { success: true, cached: true };
+      }
+
       let extractedText = '';
 
       if (doc.type === 'pdf') {
@@ -101,6 +138,38 @@ export const extractionWorker = new Worker(
         const data = await parser.getText();
         extractedText = data.text;
         await parser.destroy();
+
+        // Check if the PDF has almost no text (scanned PDF / photos of handwritten notes)
+        const cleanText = cleanExtractedText(extractedText);
+        if (!cleanText || cleanText.length < 200) {
+          console.log(`[WORKER: EXTRACTION] PDF ${documentId} extracted text is empty or too short (${cleanText ? cleanText.length : 0} chars). Falling back to Vision OCR...`);
+          
+          const { pdfToPng } = await import('pdf-to-png-converter');
+          const images = await pdfToPng(fileBuffer, {
+            viewportScale: 1.5 // increase resolution slightly for cleaner Vision OCR readings
+          });
+
+          console.log(`[WORKER: EXTRACTION] Rendered ${images.length} PDF pages as PNG images.`);
+
+          // Process first 10 pages only to avoid hitting rate limits or slow background processing
+          const pagesToProcess = images.slice(0, 10);
+          const pageTranscriptions = [];
+
+          for (let i = 0; i < pagesToProcess.length; i++) {
+            const pageBuffer = pagesToProcess[i].content;
+            if (pageBuffer.length > 10 * 1024 * 1024) {
+              console.warn(`[WORKER: EXTRACTION] Page ${i + 1} exceeds 10MB limit. Skipping.`);
+              continue;
+            }
+
+            console.log(`[WORKER: EXTRACTION] Processing page ${i + 1}/${pagesToProcess.length}...`);
+            const base64 = pageBuffer.toString('base64');
+            const pageText = await AIService.transcribeImage(base64, 'image/png');
+            pageTranscriptions.push(`--- PAGE ${i + 1} ---\n${pageText}`);
+          }
+
+          extractedText = pageTranscriptions.join('\n\n');
+        }
       } else {
         if (fileBuffer.length > 10 * 1024 * 1024) {
           throw new Error('Image notes exceed the 10MB vision processing limit');
@@ -155,6 +224,7 @@ export const extractionWorker = new Worker(
         totalChunks: chunks.length,
         topics,
         summary,
+        fileHash,
         misconceptions: [],
         processingStatus: 'ready',
         processingStage: 'ready',
@@ -168,12 +238,14 @@ export const extractionWorker = new Worker(
       
       await embeddingQueue.add('generate-embeddings', { documentId, chunks }, {
         attempts: 3,
-        backoff: { type: 'exponential', delay: 2000 }
+        backoff: { type: 'exponential', delay: 2000 },
+        timeout: 300000 // 5 minutes
       });
 
       await cacheQueue.add('build-knowledge-cache', { documentId, chunks }, {
         attempts: 2,
-        backoff: { type: 'exponential', delay: 5000 }
+        backoff: { type: 'exponential', delay: 5000 },
+        timeout: 300000 // 5 minutes
       });
 
       return { success: true, status: 'ready', chunks: chunks.length };
@@ -221,6 +293,13 @@ export const embeddingWorker = new Worker(
       for (let i = 0; i < chunks.length; i += BATCH_SIZE) {
         const batch = chunks.slice(i, i + BATCH_SIZE);
         
+        if (i >= 800) {
+          // Cap remote API calls at 800 chunks, falling back to local embeddings for the remainder
+          const batchEmbs = batch.map(c => AIService.getLocalTfidfEmbedding(c));
+          chunkEmbeddings.push(...batchEmbs);
+          continue;
+        }
+
         try {
           const batchEmbs = await AIService.generateEmbeddingsBatch(batch);
           chunkEmbeddings.push(...batchEmbs);

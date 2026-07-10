@@ -1,6 +1,7 @@
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { AppError } from '../utils/AppError.js';
 import Redis from 'ioredis';
+import crypto from 'crypto';
 import User from '../models/User.model.js';
 import Document from '../models/Document.model.js';
 import Session from '../models/Session.model.js';
@@ -72,6 +73,46 @@ export const uploadDocument = asyncHandler(async (req, res) => {
     );
   }
 
+  const fileHash = crypto.createHash('sha256').update(file.buffer).digest('hex');
+
+  // Check for duplicate in cache
+  const existingDoc = await Document.findOne({
+    fileHash,
+    processingStatus: 'ready',
+  });
+
+  if (existingDoc) {
+    const document = await Document.create({
+      userId,
+      title: req.body.title || file.originalname,
+      subject: req.body.subject,
+      type,
+      fileUrl: existingDoc.fileUrl,
+      fileKey: existingDoc.fileKey,
+      fileHash,
+      processingStatus: 'ready',
+      processingStage: 'ready',
+      rawText: existingDoc.rawText,
+      chunks: existingDoc.chunks,
+      chunkEmbeddings: existingDoc.chunkEmbeddings,
+      totalChunks: existingDoc.totalChunks,
+      topics: existingDoc.topics,
+      summary: existingDoc.summary,
+      detailedSummary: existingDoc.detailedSummary,
+      aiUnderstandingFailed: existingDoc.aiUnderstandingFailed,
+      knowledgeCacheStatus: existingDoc.knowledgeCacheStatus,
+      knowledgeCache: existingDoc.knowledgeCache,
+      conceptMapStatus: existingDoc.conceptMapStatus,
+      conceptMap: existingDoc.conceptMap,
+    });
+
+    return res.status(200).json({
+      documentId: document._id,
+      status: 'ready',
+      message: "BRAUDLE already knows this document! Loaded instantly from ingestion cache.",
+    });
+  }
+
   // 2. Prepare storage key
   const sanitizedName = StorageService.sanitizeFilename(file.originalname);
   const fileKey = `uploads/${userId}/${Date.now()}-${sanitizedName}`;
@@ -91,6 +132,7 @@ export const uploadDocument = asyncHandler(async (req, res) => {
       type,
       fileUrl,
       fileKey,
+      fileHash,
       processingStatus: 'pending',
     });
 
@@ -99,6 +141,11 @@ export const uploadDocument = asyncHandler(async (req, res) => {
       documentId: document._id,
       fileKey: document.fileKey,
       userId: document.userId,
+      plan: userRecord.plan || 'free'
+    }, {
+      attempts: 2,
+      backoff: { type: 'exponential', delay: 5000 },
+      timeout: 300000 // 5 minutes
     });
 
     return res.status(202).json({
@@ -298,11 +345,19 @@ export const confirmUpload = asyncHandler(async (req, res) => {
     throw new AppError('Forbidden: Access denied', 403);
   }
 
+  const user = await User.findById(userId);
+  const plan = user?.plan || 'free';
+
   // Queue the background processing job
   await extractionQueue.add('process-document', {
     documentId: document._id,
     fileKey: document.fileKey,
     userId: document.userId,
+    plan
+  }, {
+    attempts: 2,
+    backoff: { type: 'exponential', delay: 5000 },
+    timeout: 300000 // 5 minutes
   });
 
   return res.status(200).json({

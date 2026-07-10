@@ -145,10 +145,16 @@ const assembleQuizFromCache = (document, count, isExam, format, difficulty = 'me
   }
 
   if (conceptFocus) {
-    const focusLower = conceptFocus.toLowerCase().trim();
-    const conceptBank = bank.filter(q => (q.topic || '').toLowerCase().trim().includes(focusLower) || (q.question || '').toLowerCase().trim().includes(focusLower));
-    if (conceptBank.length > 0) {
-      bank = conceptBank;
+    const focusTerms = conceptFocus.split(',').map(term => term.toLowerCase().trim()).filter(Boolean);
+    if (focusTerms.length > 0) {
+      const conceptBank = bank.filter(q => {
+        const topicLower = (q.topic || '').toLowerCase().trim();
+        const questionLower = (q.question || '').toLowerCase().trim();
+        return focusTerms.some(term => topicLower.includes(term) || questionLower.includes(term));
+      });
+      if (conceptBank.length > 0) {
+        bank = conceptBank;
+      }
     }
   }
 
@@ -595,6 +601,7 @@ export const submitQuiz = asyncHandler(async (req, res) => {
   quiz.score = score;
   quiz.submittedAt = new Date();
 
+  quiz.markModified('questions');
   await quiz.save();
 
   // Handle potential level upgrade and XP
@@ -677,6 +684,7 @@ export const gradeQuestion = asyncHandler(async (req, res) => {
     await deleteCached(CACHE_KEYS.DASHBOARD_PERF(userId));
   }
 
+  quiz.markModified('questions');
   await quiz.save();
 
   // Compute live weakTopics for instant-reveal mode feedback
