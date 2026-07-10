@@ -15,6 +15,7 @@ import * as AIService from '../services/ai.service.js';
 import { GROQ_MODELS } from '../config/models.js';
 import { parseAIJson } from '../utils/parseAIJson.js';
 import crypto from 'crypto';
+import AppErrorLog from '../models/AppErrorLog.model.js';
 import { extractionQueue, embeddingQueue, cacheQueue } from '../queues/document.queue.js';
 
 // Connect to MongoDB
@@ -433,16 +434,58 @@ export const cacheWorker = new Worker(
 );
 
 // Worker failure events reporting
-extractionWorker.on('failed', (job, err) => {
+extractionWorker.on('failed', async (job, err) => {
   console.error(`[WORKER: EXTRACTION] Job ${job?.id} failed permanently: ${err.message}`);
+  try {
+    await AppErrorLog.create({
+      errorId: `err_worker_ext_${crypto.randomUUID().slice(0, 8)}`,
+      message: err.message || 'Extraction worker failed',
+      stack: err.stack,
+      statusCode: 500,
+      source: 'worker',
+      route: 'worker:document-extraction',
+      method: 'job',
+      body: job?.data
+    });
+  } catch (logErr) {
+    console.error('Failed to log worker failure to DB:', logErr.message);
+  }
 });
 
-embeddingWorker.on('failed', (job, err) => {
+embeddingWorker.on('failed', async (job, err) => {
   console.error(`[WORKER: EMBEDDINGS] Job ${job?.id} failed permanently: ${err.message}`);
+  try {
+    await AppErrorLog.create({
+      errorId: `err_worker_emb_${crypto.randomUUID().slice(0, 8)}`,
+      message: err.message || 'Embedding worker failed',
+      stack: err.stack,
+      statusCode: 500,
+      source: 'worker',
+      route: 'worker:document-embeddings',
+      method: 'job',
+      body: job?.data
+    });
+  } catch (logErr) {
+    console.error('Failed to log worker failure to DB:', logErr.message);
+  }
 });
 
-cacheWorker.on('failed', (job, err) => {
+cacheWorker.on('failed', async (job, err) => {
   console.error(`[WORKER: CACHE] Job ${job?.id} failed permanently: ${err.message}`);
+  try {
+    await AppErrorLog.create({
+      errorId: `err_worker_cache_${crypto.randomUUID().slice(0, 8)}`,
+      message: err.message || 'Cache worker failed',
+      stack: err.stack,
+      statusCode: 500,
+      source: 'worker',
+      route: 'worker:document-cache',
+      method: 'job',
+      body: job?.data
+    });
+  } catch (logErr) {
+    console.error('Failed to log worker failure to DB:', logErr.message);
+  }
 });
 
 export default {

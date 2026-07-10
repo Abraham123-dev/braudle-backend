@@ -19,6 +19,8 @@ import dashboardRoutes from './routes/dashboard.routes.js';
 import generalChatRoutes from './routes/generalChat.routes.js';
 import paymentRoutes from './routes/payment.routes.js';
 import masteryRoutes from './routes/mastery.routes.js';
+import adminRoutes from './routes/admin.routes.js';
+import AppErrorLog from './models/AppErrorLog.model.js';
 import { AppError } from './utils/AppError.js';
 
 
@@ -68,6 +70,7 @@ app.use('/api/dashboard', dashboardRoutes);
 app.use('/api/general-chat', generalChatRoutes);
 app.use('/api/payments', paymentRoutes);
 app.use('/api/mastery', masteryRoutes);
+app.use('/api/admin/lighthouse', adminRoutes);
 
 app.get('/api/health', (req, res) => {
   const mongoState = mongoose.connection.readyState;
@@ -82,6 +85,18 @@ app.get('/api/health', (req, res) => {
   });
 });
 
+const sanitizeRequestBody = (body) => {
+  if (!body) return body;
+  const sanitized = { ...body };
+  const sensitiveKeys = ['password', 'token', 'braudle_token', 'braudle_admin_token', 'accessToken', 'refreshToken'];
+  sensitiveKeys.forEach(key => {
+    if (key in sanitized) {
+      sanitized[key] = '********';
+    }
+  });
+  return sanitized;
+};
+
 app.use((err, req, res, next) => {
   let statusCode = err.statusCode || 500;
   let message = err.message || 'Internal Server Error';
@@ -92,6 +107,21 @@ app.use((err, req, res, next) => {
   // Log full error internally for debugging
   console.error(`[ERROR] [ID: ${errorId}] ${statusCode} - ${err.message}`);
   if (err.stack) console.error(err.stack);
+
+  // Central Error House DB Logger (Non-blocking)
+  AppErrorLog.create({
+    errorId,
+    message,
+    stack: err.stack,
+    statusCode,
+    userId: req.user?.id,
+    source: 'api',
+    route: req.originalUrl || req.url,
+    method: req.method,
+    body: sanitizeRequestBody(req.body),
+    ip: req.ip || req.connection?.remoteAddress,
+    userAgent: req.headers['user-agent']
+  }).catch(logErr => console.error('[ERROR] Failed to save log to MongoDB:', logErr.message));
 
   // Handle body-parser / JSON.parse errors gracefully
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
