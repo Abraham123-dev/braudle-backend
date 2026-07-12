@@ -16,7 +16,8 @@ import { GROQ_MODELS } from '../config/models.js';
 import { parseAIJson } from '../utils/parseAIJson.js';
 import crypto from 'crypto';
 import AppErrorLog from '../models/AppErrorLog.model.js';
-import { extractionQueue, embeddingQueue, cacheQueue } from '../queues/document.queue.js';
+import Conversation from '../models/Conversation.model.js';
+import { extractionQueue, embeddingQueue, cacheQueue, summaryQueue } from '../queues/document.queue.js';
 
 // Connect to MongoDB
 await connectDB();
@@ -488,8 +489,73 @@ cacheWorker.on('failed', async (job, err) => {
   }
 });
 
+export const summaryWorker = new Worker(
+  'session-summary',
+  async (job) => {
+    const { conversationId, priorSummary, candidateMessages } = job.data;
+    console.log(`[WORKER: SUMMARY] Job ${job.id} started for conversation: ${conversationId}`);
+
+    try {
+      const formattedHistory = candidateMessages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
+
+      const systemPrompt = 
+        "You are a conversation memory consolidator. Read the prior summary and the new chat history segments between a student and an AI tutor.\n" +
+        "Generate a consolidated, updated summary of the discussion. Focus on explained concepts, key details, student's preferences, goals, and any student difficulties or weaknesses.\n" +
+        "Keep the summary concise (under 150 words). Return ONLY the new raw summary text.";
+
+      const userPrompt = 
+        `PRIOR SUMMARY: ${priorSummary || 'None'}\n\n` +
+        `NEW CONVERSATION SEGMENT:\n${formattedHistory}`;
+
+      const rawSummary = await AIService.generateAIResponse({
+        task: 'analysis',
+        messages: [
+          { role: 'system', content: systemPrompt },
+          { role: 'user', content: userPrompt }
+        ]
+      });
+
+      const cleanSummary = rawSummary.trim();
+      if (cleanSummary && cleanSummary.length > 10) {
+        await Conversation.updateOne(
+          { _id: conversationId },
+          { $set: { summaryMemory: cleanSummary } }
+        );
+        console.log(`[WORKER: SUMMARY] Conversation ${conversationId} summarized. Length: ${cleanSummary.length} chars.`);
+      }
+      return { success: true };
+    } catch (err) {
+      console.error(`[WORKER: SUMMARY] Summarization job failed:`, err.message);
+      throw err;
+    }
+  },
+  {
+    connection: workerConnection,
+    concurrency: 1,
+  }
+);
+
+summaryWorker.on('failed', async (job, err) => {
+  console.error(`[WORKER: SUMMARY] Job ${job?.id} failed permanently: ${err.message}`);
+  try {
+    await AppErrorLog.create({
+      errorId: `err_worker_sum_${crypto.randomUUID().slice(0, 8)}`,
+      message: err.message || 'Summary worker failed',
+      stack: err.stack,
+      statusCode: 500,
+      source: 'worker',
+      route: 'worker:session-summary',
+      method: 'job',
+      body: job?.data
+    });
+  } catch (logErr) {
+    console.error('Failed to log worker failure to DB:', logErr.message);
+  }
+});
+
 export default {
   extractionWorker,
   embeddingWorker,
   cacheWorker,
+  summaryWorker,
 };

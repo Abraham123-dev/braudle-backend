@@ -1,8 +1,9 @@
 import Groq from 'groq-sdk';
 import { env } from '../config/env.js';
-import { GROQ_MODELS } from '../config/models.js';
+import { GROQ_MODELS, PROVIDER_MODEL_MAPPING } from '../config/models.js';
 import { buildSessionAnalysisPrompt } from '../utils/promptBuilder.js';
 import { parseAIJson } from '../utils/parseAIJson.js';
+import { getEncoding } from 'js-tiktoken';
 
 const groq = new Groq({ apiKey: env.groq.apiKey, maxRetries: 0 });
 const groqSecondary = new Groq({ apiKey: env.groqSecondary.apiKey, maxRetries: 0 });
@@ -55,43 +56,33 @@ function isTransientError(error) {
   return false;
 }
 
+let tokenizer = null;
+try {
+  tokenizer = getEncoding('cl100k_base');
+} catch (e) {
+  console.error('[AI SERVICE] Failed to load tokenizer, falling back to approximation:', e.message);
+}
+
+export const getPrecisionTokenCount = (text) => {
+  if (!text) return 0;
+  if (typeof text !== 'string') {
+    text = String(text);
+  }
+  if (tokenizer) {
+    try {
+      return tokenizer.encode(text).length;
+    } catch (e) {
+      // fallback
+    }
+  }
+  return Math.ceil(text.trim().length / 4);
+};
+
 /**
  * Resolves model slugs to the actual API-compatible model IDs.
  */
 const getModelForTask = (provider, task) => {
-  const mapping = {
-    groq: {
-      tutoring: 'llama-3.3-70b-versatile',
-      analysis: 'llama-3.1-8b-instant',
-      vision: 'qwen/qwen3.6-27b',
-      general_chat: 'llama-3.3-70b-versatile'
-    },
-    groq_secondary: {
-      tutoring: 'llama-3.3-70b-versatile',
-      analysis: 'llama-3.1-8b-instant',
-      vision: 'qwen/qwen3.6-27b',
-      general_chat: 'llama-3.3-70b-versatile'
-    },
-    openrouter: {
-      tutoring: 'deepseek/deepseek-chat',
-      analysis: 'qwen/qwen-2.5-32b-instruct',
-      vision: 'meta-llama/llama-3.2-11b-vision-instruct',
-      general_chat: 'deepseek/deepseek-chat'
-    },
-    mistral: {
-      tutoring: 'mistral-medium-latest',
-      analysis: 'mistral-small-latest',
-      vision: 'pixtral-large-latest',
-      general_chat: 'mistral-small-latest'
-    },
-    nvidia: {
-      tutoring: 'meta/llama-3.3-70b-instruct',
-      analysis: 'meta/llama-3.1-8b-instruct',
-      vision: 'meta/llama-3.2-11b-vision-instruct',
-      general_chat: 'meta/llama-3.3-70b-instruct'
-    }
-  };
-  return mapping[provider]?.[task] || '';
+  return PROVIDER_MODEL_MAPPING[provider]?.[task] || '';
 };
 
 /**

@@ -897,3 +897,20 @@ export const generateConceptFlashcards = asyncHandler(async (req, res) => {
     flashcards: normalizedCards
   });
 });
+
+export const getDocumentViewUrl = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user.id;
+
+  const document = await Document.findOne({ _id: id, userId });
+  if (!document) {
+    throw new AppError('Document not found or access denied', 404);
+  }
+
+  const viewUrl = await StorageService.getPresignedGetUrl(document.fileKey);
+
+  return res.status(200).json({
+    status: 'success',
+    viewUrl,
+  });
+});

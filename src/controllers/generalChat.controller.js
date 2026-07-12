@@ -17,7 +17,7 @@ const estimateTokens = (text) => {
   if (typeof text === 'number') {
     return Math.ceil(text / 4);
   }
-  return Math.ceil(text.trim().length / 4);
+  return AIService.getPrecisionTokenCount(text);
 };
 
 /**
@@ -801,6 +801,11 @@ Do not wrap in markdown backticks or add any conversational filler. Return only 
     const remainingTokens = Math.max(0, 20000 - usage.tokensUsed);
     const isLocked = usage.tokensUsed >= 20000;
 
+    const remainingMessages = 15 - (userMsgCount + 1);
+    const warning = remainingMessages <= 3
+      ? `You have ${remainingMessages} message${remainingMessages === 1 ? '' : 's'} remaining in this chat. Start a new chat to keep going.`
+      : null;
+
     // 12. Close SSE stream with lock indicators
     res.write(
       `data: ${JSON.stringify({
@@ -811,6 +816,7 @@ Do not wrap in markdown backticks or add any conversational filler. Return only 
         outputTokens: usage.outputTokens,
         remainingTokens,
         isLocked,
+        warning,
       })}\n\n`
     );
     res.end();

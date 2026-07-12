@@ -93,6 +93,18 @@ export const getPresignedPutUrl = async (key, contentType) => {
 };
 
 /**
+ * Generates a presigned URL for downloading/viewing a file from R2
+ */
+export const getPresignedGetUrl = async (key, expiresIn = 3600) => {
+  const command = new GetObjectCommand({
+    Bucket: env.cfR2.bucket,
+    Key: key,
+  });
+
+  return await getSignedUrl(s3Client, command, { expiresIn });
+};
+
+/**
  * Initiates a multipart upload on R2
  */
 export const initiateMultipartUpload = async (key, contentType) => {

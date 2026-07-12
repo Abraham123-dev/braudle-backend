@@ -43,3 +43,11 @@ export const cacheQueue = new Queue('document-cache', {
   connection: queueConnection,
   defaultJobOptions,
 });
+
+/**
+ * BullMQ Queue for background, rolling conversation summaries
+ */
+export const summaryQueue = new Queue('session-summary', {
+  connection: queueConnection,
+  defaultJobOptions,
+});

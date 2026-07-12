@@ -11,6 +11,7 @@ import * as AdaptationService from '../services/adaptation.service.js';
 import * as ProfileService from '../services/profile.service.js';
 import * as YouTubeService from '../services/youtube.service.js';
 import { getCached, setCached, deleteCached, CACHE_KEYS, CACHE_TTL } from '../utils/cache.js';
+import { summaryQueue } from '../queues/document.queue.js';
 
 // ── Flashcard parser ─────────────────────────────────────────────────────────
 /**
@@ -646,40 +647,18 @@ export const chatSession = asyncHandler(async (req, res) => {
     // Trigger background rolling summarization task on a 6-message modulo threshold
     const totalSessionMsgs = conversation.messages.length;
     if (totalSessionMsgs > 12 && (totalSessionMsgs - 1) % 6 === 0) {
-      (async () => {
-        try {
-          const candidateMessages = conversation.messages.slice(0, -6);
-          const formattedHistory = candidateMessages.map(m => `${m.role.toUpperCase()}: ${m.content}`).join('\n');
-          
-          const systemPrompt = 
-            "You are a conversation memory consolidator. Read the prior summary and the new chat history segments between a student and an AI tutor.\n" +
-            "Generate a consolidated, updated summary of the discussion. Focus on explained concepts, key details, student's preferences, goals, and any student difficulties or weaknesses.\n" +
-            "Keep the summary concise (under 150 words). Return ONLY the new raw summary text.";
-            
-          const userPrompt = 
-            `PRIOR SUMMARY: ${conversation.summaryMemory || 'None'}\n\n` +
-            `NEW CONVERSATION SEGMENT:\n${formattedHistory}`;
-            
-          const rawSummary = await AIService.generateAIResponse({
-            task: 'analysis',
-            messages: [
-              { role: 'system', content: systemPrompt },
-              { role: 'user', content: userPrompt }
-            ]
-          });
-          
-          const cleanSummary = rawSummary.trim();
-          if (cleanSummary && cleanSummary.length > 10) {
-            await Conversation.updateOne(
-              { _id: conversation._id },
-              { $set: { summaryMemory: cleanSummary } }
-            );
-            console.log(`[STUDY SESSION MEMORY] Conversation summarized atomically. Length: ${cleanSummary.length} chars.`);
-          }
-        } catch (summaryErr) {
-          console.error('[STUDY SESSION MEMORY] Error updating rolling summary:', summaryErr.message);
-        }
-      })();
+      const candidateMessages = conversation.messages.slice(0, -6).map(m => ({
+        role: m.role,
+        content: m.content
+      }));
+
+      summaryQueue.add('session-summary', {
+        conversationId: conversation._id,
+        priorSummary: conversation.summaryMemory || '',
+        candidateMessages
+      }).catch(queueErr => {
+        console.error('[STUDY SESSION MEMORY] Failed to add summary job to queue:', queueErr.message);
+      });
     }
 
   } catch (error) {
@@ -940,5 +919,203 @@ Provide ONLY the markdown formatted study summary. Do not include introductory c
   } catch (err) {
     console.error('[DETAILED SUMMARY GENERATION] Failed:', err);
     throw new AppError('Failed to generate study summary. Please try again.', 500);
+  }
+});
+
+export const explainSelection = asyncHandler(async (req, res) => {
+  const { id: sessionId } = req.params;
+  const { selectedText, pageNumber, customPrompt } = req.body;
+  const userId = req.user.id;
+
+  if (!selectedText || selectedText.trim().length === 0) {
+    throw new AppError('Selected text is required', 400);
+  }
+
+  // 1. Get Session and associated data
+  const session = await Session.findOne({ _id: sessionId, userId });
+  if (!session || (session.status !== 'active' && session.status !== 'completed')) {
+    throw new AppError('Forbidden: Access denied or session inactive', 403);
+  }
+
+  // Fetch document
+  const document = await Document.findById(session.documentId)
+    .select('chunks topics summary title totalChunks type chunkEmbeddings sessionMemory');
+  if (!document) throw new AppError('Document not found', 404);
+
+  // Fetch student profile
+  const profile = await ProfileService.getProfile(userId);
+  if (!profile) throw new AppError('Student profile not found', 404);
+
+  // Check and enforce token limits
+  const user = await User.findById(userId);
+  if (!user) throw new AppError('User not found', 404);
+
+  const plan = user.plan || 'free';
+  const limitWindow = 6 * 60 * 60 * 1000; // 6 hours
+  const now = new Date();
+  
+  const lastReset = user.lastTokenResetDate ? new Date(user.lastTokenResetDate) : new Date(0);
+  if (now.getTime() - lastReset.getTime() >= limitWindow) {
+    user.dailyTokenUsage = 0;
+    user.lastTokenResetDate = now;
+    await user.save();
+  }
+
+  const tokenAllowances = {
+    free: 20000,
+    plus: 40000,
+    large: 120000
+  };
+
+  const allowance = tokenAllowances[plan];
+  if (user.dailyTokenUsage >= allowance) {
+    throw new AppError("You've reached today's AI study limit. Your study time will refresh in 6 hours.", 429);
+  }
+
+  // Concurrent stream lock check
+  const streamLockKey = CACHE_KEYS.ACTIVE_STREAM(userId);
+  const activeStream = await getCached(streamLockKey);
+  if (activeStream) throw new AppError('Only one active tutoring stream allowed at a time', 429);
+
+  let matchedChunkIndex = session.currentChunkIndex;
+  let referencedChunk = '';
+
+  // 2. Perform Cosine Similarity to find the closest chunk
+  if (document.chunks && document.chunks.length > 0) {
+    try {
+      const queryEmbedding = await AIService.generateEmbedding(selectedText);
+
+      const cosineSimilarity = (vecA, vecB) => {
+        if (!vecA || !vecB || vecA.length !== vecB.length) return 0;
+        let dotProduct = 0;
+        let normA = 0;
+        let normB = 0;
+        for (let i = 0; i < vecA.length; i++) {
+          dotProduct += vecA[i] * vecB[i];
+          normA += vecA[i] * vecA[i];
+          normB += vecB[i] * vecB[i];
+        }
+        if (normA === 0 || normB === 0) return 0;
+        return dotProduct / (Math.sqrt(normA) * Math.sqrt(normB));
+      };
+
+      const chunkEmbeddings = document.chunkEmbeddings || [];
+      let bestScore = -1;
+      let bestIndex = session.currentChunkIndex;
+
+      for (let i = 0; i < chunkEmbeddings.length; i++) {
+        const chunkEmb = chunkEmbeddings[i];
+        if (chunkEmb && chunkEmb.length > 0) {
+          const score = cosineSimilarity(queryEmbedding, chunkEmb);
+          if (score > bestScore) {
+            bestScore = score;
+            bestIndex = i;
+          }
+        }
+      }
+
+      // If best score is above threshold, use it as baseline context
+      if (bestScore > 0.15) {
+        matchedChunkIndex = bestIndex;
+        
+        // Grab adjacent chunks for broader semantic grounding
+        const prevIdx = matchedChunkIndex - 1;
+        const nextIdx = matchedChunkIndex + 1;
+        const adjParts = [];
+        if (prevIdx >= 0 && document.chunks[prevIdx]) {
+          adjParts.push(`[Section ${prevIdx + 1}]:\n${document.chunks[prevIdx]}`);
+        }
+        if (nextIdx < document.chunks.length && document.chunks[nextIdx]) {
+          adjParts.push(`[Section ${nextIdx + 1}]:\n${document.chunks[nextIdx]}`);
+        }
+        if (adjParts.length > 0) {
+          referencedChunk = adjParts.join('\n\n');
+        }
+      }
+    } catch (embErr) {
+      console.error('[EXPLAIN SELECTION RAG] Context mapping failed:', embErr.message);
+    }
+  }
+
+  // 3. Construct Document Context for Prompt Builder
+  const documentContext = {
+    title:              document.title || 'this document',
+    topics:             document.topics || [],
+    currentChunkIndex:  matchedChunkIndex,
+    totalChunks:        document.totalChunks || document.chunks?.length || 1,
+    preparationStyle:   session.preparationStyle || 'mixed',
+    type:               document.type,
+    referencedChunk,
+  };
+
+  const currentChunkText = (document.chunks && document.chunks[matchedChunkIndex]) || selectedText;
+
+  // 4. Setup SSE Headers
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+
+  await setCached(streamLockKey, sessionId, CACHE_TTL.STREAM);
+
+  let conversation = await Conversation.findOne({ sessionId });
+  if (!conversation) {
+    conversation = await Conversation.create({ sessionId, userId, messages: [] });
+  }
+
+  // Build the system prompt targeting explain_simply mode
+  const systemPrompt = buildTeachPrompt(currentChunkText, profile, 'explain_simply', documentContext);
+  const userMessage = customPrompt 
+    ? `Regarding this selected text from my study notes:\n"${selectedText}"\n\nQuestion: ${customPrompt}`
+    : `Please explain this highlighted section from my study notes:\n"${selectedText}"`;
+
+  const maxHistoryCount = conversation.summaryMemory ? 6 : 10;
+  const history = (conversation.messages || []).slice(-maxHistoryCount);
+
+  let fullAIResponse = '';
+  let isClosed = false;
+  let stream;
+
+  req.on('close', () => {
+    isClosed = true;
+    deleteCached(streamLockKey);
+    if (stream?.abort) stream.abort();
+  });
+
+  try {
+    stream = await AIService.streamGroq(systemPrompt, userMessage, history);
+
+    for await (const part of stream) {
+      if (isClosed) break;
+      const chunkValue = part.choices[0]?.delta?.content || '';
+      if (chunkValue) {
+        fullAIResponse += chunkValue;
+        res.write(`data: ${JSON.stringify({ token: chunkValue })}\n\n`);
+      }
+    }
+
+    res.write('data: [DONE]\n\n');
+    res.end();
+
+    // Increment user token usage
+    const promptTokens = AIService.getPrecisionTokenCount(userMessage);
+    const completionTokens = AIService.getPrecisionTokenCount(fullAIResponse);
+    const totalTokensUsed = promptTokens + completionTokens;
+    await User.findByIdAndUpdate(userId, { $inc: { dailyTokenUsage: totalTokensUsed } });
+
+    // Save conversation history
+    conversation.messages.push(
+      { role: 'user', content: userMessage },
+      { role: 'assistant', content: fullAIResponse }
+    );
+    await conversation.save();
+
+  } catch (error) {
+    console.error(`[EXPLAIN SELECTION] Streaming error in session ${sessionId}:`, error);
+    if (!res.writableEnded) {
+      res.write(`data: ${JSON.stringify({ error: 'AI Stream interrupted' })}\n\n`);
+      res.end();
+    }
+  } finally {
+    await deleteCached(streamLockKey);
   }
 });
