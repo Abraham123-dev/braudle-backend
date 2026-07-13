@@ -672,6 +672,9 @@ export const chatSession = asyncHandler(async (req, res) => {
       { role: 'user', content: message },
       { role: 'assistant', content: fullAIResponse }
     );
+    if (plan !== 'pro') {
+      conversation.chatMessagesCount = (conversation.chatMessagesCount || 0) + 1;
+    }
     await conversation.save();
 
     // Trigger background rolling summarization task on a 6-message modulo threshold
@@ -711,11 +714,75 @@ export const getSession = asyncHandler(async (req, res) => {
   
   const conversation = await Conversation.findOne({ sessionId: session._id });
 
+  // Load User to check and enforce plan/token limits
+  const user = await User.findById(req.user.id);
+  if (!user) throw new AppError('User not found', 404);
+
+  const plan = user.plan || 'free';
+  const now = new Date();
+
+  // 1. Check and reset token limits (6 hours window)
+  const limitWindow = 6 * 60 * 60 * 1000; // 6 hours
+  const lastReset = user.lastTokenResetDate ? new Date(user.lastTokenResetDate) : new Date(0);
+  let dailyTokenUsage = user.dailyTokenUsage || 0;
+
+  if (now.getTime() - lastReset.getTime() >= limitWindow) {
+    dailyTokenUsage = 0;
+    user.dailyTokenUsage = 0;
+    user.lastTokenResetDate = now;
+    await user.save();
+  }
+
+  const tokenAllowances = {
+    free: 20000,
+    plus: 40000,
+    pro: 120000
+  };
+  const tokenAllowance = tokenAllowances[plan];
+  
+  let isTokenLimited = dailyTokenUsage >= tokenAllowance;
+  let tokenResetTime = null;
+  let tokenLimitMessage = '';
+
+  if (isTokenLimited) {
+    const remainingMs = limitWindow - (now.getTime() - lastReset.getTime());
+    const resetTime = new Date(now.getTime() + remainingMs);
+    tokenResetTime = resetTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    tokenLimitMessage = "You've reached today's AI study limit. Your study time will refresh in 6 hours.";
+  }
+
+  // 2. Check and reset chat limits per document (3 days window)
+  let isChatLimitReached = false;
+  const chatLimit = plan === 'free' ? 20 : 60; // 20 for free, 60 for plus
+  
+  if (plan !== 'pro' && conversation) {
+    const chatLimitWindow = 3 * 24 * 60 * 60 * 1000; // 3 days
+    const lastChatReset = conversation.lastChatResetDate ? new Date(conversation.lastChatResetDate) : new Date(0);
+
+    if (now.getTime() - lastChatReset.getTime() >= chatLimitWindow) {
+      conversation.lastChatResetDate = now;
+      conversation.chatMessagesCount = 0;
+      await conversation.save();
+    } else if (conversation.chatMessagesCount >= chatLimit) {
+      isChatLimitReached = true;
+      const remainingMs = chatLimitWindow - (now.getTime() - lastChatReset.getTime());
+      const hrs = Math.ceil(remainingMs / 3600000);
+      const remainingStr = hrs >= 24 ? `${Math.floor(hrs / 24)}d ${hrs % 24}h` : `${hrs}h`;
+      
+      // Lock the chat immediately
+      isTokenLimited = true;
+      tokenLimitMessage = `You've reached your ${plan} plan limit of ${chatLimit} chat messages for this document. Your limit will reset in ${remainingStr}.`;
+    }
+  }
+
   res.status(200).json({ 
     session, 
     messages: conversation?.messages || [],
     chatMessagesCount: conversation?.chatMessagesCount || 0,
-    explainMessagesCount: conversation?.explainMessagesCount || 0
+    explainMessagesCount: conversation?.explainMessagesCount || 0,
+    isTokenLimited,
+    tokenResetTime,
+    tokenLimitMessage
   });
 });
 
