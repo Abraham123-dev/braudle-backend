@@ -6,9 +6,19 @@ import { connectDB } from './src/config/db.js';
 await connectDB();
 
 // Start server
-const server = app.listen(env.port, () => {
+const server = app.listen(env.port, async () => {
   console.log(` Server running on port ${env.port} in ${env.nodeEnv} mode`);
   console.log(` http://localhost:${env.port}`);
+
+  // Start background workers inside web process (Render Free tier workaround)
+  if (env.nodeEnv === 'production' || process.env.START_WORKER_IN_WEB === 'true') {
+    console.log('🤖 [SERVER] Starting background workers inside web process...');
+    try {
+      await import('./src/workers/document.worker.js');
+    } catch (workerErr) {
+      console.error('🚨 [SERVER] Failed to start background workers:', workerErr.message);
+    }
+  }
 });
 
 // Handle graceful shutdown

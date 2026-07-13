@@ -2,6 +2,9 @@ import mongoose from 'mongoose';
 import { env } from './env.js';
 
 const connectDB = async () => {
+  if (mongoose.connection.readyState === 1) {
+    return;
+  }
   const maxRetries = 5;
   let retries = 0;
 
