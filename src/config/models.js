@@ -37,7 +37,7 @@ export const PROVIDER_MODEL_MAPPING = {
   },
   openrouter: {
     tutoring: process.env.MODEL_OPENROUTER_TUTORING || 'deepseek/deepseek-chat',
-    analysis: process.env.MODEL_OPENROUTER_ANALYSIS || 'qwen/qwen-2.5-32b-instruct',
+    analysis: process.env.MODEL_OPENROUTER_ANALYSIS || 'qwen/qwen-2.5-72b-instruct',
     vision: process.env.MODEL_OPENROUTER_VISION || 'meta-llama/llama-3.2-11b-vision-instruct',
     general_chat: process.env.MODEL_OPENROUTER_GENERAL_CHAT || 'deepseek/deepseek-chat'
   },

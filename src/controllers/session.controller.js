@@ -253,7 +253,7 @@ export const chatSession = asyncHandler(async (req, res) => {
       await conversation.save();
     }
 
-    const chatLimit = plan === 'free' ? 20 : 60; // 20 for free, 60 for plus
+    const chatLimit = plan === 'free' ? 50 : 300; // 50 for free, 300 for plus
     if (conversation.chatMessagesCount >= chatLimit) {
       const remainingMs = chatLimitWindow - (now.getTime() - lastChatReset.getTime());
       const hrs = Math.ceil(remainingMs / 3600000);
@@ -261,7 +261,7 @@ export const chatSession = asyncHandler(async (req, res) => {
       throw new AppError(`You've reached your ${plan} plan limit of ${chatLimit} chat messages for this document. Your limit will reset in ${remainingStr}.`, 429);
     }
   }
-
+ 
   // Token allowance tracker check (6 hours rolling reset)
   const limitWindow = 6 * 60 * 60 * 1000; // 6 hours
   const now = new Date();
@@ -272,13 +272,13 @@ export const chatSession = asyncHandler(async (req, res) => {
     user.lastTokenResetDate = now;
     await user.save();
   }
-
+ 
   const tokenAllowances = {
-    free: 20000,
-    plus: 40000,
-    pro: 120000
+    free: 100000,
+    plus: 1000000,
+    pro: 5000000
   };
-
+ 
   const allowance = tokenAllowances[plan];
   if (user.dailyTokenUsage >= allowance) {
     throw new AppError("You've reached today's AI study limit. Your study time will refresh in 6 hours.", 429);
@@ -734,26 +734,26 @@ export const getSession = asyncHandler(async (req, res) => {
   }
 
   const tokenAllowances = {
-    free: 20000,
-    plus: 40000,
-    pro: 120000
+    free: 100000,
+    plus: 1000000,
+    pro: 5000000
   };
   const tokenAllowance = tokenAllowances[plan];
   
   let isTokenLimited = dailyTokenUsage >= tokenAllowance;
   let tokenResetTime = null;
   let tokenLimitMessage = '';
-
+ 
   if (isTokenLimited) {
     const remainingMs = limitWindow - (now.getTime() - lastReset.getTime());
     const resetTime = new Date(now.getTime() + remainingMs);
     tokenResetTime = resetTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
     tokenLimitMessage = "You've reached today's AI study limit. Your study time will refresh in 6 hours.";
   }
-
+ 
   // 2. Check and reset chat limits per document (3 days window)
   let isChatLimitReached = false;
-  const chatLimit = plan === 'free' ? 20 : 60; // 20 for free, 60 for plus
+  const chatLimit = plan === 'free' ? 50 : 300; // 50 for free, 300 for plus
   
   if (plan !== 'pro' && conversation) {
     const chatLimitWindow = 3 * 24 * 60 * 60 * 1000; // 3 days

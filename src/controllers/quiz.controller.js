@@ -40,25 +40,25 @@ const normalizeQuestions = (questions) => {
 // Helper to check and record generation limits
 export const checkGenLimit = async (user, document, type) => {
   const plan = user.plan || 'free';
-
+ 
   if (plan === 'pro') {
     return; // Unlimited!
   }
-
+ 
   if (plan === 'plus') {
-    // Plus limit: Max 5 generations per day globally
+    // Plus limit: Max 50 generations per day globally
     const count = user.dailyGenerationsCount[type] || 0;
-    if (count >= 5) {
-      throw new AppError(`You've reached your daily limit of 5 ${type} generations for the Plus plan.`, 429);
+    if (count >= 50) {
+      throw new AppError(`You've reached your daily limit of 50 ${type} generations for the Plus plan.`, 429);
     }
     return;
   }
-
+ 
   if (plan === 'free') {
-    // Free limit: Max 1 generation per day globally
+    // Free limit: Max 3 generations per day globally
     const count = user.dailyGenerationsCount[type] || 0;
-    if (count >= 1) {
-      throw new AppError(`You've reached your daily limit of 1 ${type} generation. Upgrade to Plus or Pro for more.`, 429);
+    if (count >= 3) {
+      throw new AppError(`You've reached your daily limit of 3 ${type} generations. Upgrade to Plus or Pro for more.`, 429);
     }
     return;
   }

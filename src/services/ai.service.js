@@ -14,8 +14,8 @@ const groqSecondary = new Groq({ apiKey: env.groqSecondary.apiKey, maxRetries: 0
 function isTransientError(error) {
   const status = error.status || error.statusCode || error.responseStatus;
   
-  // Do not fallback on: 400 (Invalid Request), 401/403 (Authentication/API Key errors)
-  if (status && [400, 401, 403].includes(status)) {
+  // Do not fallback on: 401/403 (Authentication/API Key errors)
+  if (status && [401, 403].includes(status)) {
     return false;
   }
 
@@ -219,7 +219,7 @@ export const generateAIResponse = async ({ task, messages, temperature = 0.5, ma
             max_tokens,
           }, { signal: sig }),
           signal,
-          30000
+          90000
         );
         resultText = completion.choices[0]?.message?.content || '';
       } else if (provider === 'openrouter') {
@@ -241,15 +241,16 @@ export const generateAIResponse = async ({ task, messages, temperature = 0.5, ma
             signal: sig,
           }),
           signal,
-          30000
+          90000
         );
-
+ 
         if (!response.ok) {
-          const err = new Error(`OpenRouter HTTP ${response.status}`);
+          const errBody = await response.text();
+          const err = new Error(`OpenRouter HTTP ${response.status}: ${errBody}`);
           err.status = response.status;
           throw err;
         }
-
+ 
         const data = await response.json();
         resultText = data.choices?.[0]?.message?.content || '';
       } else if (provider === 'mistral') {
@@ -270,15 +271,16 @@ export const generateAIResponse = async ({ task, messages, temperature = 0.5, ma
             signal: sig,
           }),
           signal,
-          30000
+          90000
         );
-
+ 
         if (!response.ok) {
-          const err = new Error(`Mistral HTTP ${response.status}`);
+          const errBody = await response.text();
+          const err = new Error(`Mistral HTTP ${response.status}: ${errBody}`);
           err.status = response.status;
           throw err;
         }
-
+ 
         const data = await response.json();
         resultText = data.choices?.[0]?.message?.content || '';
       } else if (provider === 'nvidia') {
@@ -298,15 +300,16 @@ export const generateAIResponse = async ({ task, messages, temperature = 0.5, ma
             signal: sig,
           }),
           signal,
-          30000
+          90000
         );
-
+ 
         if (!response.ok) {
-          const err = new Error(`NVIDIA HTTP ${response.status}`);
+          const errBody = await response.text();
+          const err = new Error(`NVIDIA HTTP ${response.status}: ${errBody}`);
           err.status = response.status;
           throw err;
         }
-
+ 
         const data = await response.json();
         resultText = data.choices?.[0]?.message?.content || '';
       }
