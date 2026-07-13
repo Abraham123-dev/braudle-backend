@@ -1,0 +1,76 @@
+services:
+  # 1. The Express API Web Service
+  - type: web
+    name: braudle-backend-api
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node server.js
+    envVars:
+      - key: PORT
+        value: 5000
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false # User will input this on Render dashboard
+      - key: REDIS_URL
+        sync: false # Point to Upstash URL
+      - key: JWT_SECRET
+        sync: false
+      - key: GOOGLE_CLIENT_ID
+        sync: false
+      - key: GOOGLE_CLIENT_SECRET
+        sync: false
+      - key: GOOGLE_CALLBACK_URL
+        sync: false
+      - key: GROQ_API_KEY_1
+        sync: false
+      - key: GROQ_API_KEY_2
+        sync: false
+      - key: RESEND_API_KEY
+        sync: false
+      - key: CF_ACCOUNT_ID
+        sync: false
+      - key: CF_R2_ACCESS_KEY
+        sync: false
+      - key: CF_R2_SECRET_KEY
+        sync: false
+      - key: CF_R2_BUCKET
+        sync: false
+      - key: CF_R2_PUBLIC_URL
+        sync: false
+      - key: FRONTEND_URL
+        value: https://braudle.vercel.app
+      - key: PAYSTACK_SECRET_KEY
+        sync: false
+
+  # 2. The BullMQ Background Worker Service
+  - type: worker
+    name: braudle-backend-worker
+    env: node
+    plan: free
+    buildCommand: npm install
+    startCommand: node src/workers/document.worker.js
+    envVars:
+      - key: NODE_ENV
+        value: production
+      - key: MONGODB_URI
+        sync: false
+      - key: REDIS_URL
+        sync: false
+      - key: JWT_SECRET
+        sync: false
+      - key: GROQ_API_KEY_1
+        sync: false
+      - key: GROQ_API_KEY_2
+        sync: false
+      - key: CF_ACCOUNT_ID
+        sync: false
+      - key: CF_R2_ACCESS_KEY
+        sync: false
+      - key: CF_R2_SECRET_KEY
+        sync: false
+      - key: CF_R2_BUCKET
+        sync: false
+      - key: CF_R2_PUBLIC_URL
+        sync: false
