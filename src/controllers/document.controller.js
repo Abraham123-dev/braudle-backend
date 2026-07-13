@@ -75,6 +75,15 @@ export const uploadDocument = asyncHandler(async (req, res) => {
 
   const fileHash = crypto.createHash('sha256').update(file.buffer).digest('hex');
 
+  // Check if this user has already uploaded this document in their library
+  const duplicateForUser = await Document.findOne({
+    userId,
+    fileHash,
+  });
+  if (duplicateForUser) {
+    throw new AppError("This document has already been uploaded to your library.", 400);
+  }
+
   // Check for duplicate in cache
   const existingDoc = await Document.findOne({
     fileHash,
@@ -238,11 +247,62 @@ export const deleteDocument = asyncHandler(async (req, res) => {
  */
 export const getPresignedUrl = asyncHandler(async (req, res) => {
   const userId = req.user.id;
-  const { title, subject, filename, contentType } = req.body;
+  const { title, subject, filename, contentType, fileHash } = req.body;
 
   // Determine type based on contentType or filename extension
   const isPdf = contentType === 'application/pdf' || filename.toLowerCase().endsWith('.pdf');
   const type = isPdf ? 'pdf' : 'image';
+
+  // Instant deduplication check (bypasses R2 upload and daily limits)
+  if (fileHash) {
+    // Check if this user has already uploaded this document in their library
+    const duplicateForUser = await Document.findOne({
+      userId,
+      fileHash,
+    });
+    if (duplicateForUser) {
+      throw new AppError("This document has already been uploaded to your library.", 400);
+    }
+
+    const existingDoc = await Document.findOne({
+      fileHash,
+      processingStatus: 'ready',
+    });
+
+    if (existingDoc) {
+      const document = await Document.create({
+        userId,
+        title: title || filename,
+        subject,
+        type,
+        fileUrl: existingDoc.fileUrl,
+        fileKey: existingDoc.fileKey,
+        fileHash,
+        processingStatus: 'ready',
+        processingStage: 'ready',
+        rawText: existingDoc.rawText,
+        chunks: existingDoc.chunks,
+        chunkEmbeddings: existingDoc.chunkEmbeddings,
+        totalChunks: existingDoc.totalChunks,
+        topics: existingDoc.topics,
+        summary: existingDoc.summary,
+        detailedSummary: existingDoc.detailedSummary,
+        aiUnderstandingFailed: existingDoc.aiUnderstandingFailed,
+        knowledgeCacheStatus: existingDoc.knowledgeCacheStatus,
+        knowledgeCache: existingDoc.knowledgeCache,
+        conceptMapStatus: existingDoc.conceptMapStatus,
+        conceptMap: existingDoc.conceptMap,
+      });
+
+      return res.status(200).json({
+        documentId: document._id,
+        status: 'ready',
+        message: "BRAUDLE already knows this document! Loaded instantly from ingestion cache.",
+        cached: true,
+      });
+    }
+  }
+
   const countField = isPdf ? 'uploadCount.pdf' : 'uploadCount.image';
 
   let user;

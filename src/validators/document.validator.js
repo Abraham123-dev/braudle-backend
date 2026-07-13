@@ -25,6 +25,8 @@ export const getPresignedUrlSchema = z.object({
     .min(1, 'Filename is required'),
   contentType: z.string()
     .min(1, 'Content type is required'),
+  fileHash: z.string()
+    .optional(),
 });
 
 export const confirmUploadSchema = z.object({

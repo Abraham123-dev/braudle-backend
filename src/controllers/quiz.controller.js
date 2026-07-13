@@ -55,10 +55,10 @@ export const checkGenLimit = async (user, document, type) => {
   }
 
   if (plan === 'free') {
-    // Free limit: Max 3 generations per day globally
+    // Free limit: Max 1 generation per day globally
     const count = user.dailyGenerationsCount[type] || 0;
-    if (count >= 3) {
-      throw new AppError(`You've reached your daily limit of 3 ${type} generations. Available tomorrow.`, 429);
+    if (count >= 1) {
+      throw new AppError(`You've reached your daily limit of 1 ${type} generation. Upgrade to Plus or Pro for more.`, 429);
     }
     return;
   }

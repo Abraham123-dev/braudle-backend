@@ -4,7 +4,7 @@ import { env } from '../config/env.js';
 import { connectDB } from '../config/db.js';
 import Document from '../models/Document.model.js';
 import * as StorageService from '../services/storage.service.js';
-import { splitIntoChunksSemantic } from '../utils/chunker.js';
+import { splitIntoChunks, splitIntoChunksSemantic } from '../utils/chunker.js';
 import { 
   buildDocumentUnderstandingPrompt, 
   buildKnowledgeCachePromptA, 
@@ -155,21 +155,20 @@ export const extractionWorker = new Worker(
 
           // Process first 10 pages only to avoid hitting rate limits or slow background processing
           const pagesToProcess = images.slice(0, 10);
-          const pageTranscriptions = [];
+          console.log(`[WORKER: EXTRACTION] Processing ${pagesToProcess.length} pages concurrently...`);
 
-          for (let i = 0; i < pagesToProcess.length; i++) {
-            const pageBuffer = pagesToProcess[i].content;
+          const transcriptionPromises = pagesToProcess.map(async (page, index) => {
+            const pageBuffer = page.content;
             if (pageBuffer.length > 10 * 1024 * 1024) {
-              console.warn(`[WORKER: EXTRACTION] Page ${i + 1} exceeds 10MB limit. Skipping.`);
-              continue;
+              console.warn(`[WORKER: EXTRACTION] Page ${index + 1} exceeds 10MB limit. Skipping.`);
+              return `--- PAGE ${index + 1} ---\n[Exceeded Size Limit]`;
             }
-
-            console.log(`[WORKER: EXTRACTION] Processing page ${i + 1}/${pagesToProcess.length}...`);
             const base64 = pageBuffer.toString('base64');
             const pageText = await AIService.transcribeImage(base64, 'image/png');
-            pageTranscriptions.push(`--- PAGE ${i + 1} ---\n${pageText}`);
-          }
+            return `--- PAGE ${index + 1} ---\n${pageText}`;
+          });
 
+          const pageTranscriptions = await Promise.all(transcriptionPromises);
           extractedText = pageTranscriptions.join('\n\n');
         }
       } else {
@@ -195,7 +194,7 @@ export const extractionWorker = new Worker(
       await Document.findByIdAndUpdate(documentId, { processingStage: 'identifying_concepts' });
       await publishProgress(documentId, 'identifying_concepts', 'processing');
 
-      const chunks = await splitIntoChunksSemantic(extractedText);
+      const chunks = splitIntoChunks(extractedText);
 
       // 4. Topic extraction & summary
       await Document.findByIdAndUpdate(documentId, { processingStage: 'building_learning_map' });

@@ -35,6 +35,22 @@ const conversationSchema = new mongoose.Schema(
       type: String,
       default: '',
     },
+    lastChatResetDate: {
+      type: Date,
+      default: Date.now,
+    },
+    lastExplainResetDate: {
+      type: Date,
+      default: Date.now,
+    },
+    chatMessagesCount: {
+      type: Number,
+      default: 0,
+    },
+    explainMessagesCount: {
+      type: Number,
+      default: 0,
+    },
   },
   { timestamps: true }
 );

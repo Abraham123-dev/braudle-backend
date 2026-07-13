@@ -35,8 +35,9 @@ function isTransientError(error) {
     return false;
   }
 
+  // Treat out of credits (402) and timeouts (408) as transient/fallback-eligible
   if (status) {
-    const transientStatuses = [413, 429, 500, 502, 503];
+    const transientStatuses = [402, 408, 413, 429, 500, 502, 503];
     return transientStatuses.includes(status);
   }
 

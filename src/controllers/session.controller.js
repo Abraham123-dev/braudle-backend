@@ -234,8 +234,35 @@ export const chatSession = asyncHandler(async (req, res) => {
   const user = await User.findById(userId);
   if (!user) throw new AppError('User not found', 404);
 
-  // Token allowance tracker check (6 hours rolling reset)
   const plan = user.plan || 'free';
+
+  // Check and enforce chat limits per document
+  if (plan !== 'pro') {
+    let conversation = await Conversation.findOne({ sessionId });
+    if (!conversation) {
+      conversation = await Conversation.create({ sessionId, userId, messages: [] });
+    }
+
+    const now = new Date();
+    const chatLimitWindow = 3 * 24 * 60 * 60 * 1000; // 3 days
+    const lastChatReset = conversation.lastChatResetDate ? new Date(conversation.lastChatResetDate) : new Date(0);
+
+    if (now.getTime() - lastChatReset.getTime() >= chatLimitWindow) {
+      conversation.lastChatResetDate = now;
+      conversation.chatMessagesCount = 0;
+      await conversation.save();
+    }
+
+    const chatLimit = plan === 'free' ? 20 : 60; // 20 for free, 60 for plus
+    if (conversation.chatMessagesCount >= chatLimit) {
+      const remainingMs = chatLimitWindow - (now.getTime() - lastChatReset.getTime());
+      const hrs = Math.ceil(remainingMs / 3600000);
+      const remainingStr = hrs >= 24 ? `${Math.floor(hrs / 24)}d ${hrs % 24}h` : `${hrs}h`;
+      throw new AppError(`You've reached your ${plan} plan limit of ${chatLimit} chat messages for this document. Your limit will reset in ${remainingStr}.`, 429);
+    }
+  }
+
+  // Token allowance tracker check (6 hours rolling reset)
   const limitWindow = 6 * 60 * 60 * 1000; // 6 hours
   const now = new Date();
   
@@ -249,7 +276,7 @@ export const chatSession = asyncHandler(async (req, res) => {
   const tokenAllowances = {
     free: 20000,
     plus: 40000,
-    large: 120000
+    pro: 120000
   };
 
   const allowance = tokenAllowances[plan];
@@ -365,6 +392,9 @@ export const chatSession = asyncHandler(async (req, res) => {
         { role: 'user', content: message, timestamp: new Date() },
         { role: 'assistant', content: fullAIResponse, timestamp: new Date() }
       );
+      if (plan !== 'pro') {
+        conversation.chatMessagesCount = (conversation.chatMessagesCount || 0) + 1;
+      }
       await conversation.save();
 
       // Save flashcards to profile
@@ -681,7 +711,12 @@ export const getSession = asyncHandler(async (req, res) => {
   
   const conversation = await Conversation.findOne({ sessionId: session._id });
 
-  res.status(200).json({ session, messages: conversation?.messages || [] });
+  res.status(200).json({ 
+    session, 
+    messages: conversation?.messages || [],
+    chatMessagesCount: conversation?.chatMessagesCount || 0,
+    explainMessagesCount: conversation?.explainMessagesCount || 0
+  });
 });
 
 export const completeSession = asyncHandler(async (req, res) => {
@@ -951,6 +986,33 @@ export const explainSelection = asyncHandler(async (req, res) => {
   if (!user) throw new AppError('User not found', 404);
 
   const plan = user.plan || 'free';
+
+  // Check and enforce explain selection limits per document
+  if (plan !== 'pro') {
+    let conversation = await Conversation.findOne({ sessionId });
+    if (!conversation) {
+      conversation = await Conversation.create({ sessionId, userId, messages: [] });
+    }
+
+    const now = new Date();
+    const explainLimitWindow = 7 * 24 * 60 * 60 * 1000; // 7 days (1 week)
+    const lastExplainReset = conversation.lastExplainResetDate ? new Date(conversation.lastExplainResetDate) : new Date(0);
+
+    if (now.getTime() - lastExplainReset.getTime() >= explainLimitWindow) {
+      conversation.lastExplainResetDate = now;
+      conversation.explainMessagesCount = 0;
+      await conversation.save();
+    }
+
+    const explainLimit = plan === 'free' ? 15 : 60; // 15 for free, 60 for plus
+    if (conversation.explainMessagesCount >= explainLimit) {
+      const remainingMs = explainLimitWindow - (now.getTime() - lastExplainReset.getTime());
+      const hrs = Math.ceil(remainingMs / 3600000);
+      const remainingStr = hrs >= 24 ? `${Math.floor(hrs / 24)}d ${hrs % 24}h` : `${hrs}h`;
+      throw new AppError(`You've reached your ${plan} plan limit of ${explainLimit} selection explanations for this document. Your limit will reset in ${remainingStr}.`, 429);
+    }
+  }
+
   const limitWindow = 6 * 60 * 60 * 1000; // 6 hours
   const now = new Date();
   
@@ -964,7 +1026,7 @@ export const explainSelection = asyncHandler(async (req, res) => {
   const tokenAllowances = {
     free: 20000,
     plus: 40000,
-    large: 120000
+    pro: 120000
   };
 
   const allowance = tokenAllowances[plan];
@@ -1107,6 +1169,9 @@ export const explainSelection = asyncHandler(async (req, res) => {
       { role: 'user', content: userMessage },
       { role: 'assistant', content: fullAIResponse }
     );
+    if (plan !== 'pro') {
+      conversation.explainMessagesCount = (conversation.explainMessagesCount || 0) + 1;
+    }
     await conversation.save();
 
   } catch (error) {
