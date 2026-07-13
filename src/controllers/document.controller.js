@@ -837,6 +837,7 @@ export const getDocumentProgressStream = (req, res) => {
       subscriberClient = new Redis(env.redisUrl, {
         enableReadyCheck: false,
         maxRetriesPerRequest: null,
+        keepAlive: 30000,
       });
 
       const channel = `doc:progress:${id}`;

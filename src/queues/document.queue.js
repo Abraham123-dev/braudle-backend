@@ -6,6 +6,7 @@ import { env } from '../config/env.js';
 const queueConnection = new Redis(env.redisUrl, {
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
+  keepAlive: 30000,
 });
 
 const defaultJobOptions = {

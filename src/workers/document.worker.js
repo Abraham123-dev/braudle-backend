@@ -26,6 +26,7 @@ await connectDB();
 const workerConnection = new Redis(env.redisUrl, {
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
+  keepAlive: 30000,
 });
 
 /**

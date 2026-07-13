@@ -44,6 +44,7 @@ const redisClient = new redis(env.redisUrl, {
   enableReadyCheck: false,
   commandTimeout: 5000,   // Command fails fast (5s) if server hangs
   connectTimeout: 5000,   // Connection fails fast (5s) if server is unreachable
+  keepAlive: 30000,
 });
 
 redisClient.on('connect', () => {
