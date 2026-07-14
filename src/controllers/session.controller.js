@@ -5,6 +5,7 @@ import Document from '../models/Document.model.js';
 import StudentProfile from '../models/StudentProfile.model.js';
 import Conversation from '../models/Conversation.model.js';
 import User from '../models/User.model.js';
+import FlashcardDeck from '../models/FlashcardDeck.model.js';
 import { buildTeachPrompt } from '../utils/promptBuilder.js';
 import * as AIService from '../services/ai.service.js';
 import * as AdaptationService from '../services/adaptation.service.js';
@@ -27,7 +28,7 @@ const parseFlashcardsFromResponse = (text) => {
   const lines = text.split('\n');
 
   for (const line of lines) {
-    if (!line.startsWith('FLASHCARD |')) continue;
+    if (!line.includes('FLASHCARD |')) continue;
 
     const topicMatch  = line.match(/TOPIC:\s*([^|]+)/i);
     const frontMatch  = line.match(/FRONT:\s*([^|]+)/i);
@@ -253,7 +254,7 @@ export const chatSession = asyncHandler(async (req, res) => {
       await conversation.save();
     }
 
-    const chatLimit = plan === 'free' ? 50 : 300; // 50 for free, 300 for plus
+    const chatLimit = plan === 'free' ? 20 : 80; // 20 for free, 80 for plus
     if (conversation.chatMessagesCount >= chatLimit) {
       const remainingMs = chatLimitWindow - (now.getTime() - lastChatReset.getTime());
       const hrs = Math.ceil(remainingMs / 3600000);
@@ -274,14 +275,36 @@ export const chatSession = asyncHandler(async (req, res) => {
   }
  
   const tokenAllowances = {
-    free: 100000,
-    plus: 1000000,
-    pro: 5000000
+    free: 20000,   // ~20 short AI responses per 6h window
+    plus: 200000,  // ~200 responses per 6h window
+    pro: 5000000   // Effectively unlimited
   };
  
   const allowance = tokenAllowances[plan];
   if (user.dailyTokenUsage >= allowance) {
     throw new AppError("You've reached today's AI study limit. Your study time will refresh in 6 hours.", 429);
+  }
+
+  // Parse prepare mode style selection in chat
+  if (session.mode === 'prepare' && (!session.preparationStyle || session.preparationStyle === 'mixed')) {
+    const cleanMsg = message.trim().toLowerCase();
+    let selectedStyle = null;
+
+    if (cleanMsg === '1' || cleanMsg.startsWith('1.') || cleanMsg.includes('story') || cleanMsg.includes('narrative')) {
+      selectedStyle = 'story';
+    } else if (cleanMsg === '2' || cleanMsg.startsWith('2.') || cleanMsg.includes('mcq') || cleanMsg.includes('choice')) {
+      selectedStyle = 'mcq';
+    } else if (cleanMsg === '3' || cleanMsg.startsWith('3.') || cleanMsg.includes('theory') || cleanMsg.includes('essay')) {
+      selectedStyle = 'theory';
+    } else if (cleanMsg === '4' || cleanMsg.startsWith('4.') || cleanMsg === 'mixed') {
+      selectedStyle = 'mixed';
+    }
+
+    if (selectedStyle) {
+      session.preparationStyle = selectedStyle;
+      await session.save();
+      console.log(`[PREPARE STATE] Set preparationStyle to ${selectedStyle} for session ${sessionId} based on message: "${message}"`);
+    }
   }
 
   // Intercept Flashcard deck generations to serve from Master Knowledge Cache
@@ -333,8 +356,9 @@ export const chatSession = asyncHandler(async (req, res) => {
       }
     };
 
-    const { checkAndRecordGenLimit } = await import('./quiz.controller.js');
-    await checkAndRecordGenLimit(user, document, 'flashcards');
+    // NOTE: Generation limit is enforced by the dedicated /concept-flashcards endpoint only.
+    // Do NOT call checkAndRecordGenLimit here — doing so locks the main AI chat after
+    // the daily flashcard quota is used.
 
     if (!document.knowledgeCache || !Array.isArray(document.knowledgeCache.flashcards) || document.knowledgeCache.flashcards.length === 0) {
       await generateAndSaveCacheOnTheFly(document);
@@ -410,6 +434,20 @@ export const chatSession = asyncHandler(async (req, res) => {
         { $push: { savedFlashcards: { $each: parsedCards } } },
         { returnDocument: 'after', upsert: true }
       );
+
+      // Save to FlashcardDeck collection
+      await FlashcardDeck.create({
+        userId,
+        documentId: document._id,
+        sessionId,
+        conceptName: 'General',
+        cards: selectedCards.map(fc => ({
+          topic: fc.concept || fc.topic || 'General',
+          front: fc.front,
+          back: fc.back
+        })),
+        cardCount: selectedCards.length
+      });
 
       // Save to shown tracking
       if (!document.sessionMemory) {

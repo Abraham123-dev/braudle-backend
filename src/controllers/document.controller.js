@@ -7,6 +7,8 @@ import Document from '../models/Document.model.js';
 import Session from '../models/Session.model.js';
 import Conversation from '../models/Conversation.model.js';
 import Quiz from '../models/Quiz.model.js';
+import FlashcardDeck from '../models/FlashcardDeck.model.js';
+import StudentProfile from '../models/StudentProfile.model.js';
 import * as StorageService from '../services/storage.service.js';
 import { extractionQueue } from '../queues/document.queue.js';
 import { env } from '../config/env.js';
@@ -875,7 +877,7 @@ export const getDocumentProgressStream = (req, res) => {
 };
 
 export const generateConceptFlashcards = asyncHandler(async (req, res) => {
-  const { conceptName, sessionId } = req.body;
+  const { conceptName, sessionId, count } = req.body;
   const { id } = req.params;
   const userId = req.user.id;
 
@@ -902,7 +904,8 @@ export const generateConceptFlashcards = asyncHandler(async (req, res) => {
   const { buildConceptFlashcardsPrompt } = await import('../utils/promptBuilder.js');
   const { parseAIJson } = await import('../utils/parseAIJson.js');
 
-  const prompt = buildConceptFlashcardsPrompt(document.chunks, conceptName, 10);
+  const cardCount = count ? parseInt(count, 10) : 10;
+  const prompt = buildConceptFlashcardsPrompt(document.chunks, conceptName, cardCount);
   const aiResponse = await generateAIResponse({
     task: 'tutoring',
     messages: [{ role: 'user', content: prompt }],
@@ -929,7 +932,7 @@ export const generateConceptFlashcards = asyncHandler(async (req, res) => {
   if (sessionId) {
     const conversation = await Conversation.findOne({ sessionId, userId });
     if (conversation) {
-      const userText = `Please generate exactly 10 flashcards from our study materials. Focus on the concept: "${conceptName}"`;
+      const userText = `Please generate exactly ${cardCount} flashcards from our study materials. Focus on the concept: "${conceptName}"`;
       
       const formattedLines = normalizedCards.map(fc => 
         `FLASHCARD | TOPIC: ${fc.topic} | FRONT: ${fc.front} | BACK: ${fc.back}`
@@ -953,9 +956,56 @@ export const generateConceptFlashcards = asyncHandler(async (req, res) => {
     }
   }
 
+  // 4. Save the generated deck persistently
+  const newDeck = await FlashcardDeck.create({
+    userId,
+    documentId: id,
+    sessionId: sessionId || null,
+    conceptName: conceptName || 'General',
+    cards: normalizedCards,
+    cardCount: normalizedCards.length
+  });
+
+  // 5. Save flashcards to user's student profile library
+  const profileCards = normalizedCards.map(fc => ({
+    documentId: document._id,
+    documentTitle: document.title,
+    topic: fc.topic || 'General',
+    front: fc.front,
+    back: fc.back
+  }));
+
+  await StudentProfile.findOneAndUpdate(
+    { userId },
+    { $push: { savedFlashcards: { $each: profileCards } } },
+    { returnDocument: 'after', upsert: true }
+  );
+
+  // Invalidate profile cache
+  const { deleteCached: delCache, CACHE_KEYS: keys } = await import('../utils/cache.js');
+  await delCache(keys.PROFILE(userId));
+
   return res.status(200).json({
     status: 'success',
-    flashcards: normalizedCards
+    flashcards: normalizedCards,
+    deck: newDeck
+  });
+});
+
+export const getDocumentFlashcardDecks = asyncHandler(async (req, res) => {
+  const { id } = req.params;
+  const userId = req.user.id;
+
+  const document = await Document.findOne({ _id: id, userId });
+  if (!document) {
+    throw new AppError('Document not found or access denied', 404);
+  }
+
+  const decks = await FlashcardDeck.find({ documentId: id, userId }).sort({ createdAt: -1 });
+
+  return res.status(200).json({
+    status: 'success',
+    decks
   });
 });
 
@@ -973,5 +1023,6 @@ export const getDocumentViewUrl = asyncHandler(async (req, res) => {
   return res.status(200).json({
     status: 'success',
     viewUrl,
+    type: document.type,
   });
 });

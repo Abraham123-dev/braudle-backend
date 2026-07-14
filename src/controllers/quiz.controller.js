@@ -46,19 +46,19 @@ export const checkGenLimit = async (user, document, type) => {
   }
  
   if (plan === 'plus') {
-    // Plus limit: Max 50 generations per day globally
+    // Plus limit: Max 10 generations per day per type
     const count = user.dailyGenerationsCount[type] || 0;
-    if (count >= 50) {
-      throw new AppError(`You've reached your daily limit of 50 ${type} generations for the Plus plan.`, 429);
+    if (count >= 10) {
+      throw new AppError(`You've reached your daily limit of 10 ${type} generations for the Plus plan. Upgrade to Pro for unlimited access.`, 429);
     }
     return;
   }
  
   if (plan === 'free') {
-    // Free limit: Max 3 generations per day globally
+    // Free limit: Max 1 generation per day globally
     const count = user.dailyGenerationsCount[type] || 0;
-    if (count >= 3) {
-      throw new AppError(`You've reached your daily limit of 3 ${type} generations. Upgrade to Plus or Pro for more.`, 429);
+    if (count >= 1) {
+      throw new AppError(`You've reached your daily limit of 1 ${type} generation. Upgrade to Plus or Pro for more.`, 429);
     }
     return;
   }

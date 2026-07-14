@@ -26,6 +26,7 @@ import {
   getDocumentConceptMap,
   getDocumentProgressStream,
   generateConceptFlashcards,
+  getDocumentFlashcardDecks,
   getDocumentViewUrl,
 } from '../controllers/document.controller.js';
 
@@ -52,6 +53,7 @@ router.get('/:id/progress', verifyJWT, getDocumentProgressStream);
 router.get('/:id/concept-map', verifyJWT, getDocumentConceptMap);
 router.get('/:id/view', verifyJWT, getDocumentViewUrl);
 router.post('/:id/concept-flashcards', verifyJWT, generateConceptFlashcards);
+router.get('/:id/flashcard-decks', verifyJWT, getDocumentFlashcardDecks);
 router.delete('/:id', verifyJWT, deleteDocument);
 
 export default router;
