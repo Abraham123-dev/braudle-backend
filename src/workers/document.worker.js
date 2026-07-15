@@ -14,6 +14,7 @@ import { PDFParse } from 'pdf-parse';
 import * as AIService from '../services/ai.service.js';
 import { GROQ_MODELS } from '../config/models.js';
 import { parseAIJson } from '../utils/parseAIJson.js';
+import { detectQuestionsInDocument } from '../utils/documentAnalyzer.js';
 import crypto from 'crypto';
 import AppErrorLog from '../models/AppErrorLog.model.js';
 import Conversation from '../models/Conversation.model.js';
@@ -119,6 +120,7 @@ export const extractionWorker = new Worker(
           summary: existingDoc.summary,
           detailedSummary: existingDoc.detailedSummary,
           aiUnderstandingFailed: existingDoc.aiUnderstandingFailed,
+          hasQuestions: existingDoc.hasQuestions,
           knowledgeCacheStatus: existingDoc.knowledgeCacheStatus,
           knowledgeCache: existingDoc.knowledgeCache,
           conceptMapStatus: existingDoc.conceptMapStatus,
@@ -219,7 +221,10 @@ export const extractionWorker = new Worker(
         await Document.findByIdAndUpdate(documentId, { aiUnderstandingFailed: true });
       }
 
-      // 5. Mark document as READY. The user can now view it and start study chats immediately!
+      // 5. Detect whether the document contains questions/exam problems (zero AI cost)
+      const hasQuestions = detectQuestionsInDocument(chunks);
+
+      // 6. Mark document as READY. The user can now view it and start study chats immediately!
       await Document.findByIdAndUpdate(documentId, {
         rawText: extractedText,
         chunks,
@@ -227,6 +232,7 @@ export const extractionWorker = new Worker(
         topics,
         summary,
         fileHash,
+        hasQuestions,
         misconceptions: [],
         processingStatus: 'ready',
         processingStage: 'ready',

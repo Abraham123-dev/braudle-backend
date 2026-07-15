@@ -52,5 +52,11 @@ export const PROVIDER_MODEL_MAPPING = {
     analysis: process.env.MODEL_NVIDIA_ANALYSIS || 'meta/llama-3.1-8b-instruct',
     vision: process.env.MODEL_NVIDIA_VISION || 'meta/llama-3.2-11b-vision-instruct',
     general_chat: process.env.MODEL_NVIDIA_GENERAL_CHAT || 'meta/llama-3.3-70b-instruct'
+  },
+  cerebras: {
+    tutoring: process.env.MODEL_CEREBRAS_TUTORING || 'gpt-oss-120b',
+    analysis: process.env.MODEL_CEREBRAS_ANALYSIS || 'gemma-4-31b',
+    vision: process.env.MODEL_CEREBRAS_VISION || 'gemma-4-31b',
+    general_chat: process.env.MODEL_CEREBRAS_GENERAL_CHAT || 'gpt-oss-120b'
   }
 };

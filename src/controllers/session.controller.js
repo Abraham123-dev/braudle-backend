@@ -13,6 +13,7 @@ import * as ProfileService from '../services/profile.service.js';
 import * as YouTubeService from '../services/youtube.service.js';
 import { getCached, setCached, deleteCached, CACHE_KEYS, CACHE_TTL } from '../utils/cache.js';
 import { summaryQueue } from '../queues/document.queue.js';
+import { detectQuestionsInDocument } from '../utils/documentAnalyzer.js';
 
 // ── Flashcard parser ─────────────────────────────────────────────────────────
 /**
@@ -77,7 +78,7 @@ const resolveYouTubeMarker = async (text) => {
 /**
  * Helper to generate a personalized AI welcome message.
  */
-export const generateWelcomeText = (document, profile, name) => {
+export const generateWelcomeText = (document, profile, name, hasQuestions = false) => {
   const firstName = name?.split(' ')[0] || 'there';
 
   const topics = document.topics || [];
@@ -122,6 +123,11 @@ export const generateWelcomeText = (document, profile, name) => {
     }
   }
 
+  // ── Questions / exam sheet detection block ────────────────────────────────
+  if (hasQuestions) {
+    welcomeText += `\n\n📝 **Questions Detected:** I noticed this document contains practice questions, quizzes, or exam problems! I can help you **demystify and solve** them step-by-step, or explain the concepts behind each one. Just ask me in the chat (e.g. *"Solve Question 1"* or *"Explain the answer to Q3"*).`;
+  }
+
   welcomeText += `\n\n💡 **Tip**: You can click on any of the **Key Concepts** in the left sidebar at any time to automatically get a detailed explanation here in the chat.`;
   welcomeText += `\n\nTo test your knowledge, check out the **Braudle Modes** panel on the right (or tap the tab on mobile) where you can generate practice tests, exam simulations, or memory flashcards!`;
 
@@ -164,7 +170,16 @@ export const startSession = asyncHandler(async (req, res) => {
     if (document.processingStatus === 'ready') {
       const profile = await ProfileService.getProfile(userId);
       const name = req.user.name === 'New Student' ? '' : req.user.name;
-      const welcomeText = generateWelcomeText(document, profile || { weakTopics: [], strongTopics: [] }, name);
+
+      // Resolve hasQuestions — use stored flag if already computed, otherwise
+      // run lazy evaluation and write the result back for future sessions.
+      let hasQuestions = document.hasQuestions;
+      if (hasQuestions === undefined || hasQuestions === null) {
+        hasQuestions = detectQuestionsInDocument(document.chunks || []);
+        Document.findByIdAndUpdate(document._id, { hasQuestions }).catch(() => {});
+      }
+
+      const welcomeText = generateWelcomeText(document, profile || { weakTopics: [], strongTopics: [] }, name, hasQuestions);
       messages.push({
         role: 'assistant',
         content: welcomeText,
@@ -934,7 +949,7 @@ export const getWelcomeMessage = asyncHandler(async (req, res) => {
   if (!session) throw new AppError('Session not found', 404);
 
   const document = await Document.findById(session.documentId)
-    .select('title topics summary totalChunks processingStatus');
+    .select('title topics summary totalChunks processingStatus hasQuestions chunks');
   if (!document) throw new AppError('Document not found', 404);
 
   if (document.processingStatus !== 'ready') {
@@ -944,8 +959,16 @@ export const getWelcomeMessage = asyncHandler(async (req, res) => {
   const profile = await ProfileService.getProfile(userId);
   if (!profile) throw new AppError('Student profile not found', 404);
 
+  // Lazy evaluation: if hasQuestions flag has not been computed yet (older document),
+  // run heuristic now and persist it for future calls (fire-and-forget).
+  let hasQuestions = document.hasQuestions;
+  if (hasQuestions === undefined || hasQuestions === null) {
+    hasQuestions = detectQuestionsInDocument(document.chunks || []);
+    Document.findByIdAndUpdate(document._id, { hasQuestions }).catch(() => {});
+  }
+
   const name = req.user.name === 'New Student' ? '' : req.user.name;
-  const welcomeText = generateWelcomeText(document, profile, name);
+  const welcomeText = generateWelcomeText(document, profile, name, hasQuestions);
 
   // Auto-save welcome message to empty conversations atomically to prevent race conditions
   await Conversation.findOneAndUpdate(

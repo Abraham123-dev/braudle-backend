@@ -104,7 +104,10 @@ const getModelDisplayName = (modelSlug) => {
     'pixtral-large-latest': 'Pixtral Large',
     'meta/llama-3.3-70b-instruct': 'Llama 3.3 70B Instruct (NVIDIA)',
     'meta/llama-3.1-8b-instruct': 'Llama 3.1 8B Instruct (NVIDIA)',
-    'meta/llama-3.2-11b-vision-instruct': 'Llama 3.2 11B Vision (NVIDIA)'
+    'meta/llama-3.2-11b-vision-instruct': 'Llama 3.2 11B Vision (NVIDIA)',
+    'gpt-oss-120b': 'GPT OSS 120B (Cerebras)',
+    'gemma-4-31b': 'Gemma 4 31B (Cerebras)',
+    'zai-glm-4.7': 'ZAI GLM 4.7 (Cerebras)'
   };
   return MODEL_DISPLAY_NAMES[modelSlug] || modelSlug;
 };
@@ -114,7 +117,8 @@ const getProviderDisplayName = (providerKey) => {
     groq: 'Groq',
     openrouter: 'OpenRouter',
     mistral: 'Mistral',
-    nvidia: 'NVIDIA'
+    nvidia: 'NVIDIA',
+    cerebras: 'Cerebras'
   };
   return map[providerKey] || providerKey;
 };
@@ -178,8 +182,8 @@ const runWithSignalAndTimeout = async (fn, parentSignal, timeoutMs = 30000) => {
  */
 export const generateAIResponse = async ({ task, messages, temperature = 0.5, max_tokens = 4096, signal }) => {
   const providers = task === 'general_chat'
-    ? ['mistral', 'nvidia']
-    : ['groq', 'groq_secondary', 'openrouter', 'mistral', 'nvidia'];
+    ? ['mistral', 'nvidia', 'cerebras']
+    : ['groq', 'groq_secondary', 'openrouter', 'mistral', 'nvidia', 'cerebras'];
   let lastError = null;
 
   for (const provider of providers) {
@@ -201,6 +205,9 @@ export const generateAIResponse = async ({ task, messages, temperature = 0.5, ma
       continue;
     }
     if (provider === 'nvidia' && !env.nvidia.apiKey) {
+      continue;
+    }
+    if (provider === 'cerebras' && !env.cerebras.apiKey) {
       continue;
     }
 
@@ -312,6 +319,35 @@ export const generateAIResponse = async ({ task, messages, temperature = 0.5, ma
  
         const data = await response.json();
         resultText = data.choices?.[0]?.message?.content || '';
+      } else if (provider === 'cerebras') {
+        const response = await runWithSignalAndTimeout(
+          (sig) => fetch('https://api.cerebras.ai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${env.cerebras.apiKey}`,
+            },
+            body: JSON.stringify({
+              model,
+              messages,
+              temperature,
+              max_tokens,
+            }),
+            signal: sig,
+          }),
+          signal,
+          90000
+        );
+ 
+        if (!response.ok) {
+          const errBody = await response.text();
+          const err = new Error(`Cerebras HTTP ${response.status}: ${errBody}`);
+          err.status = response.status;
+          throw err;
+        }
+ 
+        const data = await response.json();
+        resultText = data.choices?.[0]?.message?.content || '';
       }
 
       const duration = Date.now() - start;
@@ -346,8 +382,8 @@ export const generateAIResponse = async ({ task, messages, temperature = 0.5, ma
  */
 export async function* streamAIResponse({ task, messages, temperature = 0.7, max_tokens = 4096, signal }) {
   const providers = task === 'general_chat'
-    ? ['mistral', 'nvidia']
-    : ['groq', 'groq_secondary', 'openrouter', 'mistral', 'nvidia'];
+    ? ['mistral', 'nvidia', 'cerebras']
+    : ['groq', 'groq_secondary', 'openrouter', 'mistral', 'nvidia', 'cerebras'];
   let lastError = null;
 
   for (const provider of providers) {
@@ -369,6 +405,9 @@ export async function* streamAIResponse({ task, messages, temperature = 0.7, max
       continue;
     }
     if (provider === 'nvidia' && !env.nvidia.apiKey) {
+      continue;
+    }
+    if (provider === 'cerebras' && !env.cerebras.apiKey) {
       continue;
     }
 
@@ -564,6 +603,65 @@ export async function* streamAIResponse({ task, messages, temperature = 0.7, max
             const dataStr = trimmed.slice(6).trim();
             if (dataStr === '[DONE]') continue;
 
+            try {
+              const parsed = JSON.parse(dataStr);
+              const text = parsed.choices?.[0]?.delta?.content || '';
+              if (text) {
+                yield { choices: [{ delta: { content: text } }] };
+              }
+            } catch (e) {
+              // Ignore invalid JSON on SSE lines
+            }
+          }
+        }
+        return;
+      }
+ 
+      if (provider === 'cerebras') {
+        const response = await runWithSignalAndTimeout(
+          (sig) => fetch('https://api.cerebras.ai/v1/chat/completions', {
+            method: 'POST',
+            headers: {
+              'Content-Type': 'application/json',
+              'Authorization': `Bearer ${env.cerebras.apiKey}`,
+            },
+            body: JSON.stringify({
+              model,
+              messages,
+              temperature,
+              max_tokens,
+              stream: true,
+            }),
+            signal: sig,
+          }),
+          signal,
+          30000
+        );
+ 
+        if (!response.ok) {
+          const err = new Error(`Cerebras HTTP ${response.status}`);
+          err.status = response.status;
+          throw err;
+        }
+ 
+        const duration = Date.now() - start;
+        console.log(`[AI GATEWAY] Success | Provider: ${provider} | Fallback Level: ${fallbackLevel} | Response Time (Stream Init): ${duration}ms`);
+ 
+        const decoder = new TextDecoder();
+        let buffer = '';
+        const bodyStream = response.body;
+ 
+        for await (const chunk of bodyStream) {
+          buffer += decoder.decode(chunk, { stream: true });
+          const lines = buffer.split('\n');
+          buffer = lines.pop() || '';
+ 
+          for (const line of lines) {
+            const trimmed = line.trim();
+            if (!trimmed.startsWith('data: ')) continue;
+            const dataStr = trimmed.slice(6).trim();
+            if (dataStr === '[DONE]') continue;
+ 
             try {
               const parsed = JSON.parse(dataStr);
               const text = parsed.choices?.[0]?.delta?.content || '';

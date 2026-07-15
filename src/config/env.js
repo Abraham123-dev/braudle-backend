@@ -61,6 +61,9 @@ export const env = {
   nvidia: {
     apiKey: process.env.NVIDIA_API_KEY,
   },
+  cerebras: {
+    apiKey: process.env.CEREBRAS_API_KEY,
+  },
   gemini: {
     apiKey: process.env.GEMINI_API_KEY,
   },

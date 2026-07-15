@@ -96,6 +96,10 @@ const documentSchema = new mongoose.Schema(
       type: Boolean,
       default: false,
     },
+    hasQuestions: {
+      type: Boolean,
+      default: false,
+    },
     knowledgeCacheStatus: {
       type: String,
       enum: ['pending', 'processing', 'ready', 'failed'],
