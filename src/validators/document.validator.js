@@ -31,6 +31,7 @@ export const getPresignedUrlSchema = z.object({
 
 export const confirmUploadSchema = z.object({
   documentId: z.string().min(1, 'Document ID is required'),
+  fileHash: z.string().optional(),
 });
 
 export const presignPartsSchema = z.object({

@@ -2,9 +2,12 @@ import crypto from 'crypto';
 import express from 'express';
 import cors from 'cors';
 import helmet from 'helmet';
+import compression from 'compression';
 import cookieParser from 'cookie-parser';
 import hpp from 'hpp';
 import mongoSanitize from 'express-mongo-sanitize';
+import pinoHttp from 'pino-http';
+import { logger } from './utils/logger.js';
 import { env } from './config/env.js';
 import { mongoose } from './config/db.js';
 import { redisClient } from './config/redis.js';
@@ -28,13 +31,42 @@ const app = express();
 
 app.set('trust proxy', 1);
 
+// ── Security headers ──────────────────────────────────────────────────────────
 app.use(helmet());
+
+// ── CORS ──────────────────────────────────────────────────────────────────────
+// maxAge: 600 caches the preflight response in the browser for 10 minutes,
+// eliminating the OPTIONS round-trip before every cross-origin API call.
 app.use(
   cors({
     origin: env.frontendUrl,
-    credentials: true, // Allow cookies
+    credentials: true,
+    maxAge: 600,
   })
 );
+
+// ── Gzip / Brotli compression ─────────────────────────────────────────────────
+// Compresses all JSON/text responses. Typical savings: 60-80% on large payloads.
+// Skipped for SSE streams (Content-Type: text/event-stream) automatically.
+app.use(compression({
+  // Only compress responses > 1KB — below that, compression overhead isn't worth it
+  threshold: 1024,
+}));
+
+// ── Structured HTTP request logging ──────────────────────────────────────────
+// Logs every request as JSON in production (filterable in Render logs).
+// In dev, pino-pretty auto-formats with colours if installed; falls back to JSON.
+app.use(pinoHttp({
+  logger,
+  // Don't log health-check polls — they're noise
+  autoLogging: {
+    ignore: (req) => req.url === '/api/health',
+  },
+  // Redact sensitive fields from logged request/response bodies
+  redact: ['req.headers.authorization', 'req.headers.cookie', 'req.body.password'],
+  customSuccessMessage: (req, res) => `${req.method} ${req.url} → ${res.statusCode}`,
+  customErrorMessage: (req, res, err) => `${req.method} ${req.url} → ${res.statusCode} [${err.message}]`,
+}));
 
 app.use(hpp());
 app.use((req, res, next) => {
@@ -74,13 +106,18 @@ app.use('/api/payments', paymentRoutes);
 app.use('/api/mastery', masteryRoutes);
 app.use('/api/admin/lighthouse', adminRoutes);
 
+// ── Health check ──────────────────────────────────────────────────────────────
+// Reports MongoDB + Redis connectivity so Render can detect partial failures
+// (e.g. DB disconnected but HTTP still alive).
 app.get('/api/health', (req, res) => {
   const mongoState = mongoose.connection.readyState;
   const mongoStatus = mongoState === 1 ? 'connected' : mongoState === 2 ? 'connecting' : 'disconnected';
   const redisStatus = redisClient.status === 'ready' ? 'connected' : redisClient.status || 'disconnected';
 
-  res.json({
-    status: 'ok',
+  const isHealthy = mongoStatus === 'connected' && redisStatus === 'connected';
+
+  res.status(isHealthy ? 200 : 503).json({
+    status: isHealthy ? 'ok' : 'degraded',
     timestamp: new Date().toISOString(),
     mongodb: mongoStatus,
     redis: redisStatus,
@@ -99,6 +136,7 @@ const sanitizeRequestBody = (body) => {
   return sanitized;
 };
 
+// ── Global error handler ──────────────────────────────────────────────────────
 app.use((err, req, res, next) => {
   let statusCode = err.statusCode || 500;
   let message = err.message || 'Internal Server Error';
@@ -106,9 +144,15 @@ app.use((err, req, res, next) => {
   // Generate a unique correlation/error ID for tracking
   const errorId = `err_${crypto.randomUUID().slice(0, 8)}`;
 
-  // Log full error internally for debugging
-  console.error(`[ERROR] [ID: ${errorId}] ${statusCode} - ${err.message}`);
-  if (err.stack) console.error(err.stack);
+  // Structured error log (goes into pino JSON stream in production)
+  logger.error({
+    errorId,
+    statusCode,
+    method: req.method,
+    url: req.originalUrl,
+    userId: req.user?.id,
+    err,
+  }, `[${errorId}] ${statusCode} - ${err.message}`);
 
   // Central Error House DB Logger (Non-blocking)
   AppErrorLog.create({
@@ -123,7 +167,7 @@ app.use((err, req, res, next) => {
     body: sanitizeRequestBody(req.body),
     ip: req.ip || req.connection?.remoteAddress,
     userAgent: req.headers['user-agent']
-  }).catch(logErr => console.error('[ERROR] Failed to save log to MongoDB:', logErr.message));
+  }).catch(logErr => logger.warn({ err: logErr }, 'Failed to save error log to MongoDB'));
 
   // Handle body-parser / JSON.parse errors gracefully
   if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
@@ -137,7 +181,7 @@ app.use((err, req, res, next) => {
   // Only show stack trace in dev for 500 errors or non-operational bugs
   const showStack = isDev && (statusCode === 500 || !err.isOperational);
 
-  // If it's a 500 error, sanitize the message in production to prevent leaking system details
+  // Sanitize 500 message in production to prevent leaking system internals
   const isInternal = statusCode === 500;
   const clientMessage = isInternal && !isDev 
     ? 'An unexpected error occurred on our end. Please try again later.' 
@@ -146,7 +190,7 @@ app.use((err, req, res, next) => {
   res.status(statusCode).json({
     status: 'error',
     message: clientMessage,
-    errorId, // Return reference ID to the client so they can quote it to support
+    errorId,
     ...(showStack && { stack: err.stack }),
   });
 });

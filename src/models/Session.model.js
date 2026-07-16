@@ -66,4 +66,9 @@ const sessionSchema = new mongoose.Schema(
   { timestamps: true }
 );
 
+// Compound index: the most common query is "all active sessions for user, newest first"
+sessionSchema.index({ userId: 1, createdAt: -1 });
+// Lookup by document (e.g. delete cascade, dedup check)
+sessionSchema.index({ documentId: 1, userId: 1 });
+
 export default mongoose.model('Session', sessionSchema);

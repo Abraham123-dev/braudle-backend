@@ -368,7 +368,7 @@ export const getPresignedUrl = asyncHandler(async (req, res) => {
  * and queues the background parsing job
  */
 export const confirmUpload = asyncHandler(async (req, res) => {
-  const { documentId } = req.body;
+  const { documentId, fileHash } = req.body;
   const userId = req.user.id;
 
   const document = await Document.findById(documentId);
@@ -378,6 +378,11 @@ export const confirmUpload = asyncHandler(async (req, res) => {
 
   if (document.userId.toString() !== userId) {
     throw new AppError('Forbidden: Access denied', 403);
+  }
+
+  // Stamp file hash for deduplication (computed client-side in parallel with presign request)
+  if (fileHash && !document.fileHash) {
+    await Document.findByIdAndUpdate(documentId, { fileHash });
   }
 
   const user = await User.findById(userId);

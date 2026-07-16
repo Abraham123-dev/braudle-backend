@@ -1,6 +1,7 @@
 import { app } from './src/app.js';
 import { env } from './src/config/env.js';
 import { connectDB } from './src/config/db.js';
+import { logger } from './src/utils/logger.js';
 
 // Connect to database
 await connectDB();
@@ -9,13 +10,13 @@ await connectDB();
 // This prevents a race condition where an upload job gets queued to Redis
 // before any worker is listening to consume it (critical on Render cold starts).
 if (env.nodeEnv === 'production' || process.env.START_WORKER_IN_WEB === 'true') {
-  console.log('🤖 [SERVER] Starting background workers...');
+  logger.info('Starting background workers...');
   try {
     await import('./src/workers/document.worker.js');
-    console.log('✅ [SERVER] Background workers ready.');
+    logger.info('Background workers ready.');
   } catch (workerErr) {
     // Log but do NOT exit — the API is still usable. Worker jobs will re-queue on retry.
-    console.error('🚨 [SERVER] Failed to start background workers:', workerErr.message);
+    logger.error({ err: workerErr }, 'Failed to start background workers');
   }
 }
 
@@ -35,39 +36,41 @@ try {
     }
   );
   if (orphaned.modifiedCount > 0) {
-    console.warn(`[SERVER] Marked ${orphaned.modifiedCount} orphaned pending document(s) as failed.`);
+    logger.warn({ count: orphaned.modifiedCount }, 'Marked orphaned pending documents as failed');
   }
 } catch (cleanupErr) {
-  console.error('[SERVER] Orphan cleanup failed (non-fatal):', cleanupErr.message);
+  logger.error({ err: cleanupErr }, 'Orphan cleanup failed (non-fatal)');
 }
 
 // Start server
 const server = app.listen(env.port, () => {
-  console.log(` Server running on port ${env.port} in ${env.nodeEnv} mode`);
-  console.log(` http://localhost:${env.port}`);
+  logger.info({ port: env.port, env: env.nodeEnv }, `Server running on http://localhost:${env.port}`);
 });
 
 // Handle graceful shutdown
 process.on('SIGTERM', () => {
-  console.log('SIGTERM received — shutting down gracefully');
+  logger.info('SIGTERM received — shutting down gracefully');
   server.close(() => {
-    console.log('Server closed');
+    logger.info('Server closed');
     process.exit(0);
   });
 });
 
 process.on('SIGINT', () => {
-  console.log('SIGINT received — shutting down gracefully');
+  logger.info('SIGINT received — shutting down gracefully');
   server.close(() => {
-    console.log('Server closed');
+    logger.info('Server closed');
     process.exit(0);
   });
 });
 
-// Handle unhandled rejection
+// Handle unhandled rejection — log structured then exit so Render restarts the dyno
 process.on('unhandledRejection', (reason, promise) => {
-  console.error('Unhandled Rejection at:', promise, 'reason:', reason);
+  logger.error({ reason, promise }, 'Unhandled promise rejection — forcing restart');
+  process.exit(1);
 });
 
-// Trigger Nodemon Restart: Mongoose connection active.
-
+process.on('uncaughtException', (err) => {
+  logger.fatal({ err }, 'Uncaught exception — forcing restart');
+  process.exit(1);
+});

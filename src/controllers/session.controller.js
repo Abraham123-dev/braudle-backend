@@ -6,6 +6,7 @@ import StudentProfile from '../models/StudentProfile.model.js';
 import Conversation from '../models/Conversation.model.js';
 import User from '../models/User.model.js';
 import FlashcardDeck from '../models/FlashcardDeck.model.js';
+import Quiz from '../models/Quiz.model.js';
 import { buildTeachPrompt } from '../utils/promptBuilder.js';
 import * as AIService from '../services/ai.service.js';
 import * as AdaptationService from '../services/adaptation.service.js';
@@ -975,6 +976,10 @@ export const getSessionInit = asyncHandler(async (req, res) => {
   const quizzes = await Quiz.find({ sessionId })
     .populate('documentId', 'title')
     .sort({ createdAt: -1 });
+
+  // Private 10s cache: stops React StrictMode/tab-focus double fetches without
+  // ever serving stale limit state to the user.
+  res.set('Cache-Control', 'private, max-age=10, stale-while-revalidate=5');
 
   res.status(200).json({ 
     session, 

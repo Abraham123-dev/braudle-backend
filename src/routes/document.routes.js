@@ -3,6 +3,7 @@ import { verifyJWT } from '../middleware/auth.middleware.js';
 import { resetUploadCountersIfNeeded } from '../middleware/uploadLimit.middleware.js';
 import { uploadSingle } from '../middleware/upload.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
+import { presignBurstLimiter } from '../middleware/rateLimit.middleware.js';
 import {
   uploadSchema,
   getPresignedUrlSchema,
@@ -36,11 +37,11 @@ const router = Router();
 router.post('/upload', verifyJWT, resetUploadCountersIfNeeded, uploadSingle, validate(uploadSchema), uploadDocument);
 
 // Direct single-file upload routes
-router.post('/presigned-url', verifyJWT, resetUploadCountersIfNeeded, validate(getPresignedUrlSchema), getPresignedUrl);
+router.post('/presigned-url', verifyJWT, presignBurstLimiter, resetUploadCountersIfNeeded, validate(getPresignedUrlSchema), getPresignedUrl);
 router.post('/confirm-upload', verifyJWT, validate(confirmUploadSchema), confirmUpload);
 
 // Multipart direct upload routes
-router.post('/multipart/initiate', verifyJWT, resetUploadCountersIfNeeded, validate(getPresignedUrlSchema), initiateMultipart);
+router.post('/multipart/initiate', verifyJWT, presignBurstLimiter, resetUploadCountersIfNeeded, validate(getPresignedUrlSchema), initiateMultipart);
 router.post('/multipart/presign-parts', verifyJWT, validate(presignPartsSchema), presignParts);
 router.post('/multipart/complete', verifyJWT, validate(completeMultipartSchema), completeMultipart);
 router.post('/multipart/abort', verifyJWT, validate(abortMultipartSchema), abortMultipart);
