@@ -9,6 +9,7 @@ import Conversation from '../models/Conversation.model.js';
 import Quiz from '../models/Quiz.model.js';
 import FlashcardDeck from '../models/FlashcardDeck.model.js';
 import StudentProfile from '../models/StudentProfile.model.js';
+import MasteryConcept from '../models/MasteryConcept.model.js';
 import * as StorageService from '../services/storage.service.js';
 import { extractionQueue } from '../queues/document.queue.js';
 import { env } from '../config/env.js';
@@ -227,16 +228,26 @@ export const deleteDocument = asyncHandler(async (req, res) => {
   const sessions = await Session.find({ documentId: document._id }).select('_id');
   const sessionIds = sessions.map(s => s._id);
 
-  // 2. Cascade delete: Conversations -> Quizzes -> Sessions -> Document
+  // 2. Cascade delete all linked records to prevent database orphan accumulation:
+  // Conversations -> Quizzes -> Sessions -> Decks -> MasteryConcepts -> Saved Flashcards -> Document
   await Conversation.deleteMany({ sessionId: { $in: sessionIds } });
   await Quiz.deleteMany({ sessionId: { $in: sessionIds } });
   await Session.deleteMany({ documentId: document._id });
+  await FlashcardDeck.deleteMany({ documentId: document._id });
+  await MasteryConcept.deleteMany({ documentId: document._id });
+  
+  // Clean user profile's embedded saved flashcards array of cards referring to this doc
+  await StudentProfile.updateMany(
+    { userId: req.user.id },
+    { $pull: { savedFlashcards: { documentId: document._id } } }
+  );
+
   await document.deleteOne();
 
   // 3. Invalidate dashboard performance cache so score updates are reflected immediately
   await deleteCached(CACHE_KEYS.DASHBOARD_PERF(req.user.id));
 
-  // 3. Cleanup R2 storage (Async, non-blocking for the response)
+  // 4. Cleanup R2 storage (Async, non-blocking for the response)
   StorageService.deleteFromR2(fileKey).catch((err) => 
     console.error(`Failed to cleanup storage for key ${fileKey}:`, err)
   );
