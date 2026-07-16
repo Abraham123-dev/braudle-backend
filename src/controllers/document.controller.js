@@ -307,49 +307,21 @@ export const getPresignedUrl = asyncHandler(async (req, res) => {
 
   const countField = isPdf ? 'uploadCount.pdf' : 'uploadCount.image';
 
-  let user;
+  // ── Limit check only (no increment yet — we increment in confirmUpload after
+  // the R2 upload succeeds, preventing quota loss on failed uploads) ──────────
+  const userRecord = await User.findById(userId);
+  if (!userRecord) throw new AppError('User not found', 404);
+  const plan = userRecord.plan || 'free';
+
   if (isPdf) {
-    const userRecord = await User.findById(userId);
-    if (!userRecord) throw new AppError('User not found', 404);
-    const plan = userRecord.plan || 'free';
     const isDev = env.nodeEnv === 'development';
-
     let limit = 5;
-    if (isDev) {
-      limit = 50;
-    } else if (userRecord.role === 'admin' || plan === 'pro') {
-      limit = 1000;
-    } else if (plan === 'plus') {
-      limit = 10;
-    }
+    if (isDev) limit = 50;
+    else if (userRecord.role === 'admin' || plan === 'pro') limit = 1000;
+    else if (plan === 'plus') limit = 10;
 
-    user = await User.findOneAndUpdate(
-      { 
-        _id: userId, 
-        'uploadCount.pdf': { $lt: limit } 
-      },
-      { 
-        $inc: { 'uploadCount.pdf': 1 },
-        $set: { lastUploadDate: new Date() }
-      },
-      { returnDocument: 'after' }
-    );
-
-    if (!user) {
+    if (userRecord.uploadCount.pdf >= limit) {
       throw new AppError(`You've reached your maximum daily limit of ${limit} PDF uploads for the ${plan.toUpperCase()} plan.`, 429);
-    }
-  } else {
-    // Images are unlimited
-    user = await User.findByIdAndUpdate(
-      userId,
-      { 
-        $inc: { 'uploadCount.image': 1 },
-        $set: { lastUploadDate: new Date() }
-      },
-      { returnDocument: 'after' }
-    );
-    if (!user) {
-      throw new AppError('User not found', 404);
     }
   }
 
@@ -358,36 +330,26 @@ export const getPresignedUrl = asyncHandler(async (req, res) => {
   const publicDomain = env.cfR2.publicUrl.replace(/^https?:\/\//, '');
   const fileUrl = `https://${publicDomain}/${fileKey}`;
 
-  let uploadUrl;
-  let document;
+  // Generate presigned PUT URL and create pending Document record
+  const uploadUrl = await StorageService.getPresignedPutUrl(fileKey, contentType);
 
-  try {
-    // Generate presigned PUT URL
-    uploadUrl = await StorageService.getPresignedPutUrl(fileKey, contentType);
+  const document = await Document.create({
+    userId,
+    title: title || filename,
+    subject,
+    type,
+    fileUrl,
+    fileKey,
+    processingStatus: 'pending',
+  });
 
-    // Create Document record in MongoDB (status: pending)
-    document = await Document.create({
-      userId,
-      title: title || filename,
-      subject,
-      type,
-      fileUrl,
-      fileKey,
-      processingStatus: 'pending',
-    });
-
-    return res.status(200).json({
-      documentId: document._id,
-      uploadUrl,
-      fileKey,
-      fileUrl,
-      message: 'Presigned upload URL generated successfully. Upload your file directly to this URL.',
-    });
-  } catch (error) {
-    // Rollback: decrement counter on failure
-    await User.findByIdAndUpdate(userId, { $inc: { [countField]: -1 } });
-    throw error;
-  }
+  return res.status(200).json({
+    documentId: document._id,
+    uploadUrl,
+    fileKey,
+    fileUrl,
+    message: 'Presigned upload URL generated successfully. Upload your file directly to this URL.',
+  });
 });
 
 /**
@@ -409,18 +371,34 @@ export const confirmUpload = asyncHandler(async (req, res) => {
 
   const user = await User.findById(userId);
   const plan = user?.plan || 'free';
+  const isPdf = document.type === 'pdf';
+  const countField = isPdf ? 'uploadCount.pdf' : 'uploadCount.image';
 
-  // Queue the background processing job
-  await extractionQueue.add('process-document', {
-    documentId: document._id,
-    fileKey: document.fileKey,
-    userId: document.userId,
-    plan
-  }, {
-    attempts: 2,
-    backoff: { type: 'exponential', delay: 5000 },
-    timeout: 300000 // 5 minutes
+  // ── Atomically increment the upload counter now that the file has landed ───
+  // This is the correct place — the R2 upload already succeeded at this point.
+  await User.findByIdAndUpdate(userId, {
+    $inc: { [countField]: 1 },
+    $set: { lastUploadDate: new Date() },
   });
+
+  try {
+    // Queue the background processing job
+    await extractionQueue.add('process-document', {
+      documentId: document._id,
+      fileKey: document.fileKey,
+      userId: document.userId,
+      plan
+    }, {
+      attempts: 2,
+      backoff: { type: 'exponential', delay: 5000 },
+      timeout: 300000 // 5 minutes
+    });
+  } catch (queueErr) {
+    // If queuing fails, roll back counter and delete the orphan doc
+    await User.findByIdAndUpdate(userId, { $inc: { [countField]: -1 } });
+    await Document.findByIdAndDelete(document._id);
+    throw queueErr;
+  }
 
   return res.status(200).json({
     documentId: document._id,
@@ -558,11 +536,15 @@ export const completeMultipart = asyncHandler(async (req, res) => {
   document.fileUrl = fileUrl;
   await document.save();
 
+  const user = await User.findById(userId);
+  const plan = user?.plan || 'free';
+
   // Queue background processing
   await extractionQueue.add('process-document', {
     documentId: document._id,
     fileKey: document.fileKey,
     userId: document.userId,
+    plan,
   });
 
   return res.status(200).json({
@@ -805,6 +787,13 @@ export const getDocumentProgressStream = (req, res) => {
     res.write(': heartbeat\n\n');
   }, 15000);
 
+  // 10-minute maximum duration for the progress stream to prevent connection leaks
+  const maxTimeout = setTimeout(() => {
+    res.write(`data: ${JSON.stringify({ error: 'Processing timed out. Please try refreshing.' })}\n\n`);
+    res.write('data: [DONE]\n\n');
+    res.end();
+  }, 10 * 60 * 1000);
+
   let subscriberClient = null;
 
   (async () => {
@@ -869,6 +858,7 @@ export const getDocumentProgressStream = (req, res) => {
   // Clean up resources when request closes
   req.on('close', () => {
     clearInterval(heartbeat);
+    clearTimeout(maxTimeout);
     if (subscriberClient) {
       subscriberClient.unsubscribe().catch(() => {});
       subscriberClient.quit().catch(() => {});

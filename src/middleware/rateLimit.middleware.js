@@ -37,7 +37,12 @@ export const getQuizGenMax = (req) => {
 };
 
 // Global rate limiter: 300 requests per 15 minutes (relaxed to 10,000 in dev)
+// Uses Redis store so limits are shared across all server instances.
 const globalLimiter = rateLimit({
+  store: new RedisStore({
+    sendCommand: (...args) => redisClient.call(...args),
+    prefix: 'rl:global:',
+  }),
   windowMs: 15 * 60 * 1000, // 15 minutes
   max: isDev ? 10000 : 300,
   message: 'Too many requests from this IP, please try again later.',

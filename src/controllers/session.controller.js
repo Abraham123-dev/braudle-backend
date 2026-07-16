@@ -839,6 +839,156 @@ export const getSession = asyncHandler(async (req, res) => {
   });
 });
 
+export const getSessionInit = asyncHandler(async (req, res) => {
+  const { id: sessionId } = req.params;
+  const userId = req.user.id;
+
+  const session = await Session.findOne({ _id: sessionId, userId })
+    .populate('documentId', 'title subject processingStatus processingStage knowledgeCacheStatus topics summary totalChunks hasQuestions chunks');
+  
+  if (!session) throw new AppError('Session not found', 404);
+  if (session.userId.toString() !== req.user.id) throw new AppError('Forbidden: Access denied', 403);
+  
+  let conversation = await Conversation.findOne({ sessionId: session._id });
+  if (!conversation) {
+    conversation = await Conversation.create({
+      sessionId: session._id,
+      userId,
+      messages: []
+    });
+  }
+
+  // Load User to check and enforce plan/token limits
+  const user = await User.findById(req.user.id);
+  if (!user) throw new AppError('User not found', 404);
+
+  const plan = user.plan || 'free';
+  const now = new Date();
+
+  // 1. Check and reset token limits (6 hours window)
+  const limitWindow = 6 * 60 * 60 * 1000;
+  const lastReset = user.lastTokenResetDate ? new Date(user.lastTokenResetDate) : new Date(0);
+  let dailyTokenUsage = user.dailyTokenUsage || 0;
+
+  if (now.getTime() - lastReset.getTime() >= limitWindow) {
+    dailyTokenUsage = 0;
+    user.dailyTokenUsage = 0;
+    user.lastTokenResetDate = now;
+    await user.save();
+  }
+
+  const tokenAllowances = {
+    free: 100000,
+    plus: 1000000,
+    pro: 5000000
+  };
+  const tokenAllowance = tokenAllowances[plan];
+  
+  let isTokenLimited = dailyTokenUsage >= tokenAllowance;
+  let tokenResetTime = null;
+  let tokenLimitMessage = '';
+ 
+  if (isTokenLimited) {
+    const remainingMs = limitWindow - (now.getTime() - lastReset.getTime());
+    const resetTime = new Date(now.getTime() + remainingMs);
+    tokenResetTime = resetTime.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+    tokenLimitMessage = "You've reached today's AI study limit. Your study time will refresh in 6 hours.";
+  }
+ 
+  // 2. Check and reset chat limits per document (3 days window)
+  let isChatLimitReached = false;
+  const chatLimit = plan === 'free' ? 50 : 300;
+  
+  if (plan !== 'pro' && conversation) {
+    const chatLimitWindow = 3 * 24 * 60 * 60 * 1000;
+    const lastChatReset = conversation.lastChatResetDate ? new Date(conversation.lastChatResetDate) : new Date(0);
+
+    if (now.getTime() - lastChatReset.getTime() >= chatLimitWindow) {
+      conversation.lastChatResetDate = now;
+      conversation.chatMessagesCount = 0;
+      await conversation.save();
+    } else if (conversation.chatMessagesCount >= chatLimit) {
+      isChatLimitReached = true;
+      const remainingMs = chatLimitWindow - (now.getTime() - lastChatReset.getTime());
+      const hrs = Math.ceil(remainingMs / 3600000);
+      const remainingStr = hrs >= 24 ? `${Math.floor(hrs / 24)}d ${hrs % 24}h` : `${hrs}h`;
+      
+      isTokenLimited = true;
+      tokenLimitMessage = `You've reached your ${plan} plan limit of ${chatLimit} chat messages for this document. Your limit will reset in ${remainingStr}.`;
+    }
+  }
+
+  // 3. Resolve and seed welcome message if empty and document is ready
+  let welcome = null;
+  const document = session.documentId;
+  if (document && document.processingStatus === 'ready') {
+    const profile = await ProfileService.getProfile(userId);
+    const name = req.user.name === 'New Student' ? '' : req.user.name;
+
+    let hasQuestions = document.hasQuestions;
+    if (hasQuestions === undefined || hasQuestions === null) {
+      hasQuestions = detectQuestionsInDocument(document.chunks || []);
+      Document.findByIdAndUpdate(document._id, { hasQuestions }).catch(() => {});
+    }
+
+    const welcomeText = generateWelcomeText(document, profile || { weakTopics: [], strongTopics: [] }, name, hasQuestions);
+    
+    // Auto-save welcome message to empty conversations atomically to prevent race conditions
+    const updatedConv = await Conversation.findOneAndUpdate(
+      { sessionId: session._id, 'messages.0': { $exists: false } },
+      {
+        $push: {
+          messages: {
+            role: 'assistant',
+            content: welcomeText,
+            timestamp: new Date()
+          }
+        }
+      },
+      { new: true }
+    );
+
+    if (updatedConv) {
+      conversation = updatedConv;
+    }
+
+    const learningModes = [
+      { id: 'understand', label: '📚 Understand',    description: 'I explain each section step-by-step with examples. Best for first-time learning.' },
+      { id: 'review',     label: '🔄 Review',        description: 'Quick recap of key points. Best when you already know the material.' },
+      { id: 'practice',   label: '✏️ Practice',      description: 'I quiz you inline, one question at a time, with instant feedback.' },
+      { id: 'prepare',    label: '🎯 Prepare',       description: 'Exam simulation. I\'ll ask your preferred style — story, MCQ, theory, or mixed.' },
+      { id: 'ask',        label: '💬 Ask Anything',  description: 'Free-form chat. Ask me anything about the document.' },
+      { id: 'flashcards', label: '🃏 Flashcards',    description: 'I generate flashcards and save them to your profile for later review.' },
+    ];
+
+    welcome = {
+      message: welcomeText,
+      topics: document.topics || [],
+      summary: document.summary || '',
+      documentTitle: document.title,
+      totalChunks: document.totalChunks || 1,
+      learningModes,
+    };
+  }
+
+  // 4. Fetch session quizzes
+  const quizzes = await Quiz.find({ sessionId })
+    .populate('documentId', 'title')
+    .sort({ createdAt: -1 });
+
+  res.status(200).json({ 
+    session, 
+    messages: conversation?.messages || [],
+    chatMessagesCount: conversation?.chatMessagesCount || 0,
+    explainMessagesCount: conversation?.explainMessagesCount || 0,
+    isTokenLimited,
+    tokenResetTime,
+    tokenLimitMessage,
+    welcome,
+    quizzes
+  });
+});
+
 export const completeSession = asyncHandler(async (req, res) => {
   const session = await Session.findOneAndUpdate(
     { _id: req.params.id, userId: req.user.id },

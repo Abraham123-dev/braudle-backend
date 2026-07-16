@@ -7,6 +7,7 @@ import {
   startSession,
   chatSession,
   getSession,
+  getSessionInit,
   completeSession,
   updateSessionState,
   getWelcomeMessage,
@@ -24,6 +25,7 @@ router.post('/start', verifyJWT, validate(startSessionSchema), startSession);
 router.get('/flashcards', verifyJWT, getMyFlashcards);
 
 router.get('/:id', verifyJWT, getSession);
+router.get('/:id/init', verifyJWT, getSessionInit);
 router.get('/:id/welcome', verifyJWT, getWelcomeMessage);
 router.get('/:id/detailed-summary', verifyJWT, getDetailedSummary);
 router.post('/:id/chat', verifyJWT, sessionChatLimiter, validate(chatSchema), chatSession);
