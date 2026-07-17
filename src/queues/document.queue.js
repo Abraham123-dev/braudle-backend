@@ -9,6 +9,23 @@ const queueConnection = new Redis(env.redisUrl, {
   keepAlive: 30000,
 });
 
+/**
+ * BullMQ key prefix — scopes all queue Redis keys under {braudle:v5}.
+ *
+ * WHY THIS EXISTS:
+ * BullMQ changes its internal Redis key schema between major versions.
+ * Without a prefix, upgrading BullMQ (e.g. v4 → v5) leaves stale keys in Redis
+ * that the new version cannot parse, causing "unexpected token" / version-mismatch
+ * errors on every worker job. This prefix isolates v5 keys completely.
+ *
+ * Curly-brace syntax ({braudle:v5}) makes the prefix a Redis Cluster hash tag,
+ * ensuring all queue keys for one queue land on the same cluster slot.
+ *
+ * If you upgrade to BullMQ v6 in future, change this to '{braudle:v6}' and
+ * run scripts/flush-queues.js once to drain the old queues gracefully.
+ */
+export const QUEUE_PREFIX = '{braudle:v5}';
+
 const defaultJobOptions = {
   attempts: 3,
   backoff: {
@@ -26,6 +43,7 @@ const defaultJobOptions = {
  */
 export const extractionQueue = new Queue('document-extraction', {
   connection: queueConnection,
+  prefix: QUEUE_PREFIX,
   defaultJobOptions,
 });
 
@@ -34,6 +52,7 @@ export const extractionQueue = new Queue('document-extraction', {
  */
 export const embeddingQueue = new Queue('document-embeddings', {
   connection: queueConnection,
+  prefix: QUEUE_PREFIX,
   defaultJobOptions,
 });
 
@@ -42,6 +61,7 @@ export const embeddingQueue = new Queue('document-embeddings', {
  */
 export const cacheQueue = new Queue('document-cache', {
   connection: queueConnection,
+  prefix: QUEUE_PREFIX,
   defaultJobOptions,
 });
 
@@ -50,5 +70,6 @@ export const cacheQueue = new Queue('document-cache', {
  */
 export const summaryQueue = new Queue('session-summary', {
   connection: queueConnection,
+  prefix: QUEUE_PREFIX,
   defaultJobOptions,
 });

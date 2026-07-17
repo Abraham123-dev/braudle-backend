@@ -10,7 +10,7 @@ import {
   buildKnowledgeCachePromptA, 
   buildKnowledgeCachePromptB 
 } from '../utils/promptBuilder.js';
-import { PDFParse } from 'pdf-parse';
+import pdfParse from 'pdf-parse';
 import * as AIService from '../services/ai.service.js';
 import { GROQ_MODELS } from '../config/models.js';
 import { parseAIJson } from '../utils/parseAIJson.js';
@@ -18,7 +18,7 @@ import { detectQuestionsInDocument } from '../utils/documentAnalyzer.js';
 import crypto from 'crypto';
 import AppErrorLog from '../models/AppErrorLog.model.js';
 import Conversation from '../models/Conversation.model.js';
-import { extractionQueue, embeddingQueue, cacheQueue, summaryQueue } from '../queues/document.queue.js';
+import { extractionQueue, embeddingQueue, cacheQueue, summaryQueue, QUEUE_PREFIX } from '../queues/document.queue.js';
 
 // Connect to MongoDB
 await connectDB();
@@ -139,10 +139,9 @@ export const extractionWorker = new Worker(
       let extractedText = '';
 
       if (doc.type === 'pdf') {
-        const parser = new PDFParse({ data: fileBuffer });
-        const data = await parser.getText();
-        extractedText = data.text;
-        await parser.destroy();
+        // Bug fix: pdf-parse exports a default async function, not a class.
+        const pdfData = await pdfParse(fileBuffer);
+        extractedText = pdfData.text;
 
         // Check if the PDF has almost no text (scanned PDF / photos of handwritten notes)
         const cleanText = cleanExtractedText(extractedText);
@@ -156,22 +155,33 @@ export const extractionWorker = new Worker(
 
           console.log(`[WORKER: EXTRACTION] Rendered ${images.length} PDF pages as PNG images.`);
 
-          // Process first 10 pages only to avoid hitting rate limits or slow background processing
+          // Bug fix: was Promise.all — one page failure killed the entire document.
+          // Now sequential with per-page error recovery and rate-limit delay between pages.
           const pagesToProcess = images.slice(0, 10);
-          console.log(`[WORKER: EXTRACTION] Processing ${pagesToProcess.length} pages concurrently...`);
+          console.log(`[WORKER: EXTRACTION] Processing ${pagesToProcess.length} pages sequentially...`);
 
-          const transcriptionPromises = pagesToProcess.map(async (page, index) => {
-            const pageBuffer = page.content;
-            if (pageBuffer.length > 10 * 1024 * 1024) {
-              console.warn(`[WORKER: EXTRACTION] Page ${index + 1} exceeds 10MB limit. Skipping.`);
-              return `--- PAGE ${index + 1} ---\n[Exceeded Size Limit]`;
+          const pageTranscriptions = [];
+          for (const [index, page] of pagesToProcess.entries()) {
+            try {
+              const pageBuffer = page.content;
+              if (pageBuffer.length > 10 * 1024 * 1024) {
+                console.warn(`[WORKER: EXTRACTION] Page ${index + 1} exceeds 10MB limit. Skipping.`);
+                pageTranscriptions.push(`--- PAGE ${index + 1} ---\n[Page too large to process]`);
+                continue;
+              }
+              const base64 = pageBuffer.toString('base64');
+              const pageText = await AIService.transcribeImage(base64, 'image/png');
+              pageTranscriptions.push(`--- PAGE ${index + 1} ---\n${pageText}`);
+            } catch (pageErr) {
+              console.warn(`[WORKER: EXTRACTION] Page ${index + 1} transcription failed, skipping:`, pageErr.message);
+              pageTranscriptions.push(`--- PAGE ${index + 1} ---\n[Page could not be transcribed]`);
             }
-            const base64 = pageBuffer.toString('base64');
-            const pageText = await AIService.transcribeImage(base64, 'image/png');
-            return `--- PAGE ${index + 1} ---\n${pageText}`;
-          });
+            // Pause between pages to avoid vision API rate limits
+            if (index < pagesToProcess.length - 1) {
+              await new Promise(resolve => setTimeout(resolve, 500));
+            }
+          }
 
-          const pageTranscriptions = await Promise.all(transcriptionPromises);
           extractedText = pageTranscriptions.join('\n\n');
         }
       } else {
@@ -273,6 +283,7 @@ export const extractionWorker = new Worker(
   },
   {
     connection: workerConnection,
+    prefix: QUEUE_PREFIX,
     concurrency: 4,
   }
 );
@@ -340,6 +351,7 @@ export const embeddingWorker = new Worker(
   },
   {
     connection: workerConnection,
+    prefix: QUEUE_PREFIX,
     concurrency: 2,
     limiter: {
       max: 20,       // Max 20 embedding jobs per second across workers
@@ -417,11 +429,18 @@ export const cacheWorker = new Worker(
 
       conceptMap = parsedB.conceptMap || null;
 
-      await Document.findByIdAndUpdate(documentId, {
+      // Bug fix: conceptMapStatus was never set to 'ready', so getDocumentConceptMap
+      // always bypassed the cache and re-generated it on every request.
+      const cacheUpdate = {
         knowledgeCache,
-        conceptMap,
-        knowledgeCacheStatus: 'ready'
-      });
+        knowledgeCacheStatus: 'ready',
+      };
+      if (conceptMap) {
+        cacheUpdate.conceptMap = conceptMap;
+        cacheUpdate.conceptMapStatus = 'ready';
+      }
+
+      await Document.findByIdAndUpdate(documentId, cacheUpdate);
 
       await publishProgress(documentId, 'ready', 'ready_cache');
       console.log(`[WORKER: CACHE] Completed knowledge cache for document: ${documentId}`);
@@ -436,6 +455,7 @@ export const cacheWorker = new Worker(
   },
   {
     connection: workerConnection,
+    prefix: QUEUE_PREFIX,
     concurrency: 2,
   }
 );
@@ -537,6 +557,7 @@ export const summaryWorker = new Worker(
   },
   {
     connection: workerConnection,
+    prefix: QUEUE_PREFIX,
     concurrency: 1,
   }
 );

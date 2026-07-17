@@ -20,23 +20,50 @@ if (env.nodeEnv === 'production' || process.env.START_WORKER_IN_WEB === 'true') 
   }
 }
 
-// ── Startup: clean up documents orphaned by a previous crash ─────────────────
-// If the server crashed between Document.create() and extractionQueue.add(), those
-// documents are stuck in 'pending' forever. Mark them as failed so users know.
+// ── Startup: clean up documents orphaned by crashes or abandoned uploads ───────
+//
+// Two categories of orphan handled differently:
+//
+// 1. NO fileHash  — these are pre-presigned or multipart-initiated documents where
+//    the user never completed the upload (closed the browser, network error, etc.).
+//    They have no file in R2, no content, and no processing job queued.
+//    Action: DELETE them outright so they never show in the user's library.
+//
+// 2. Has fileHash — the file reached R2 but the server crashed between
+//    Document.create() and extractionQueue.add(). The file exists but no worker
+//    job was queued to process it.
+//    Action: Mark as FAILED so the user sees a clear status and can re-upload.
 try {
   const { default: Document } = await import('./src/models/Document.model.js');
   const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
-  const orphaned = await Document.updateMany(
+
+  // Category 1: ghost pre-presigned docs — delete them
+  const ghostResult = await Document.deleteMany({
+    processingStatus: 'pending',
+    fileHash: { $exists: false },
+    createdAt: { $lt: fifteenMinutesAgo },
+  });
+  if (ghostResult.deletedCount > 0) {
+    logger.warn(
+      { count: ghostResult.deletedCount },
+      'Deleted ghost pending documents (abandoned presigned uploads — no fileHash)'
+    );
+  }
+
+  // Category 2: real upload that lost its worker job — mark failed
+  const crashedResult = await Document.updateMany(
     {
       processingStatus: 'pending',
+      fileHash: { $exists: true, $ne: null, $ne: '' },
       createdAt: { $lt: fifteenMinutesAgo },
     },
-    {
-      $set: { processingStatus: 'failed', processingStage: 'failed' }
-    }
+    { $set: { processingStatus: 'failed', processingStage: 'failed' } }
   );
-  if (orphaned.modifiedCount > 0) {
-    logger.warn({ count: orphaned.modifiedCount }, 'Marked orphaned pending documents as failed');
+  if (crashedResult.modifiedCount > 0) {
+    logger.warn(
+      { count: crashedResult.modifiedCount },
+      'Marked orphaned pending documents as failed (file uploaded, worker job was lost)'
+    );
   }
 } catch (cleanupErr) {
   logger.error({ err: cleanupErr }, 'Orphan cleanup failed (non-fatal)');

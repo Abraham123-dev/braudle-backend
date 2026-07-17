@@ -4,8 +4,8 @@ services:
     name: braudle-backend-api
     env: node
     plan: free
-    buildCommand: npm install
-    startCommand: node server.js
+    buildCommand: npm ci
+    startCommand: node scripts/flush-bullmq-versions.js && node server.js
     envVars:
       - key: PORT
         value: 5000

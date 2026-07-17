@@ -1,7 +1,7 @@
 import { asyncHandler } from '../utils/asyncHandler.js';
 import { AppError } from '../utils/AppError.js';
-import Redis from 'ioredis';
 import crypto from 'crypto';
+import { subscribeToProgress, unsubscribeFromProgress } from '../config/redisPubSub.js';
 import User from '../models/User.model.js';
 import Document from '../models/Document.model.js';
 import Session from '../models/Session.model.js';
@@ -37,54 +37,62 @@ export const uploadDocument = asyncHandler(async (req, res) => {
 
   const plan = userRecord.plan || 'free';
 
-  let user;
+  // ── Step 1: Compute hash and run duplicate check BEFORE touching any counter.
+  // Old order was: increment → check duplicate → rollback on duplicate (rollback was missing!).
+  // A user uploading a duplicate would silently burn a daily quota slot.
+  const fileHash = crypto.createHash('sha256').update(file.buffer).digest('hex');
+
+  const duplicateForUser = await Document.findOne({ userId, fileHash });
+  if (duplicateForUser) {
+    throw new AppError("This document has already been uploaded to your library.", 400);
+  }
+
+  // ── Step 2: Size validation (no DB writes yet)
   if (isPdf) {
     const sizeLimits = { free: 10, plus: 25, pro: 50 };
-    const uploadLimits = { free: 5, plus: 10, pro: Infinity };
-
-    const maxSize = sizeLimits[plan] * 1024 * 1024;
+    const maxSize = (sizeLimits[plan] ?? sizeLimits.free) * 1024 * 1024;
     if (file.size > maxSize) {
-      throw new AppError(`PDF files must be under ${sizeLimits[plan]}MB for your ${plan.toUpperCase()} plan.`, 400);
+      throw new AppError(`PDF files must be under ${sizeLimits[plan] ?? sizeLimits.free}MB for your ${plan.toUpperCase()} plan.`, 400);
     }
-
-    const limit = uploadLimits[plan];
-    if (userRecord.uploadCount.pdf >= limit) {
-      throw new AppError(`You've reached your maximum daily limit of ${limit} PDF uploads for the ${plan.toUpperCase()} plan.`, 429);
-    }
-
-    user = await User.findByIdAndUpdate(
-      userId,
-      { 
-        $inc: { 'uploadCount.pdf': 1 },
-        $set: { lastUploadDate: new Date() }
-      },
-      { returnDocument: 'after' }
-    );
   } else {
-    // Images are unlimited
     if (file.size > 10 * 1024 * 1024) {
       throw new AppError('Image notes must be under 10MB.', 400);
     }
-
-    user = await User.findByIdAndUpdate(
-      userId,
-      { 
-        $inc: { 'uploadCount.image': 1 },
-        $set: { lastUploadDate: new Date() }
-      },
-      { returnDocument: 'after' }
-    );
   }
 
-  const fileHash = crypto.createHash('sha256').update(file.buffer).digest('hex');
+  // ── Step 3: Atomic counter increment — check-and-set in a single DB round-trip.
+  // The old pattern (read → check → separate write) had a race condition: two concurrent
+  // uploads from the same user could both pass the limit check before either incremented.
+  // findOneAndUpdate with $lt makes the check and the increment one atomic operation.
+  let user;
+  if (isPdf) {
+    const isDev = env.nodeEnv === 'development';
+    const isUnlimited = isDev || userRecord.role === 'admin' || plan === 'pro';
 
-  // Check if this user has already uploaded this document in their library
-  const duplicateForUser = await Document.findOne({
-    userId,
-    fileHash,
-  });
-  if (duplicateForUser) {
-    throw new AppError("This document has already been uploaded to your library.", 400);
+    if (isUnlimited) {
+      user = await User.findByIdAndUpdate(
+        userId,
+        { $inc: { 'uploadCount.pdf': 1 }, $set: { lastUploadDate: new Date() } },
+        { returnDocument: 'after' }
+      );
+    } else {
+      const limit = plan === 'plus' ? 10 : 5;
+      user = await User.findOneAndUpdate(
+        { _id: userId, 'uploadCount.pdf': { $lt: limit } },
+        { $inc: { 'uploadCount.pdf': 1 }, $set: { lastUploadDate: new Date() } },
+        { returnDocument: 'after' }
+      );
+      if (!user) {
+        throw new AppError(`You've reached your maximum daily limit of ${limit} PDF uploads for the ${plan.toUpperCase()} plan.`, 429);
+      }
+    }
+  } else {
+    // Images: no upload limit — just increment
+    user = await User.findByIdAndUpdate(
+      userId,
+      { $inc: { 'uploadCount.image': 1 }, $set: { lastUploadDate: new Date() } },
+      { returnDocument: 'after' }
+    );
   }
 
   // Check for duplicate in cache
@@ -555,12 +563,18 @@ export const completeMultipart = asyncHandler(async (req, res) => {
   const user = await User.findById(userId);
   const plan = user?.plan || 'free';
 
-  // Queue background processing
+  // Bug fix: completeMultipart was the only upload path that queued jobs without
+  // explicit options, falling back to BullMQ defaults (3 attempts, 1s delay, no timeout).
+  // Large files uploaded via multipart need the same resilience as other upload paths.
   await extractionQueue.add('process-document', {
     documentId: document._id,
     fileKey: document.fileKey,
     userId: document.userId,
     plan,
+  }, {
+    attempts: 2,
+    backoff: { type: 'exponential', delay: 5000 },
+    timeout: 300000, // 5 minutes — multipart files are large, give the worker time
   });
 
   return res.status(200).json({
@@ -798,34 +812,59 @@ export const getDocumentProgressStream = (req, res) => {
     'Content-Encoding': 'none',
   });
 
-  // Keep-alive heartbeat interval every 15s to keep proxy/gateway connections alive
+  // Keep-alive heartbeat every 15s — prevents proxy/gateway idle-connection timeouts
   const heartbeat = setInterval(() => {
     res.write(': heartbeat\n\n');
   }, 15000);
 
-  // 10-minute maximum duration for the progress stream to prevent connection leaks
+  // Hard cap at 10 minutes — prevents zombie SSE connections on stalled uploads
   const maxTimeout = setTimeout(() => {
-    res.write(`data: ${JSON.stringify({ error: 'Processing timed out. Please try refreshing.' })}\n\n`);
-    res.write('data: [DONE]\n\n');
-    res.end();
+    if (!res.writableEnded) {
+      res.write(`data: ${JSON.stringify({ error: 'Processing timed out. Please try refreshing.' })}\n\n`);
+      res.write('data: [DONE]\n\n');
+      res.end();
+    }
   }, 10 * 60 * 1000);
 
-  let subscriberClient = null;
+  // Bug fix: the old pattern spawned a new ioredis connection per SSE client, exhausting
+  // the Redis connection pool under concurrent uploads. We now use one shared subscriber
+  // (redisPubSub.js) that multiplexes all active channels over a single connection.
+  const channel = `doc:progress:${id}`;
+  let writeFn = null; // kept in scope so we can unsubscribe on cleanup
+
+  const cleanup = () => {
+    clearInterval(heartbeat);
+    clearTimeout(maxTimeout);
+    if (writeFn) {
+      unsubscribeFromProgress(channel, writeFn).catch(() => {});
+      writeFn = null;
+    }
+  };
+
+  // Safe end helper — guards against writing to a closed response
+  const endStream = () => {
+    if (!res.writableEnded) {
+      res.write('data: [DONE]\n\n');
+      res.end();
+    }
+  };
+
+  req.on('close', cleanup);
 
   (async () => {
     try {
       const document = await Document.findById(id);
       if (!document) {
         res.write(`data: ${JSON.stringify({ error: 'Document not found' })}\n\n`);
-        return res.end();
+        return endStream();
       }
 
       if (document.userId.toString() !== userId) {
         res.write(`data: ${JSON.stringify({ error: 'Forbidden: Access denied' })}\n\n`);
-        return res.end();
+        return endStream();
       }
 
-      // 1. Instantly push current state
+      // 1. Push current state immediately so the frontend renders the right stage
       res.write(`data: ${JSON.stringify({
         documentId: document._id,
         stage: document.processingStage,
@@ -834,52 +873,39 @@ export const getDocumentProgressStream = (req, res) => {
         summary: document.summary
       })}\n\n`);
 
-      // If document is already completed or failed AND knowledge cache is finished, close the stream immediately
-      if (['ready', 'failed'].includes(document.processingStatus) && ['ready', 'failed'].includes(document.knowledgeCacheStatus)) {
-        res.write(`data: [DONE]\n\n`);
-        return res.end();
+      // If already done (both processing and cache are settled), close immediately
+      if (
+        ['ready', 'failed'].includes(document.processingStatus) &&
+        ['ready', 'failed'].includes(document.knowledgeCacheStatus)
+      ) {
+        return endStream();
       }
 
-      // 2. Subscribe to Redis for real-time progress updates
-      subscriberClient = new Redis(env.redisUrl, {
-        enableReadyCheck: false,
-        maxRetriesPerRequest: null,
-        keepAlive: 30000,
-      });
-
-      const channel = `doc:progress:${id}`;
-      await subscriberClient.subscribe(channel);
-
-      subscriberClient.on('message', (chan, message) => {
+      // 2. Subscribe through the shared pub/sub client
+      writeFn = (message) => {
+        if (res.writableEnded) return;
         res.write(`data: ${message}\n\n`);
-        
+
         try {
           const parsed = JSON.parse(message);
           if (['ready_cache', 'failed_cache', 'failed'].includes(parsed.status)) {
-            res.write(`data: [DONE]\n\n`);
-            res.end();
+            endStream();
           }
-        } catch (e) {
-          // Ignore parse errors
+        } catch {
+          // Ignore malformed publish payloads
         }
-      });
+      };
+
+      await subscribeToProgress(channel, writeFn);
 
     } catch (err) {
       console.error(`[SSE STREAM] Error setting up progress stream for doc ${id}:`, err);
-      res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
-      res.end();
+      if (!res.writableEnded) {
+        res.write(`data: ${JSON.stringify({ error: err.message })}\n\n`);
+        endStream();
+      }
     }
   })();
-
-  // Clean up resources when request closes
-  req.on('close', () => {
-    clearInterval(heartbeat);
-    clearTimeout(maxTimeout);
-    if (subscriberClient) {
-      subscriberClient.unsubscribe().catch(() => {});
-      subscriberClient.quit().catch(() => {});
-    }
-  });
 };
 
 export const generateConceptFlashcards = asyncHandler(async (req, res) => {

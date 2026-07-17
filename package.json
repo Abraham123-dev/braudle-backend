@@ -13,6 +13,7 @@
     "dev:server": "nodemon server.js",
     "dev:worker": "nodemon src/workers/document.worker.js",
     "worker": "nodemon src/workers/document.worker.js",
+    "flush:queues": "node scripts/flush-bullmq-versions.js",
     "test": "echo \"Error: no test specified\" && exit 1"
   },
   "repository": {
@@ -46,7 +47,7 @@
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1056.0",
     "@aws-sdk/s3-request-presigner": "^3.1071.0",
-    "bullmq": "^5.77.6",
+    "bullmq": "5.80.6",
     "compression": "^1.8.1",
     "cookie-parser": "^1.4.7",
     "cors": "^2.8.6",

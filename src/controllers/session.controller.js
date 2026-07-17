@@ -684,61 +684,76 @@ export const chatSession = asyncHandler(async (req, res) => {
       fullAIResponse = enrichedResponse;
     }
 
-    res.write('data: [DONE]\n\n');
-    res.end();
+    // ── CRITICAL writes: must complete BEFORE res.end() ───────────────────────
+    // Wrapped in try/finally: if MongoDB throws (timeout, network drop, validation
+    // error), the stream MUST still close. Without this the loading spinner hangs
+    // forever on the client even though they already received the AI response.
+    // Save errors are logged but not rethrown — the user got their answer.
+    try {
+      // 1. Persist conversation messages
+      conversation.messages.push(
+        { role: 'user', content: message },
+        { role: 'assistant', content: fullAIResponse }
+      );
+      if (plan !== 'pro') {
+        conversation.chatMessagesCount = (conversation.chatMessagesCount || 0) + 1;
+      }
+      await conversation.save();
 
-    // Increment user token usage
-    const promptTokens = Math.ceil(message.length / 4);
-    const completionTokens = Math.ceil(fullAIResponse.length / 4);
-    const totalTokensUsed = promptTokens + completionTokens;
-    await User.findByIdAndUpdate(userId, { $inc: { dailyTokenUsage: totalTokensUsed } });
-
-    // Cache the initial teaching response for this chunk/level
-    if (!cachedResponse) await setCached(cacheKey, fullAIResponse, CACHE_TTL.TEACHING);
-
-    // 2. Auto-save flashcards if this was a flashcard mode response
-    if (session.mode === 'flashcards') {
-      const flashcards = parseFlashcardsFromResponse(fullAIResponse);
-      if (flashcards.length > 0) {
-        const flashcardDocs = flashcards.map(fc => ({
-          ...fc,
-          documentId: document._id,
-          documentTitle: document.title || 'Untitled Document',
-          savedAt: new Date(),
-        }));
-
-        // Atomic push — append to existing savedFlashcards array
-        await StudentProfile.findOneAndUpdate(
-          { userId },
-          { $push: { savedFlashcards: { $each: flashcardDocs } } }
-        );
-
-        // Bust profile cache so the new flashcards are visible immediately
-        await deleteCached(CACHE_KEYS.PROFILE(userId));
-
-        // Notify client that flashcards were saved
-        // (res is already ended, so this data is sent before DONE in the next request)
-        // We embed this as metadata in the conversation record for the frontend to read
+      // 2. Auto-save flashcards to the student's profile (user-visible, must persist)
+      if (session.mode === 'flashcards') {
+        const flashcards = parseFlashcardsFromResponse(fullAIResponse);
+        if (flashcards.length > 0) {
+          const flashcardDocs = flashcards.map(fc => ({
+            ...fc,
+            documentId: document._id,
+            documentTitle: document.title || 'Untitled Document',
+            savedAt: new Date(),
+          }));
+          await StudentProfile.findOneAndUpdate(
+            { userId },
+            { $push: { savedFlashcards: { $each: flashcardDocs } } }
+          );
+          // Bust profile cache so new flashcards appear immediately on next fetch
+          await deleteCached(CACHE_KEYS.PROFILE(userId));
+        }
+      }
+    } catch (persistErr) {
+      // The user already received the full AI response — do not fail the stream over a
+      // DB write error. Log it so we can monitor/alert, then let finally close the stream.
+      console.error('[CHAT SESSION] Failed to persist conversation (non-fatal):', persistErr.message);
+    } finally {
+      // ── Stream complete — close the SSE connection ─────────────────────────
+      // This runs whether the save succeeded or failed.
+      if (!res.writableEnded) {
+        res.write('data: [DONE]\n\n');
+        res.end();
       }
     }
 
-    conversation.messages.push(
-      { role: 'user', content: message },
-      { role: 'assistant', content: fullAIResponse }
+    // ── Fire-and-forget: non-critical optimisation ops (safe to lose on crash) ──
+    // Token usage counter — only an enforcement metric, not user-visible state
+    const promptTokens = Math.ceil(message.length / 4);
+    const completionTokens = Math.ceil(fullAIResponse.length / 4);
+    const totalTokensUsed = promptTokens + completionTokens;
+    User.findByIdAndUpdate(userId, { $inc: { dailyTokenUsage: totalTokensUsed } }).catch(
+      err => console.error('[CHAT SESSION] Failed to update token usage:', err.message)
     );
-    if (plan !== 'pro') {
-      conversation.chatMessagesCount = (conversation.chatMessagesCount || 0) + 1;
-    }
-    await conversation.save();
 
-    // Trigger background rolling summarization task on a 6-message modulo threshold
+    // Teaching response cache — speeds up repeated access, not correctness-critical
+    if (!cachedResponse) {
+      setCached(cacheKey, fullAIResponse, CACHE_TTL.TEACHING).catch(
+        err => console.error('[CHAT SESSION] Failed to cache teaching response:', err.message)
+      );
+    }
+
+    // Rolling conversation summary — background compression, survivable if lost
     const totalSessionMsgs = conversation.messages.length;
     if (totalSessionMsgs > 12 && (totalSessionMsgs - 1) % 6 === 0) {
       const candidateMessages = conversation.messages.slice(0, -6).map(m => ({
         role: m.role,
         content: m.content
       }));
-
       summaryQueue.add('session-summary', {
         conversationId: conversation._id,
         priorSummary: conversation.summaryMemory || '',
