@@ -191,9 +191,14 @@ export const uploadDocument = asyncHandler(async (req, res) => {
 
 export const getDocuments = asyncHandler(async (req, res) => {
   const documents = await Document.find({ userId: req.user.id })
-    .select('-rawText -chunks')
-    .sort({ createdAt: -1 });
-    
+    .select('-rawText -chunks -chunkEmbeddings -knowledgeCache -conceptMap -detailedSummary')
+    .sort({ createdAt: -1 })
+    .lean(); // Return plain JS objects — faster than Mongoose documents for read-only lists
+
+  // Allow the browser to serve this from cache for up to 30 seconds on repeat
+  // navigations (e.g. home → library → home). 'private' means CDN won't cache it.
+  res.set('Cache-Control', 'private, max-age=30');
+
   return res.status(200).json(documents);
 });
 
