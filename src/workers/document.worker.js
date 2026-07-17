@@ -250,9 +250,14 @@ export const extractionWorker = new Worker(
 
       try {
         const understandingPrompt = buildDocumentUnderstandingPrompt(chunks);
+
+        // Use the FAST model (8B instant) for topic/summary extraction, NOT the smart 70B model.
+        // This task is structured JSON extraction from sampled text — the 8B model handles
+        // it just as well. Switching saves 20-90 seconds per upload (the primary cause of
+        // the stuck progress bar). The 70B smart model is reserved for actual tutoring.
         const aiResponse = await AIService.callGroqWithRetry(
           [{ role: 'user', content: understandingPrompt }],
-          GROQ_MODELS.smart
+          GROQ_MODELS.fast
         );
 
         const understanding = parseAIJson(aiResponse, { topics: [], summary: '' });
