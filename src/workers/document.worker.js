@@ -98,7 +98,20 @@ export const extractionWorker = new Worker(
       await Document.findByIdAndUpdate(documentId, { processingStage: 'extracting_content' });
       await publishProgress(documentId, 'extracting_content', 'processing');
 
-      const fileBuffer = await StorageService.downloadFromR2(fileKey);
+      // Heartbeat during R2 download.
+      // For larger files this download can take several seconds. Without a heartbeat
+      // the progress bar freezes at 'extracting_content' with no visible movement.
+      const downloadHeartbeat = setInterval(() => {
+        publishProgress(documentId, 'extracting_content', 'processing', { heartbeat: true }).catch(() => {});
+      }, 4000);
+
+      let fileBuffer;
+      try {
+        fileBuffer = await StorageService.downloadFromR2(fileKey);
+      } finally {
+        clearInterval(downloadHeartbeat);
+      }
+
       const fileHash = crypto.createHash('sha256').update(fileBuffer).digest('hex');
 
       // Check if there is an existing fully processed document with this hash
@@ -172,6 +185,12 @@ export const extractionWorker = new Worker(
               const base64 = pageBuffer.toString('base64');
               const pageText = await AIService.transcribeImage(base64, 'image/png');
               pageTranscriptions.push(`--- PAGE ${index + 1} ---\n${pageText}`);
+              // Publish per-page progress so the bar visibly moves during OCR
+              publishProgress(documentId, 'extracting_content', 'processing', {
+                heartbeat: true,
+                pagesDone: index + 1,
+                pagesTotal: pagesToProcess.length,
+              }).catch(() => {});
             } catch (pageErr) {
               console.warn(`[WORKER: EXTRACTION] Page ${index + 1} transcription failed, skipping:`, pageErr.message);
               pageTranscriptions.push(`--- PAGE ${index + 1} ---\n[Page could not be transcribed]`);
@@ -213,6 +232,19 @@ export const extractionWorker = new Worker(
       await Document.findByIdAndUpdate(documentId, { processingStage: 'building_learning_map' });
       await publishProgress(documentId, 'building_learning_map', 'processing');
 
+      // ROOT CAUSE OF "STUCK AT 55%" BUG:
+      // callGroqWithRetry reads the entire document, builds a comprehension prompt,
+      // and waits for the LLM to return topics + a summary. For a dense 20-page PDF
+      // this single call can take anywhere from 15 to 90 seconds depending on document
+      // size and provider load. During that entire wait, nothing is published to Redis,
+      // so the frontend progress bar appears completely frozen at 55%.
+      //
+      // Fix: fire a heartbeat to Redis every 7 seconds during the AI call so the
+      // frontend knows work is actively happening even though the stage hasn't changed.
+      const aiHeartbeat = setInterval(() => {
+        publishProgress(documentId, 'building_learning_map', 'processing', { heartbeat: true }).catch(() => {});
+      }, 7000);
+
       let topics = [];
       let summary = '';
 
@@ -229,10 +261,22 @@ export const extractionWorker = new Worker(
       } catch (aiErr) {
         console.error(`[WORKER: EXTRACTION] AI understanding failed for ${documentId}:`, aiErr.message);
         await Document.findByIdAndUpdate(documentId, { aiUnderstandingFailed: true });
+      } finally {
+        // Always stop the heartbeat whether the AI call succeeded or failed
+        clearInterval(aiHeartbeat);
       }
 
       // 5. Detect whether the document contains questions/exam problems (zero AI cost)
       const hasQuestions = detectQuestionsInDocument(chunks);
+
+      // ROOT CAUSE OF "BAR JUMPS FROM 55% STRAIGHT TO 100%" BUG:
+      // The 'preparing_tutor' stage (which the frontend expects at ~75%) was defined
+      // in the Document model but was NEVER emitted by the extraction worker.
+      // It was only emitted by the cache worker — which runs after the document is
+      // already marked ready, so the frontend had often already navigated away.
+      // Without this stage the bar jumped: 55% frozen → silence → sudden 100%.
+      await Document.findByIdAndUpdate(documentId, { processingStage: 'preparing_tutor' });
+      await publishProgress(documentId, 'preparing_tutor', 'processing');
 
       // 6. Mark document as READY. The user can now view it and start study chats immediately!
       await Document.findByIdAndUpdate(documentId, {

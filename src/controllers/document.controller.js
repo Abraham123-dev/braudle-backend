@@ -243,25 +243,48 @@ export const deleteDocument = asyncHandler(async (req, res) => {
   await Session.deleteMany({ documentId: document._id });
   await FlashcardDeck.deleteMany({ documentId: document._id });
   await MasteryConcept.deleteMany({ documentId: document._id });
-  
-  // Clean user profile's embedded saved flashcards array of cards referring to this doc
+
+  // Remove this document's flashcards from ALL student profiles, not just the owner.
+  // Without the userId filter, this handles future sharing scenarios and prevents
+  // orphaned savedFlashcards entries that reference a deleted document.
   await StudentProfile.updateMany(
-    { userId: req.user.id },
+    { 'savedFlashcards.documentId': document._id },
     { $pull: { savedFlashcards: { documentId: document._id } } }
   );
 
   await document.deleteOne();
 
-  // 3. Invalidate dashboard performance cache so score updates are reflected immediately
+  // 3. Invalidate dashboard performance cache
   await deleteCached(CACHE_KEYS.DASHBOARD_PERF(req.user.id));
 
-  // 4. Cleanup R2 storage (Async, non-blocking for the response)
-  StorageService.deleteFromR2(fileKey).catch((err) => 
-    console.error(`Failed to cleanup storage for key ${fileKey}:`, err)
-  );
+  // 4. Cleanup R2 storage with retry — fire-and-forget so the HTTP response is instant.
+  // A plain .catch() previously swallowed failures silently, leaving orphaned files in R2.
+  // Now we retry up to 3 times with exponential backoff and log a structured warning if
+  // all attempts fail so the file key can be audited/cleaned manually.
+  (async () => {
+    const MAX_ATTEMPTS = 3;
+    for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt++) {
+      try {
+        await StorageService.deleteFromR2(fileKey);
+        return; // success
+      } catch (err) {
+        if (attempt === MAX_ATTEMPTS) {
+          // All retries exhausted — log with the file key for manual cleanup audit
+          console.error(
+            `[DELETE DOC] R2 delete failed after ${MAX_ATTEMPTS} attempts. ` +
+            `File key: ${fileKey}. Error: ${err.message}`
+          );
+        } else {
+          // Exponential backoff: 500ms, 1000ms between attempts
+          await new Promise(resolve => setTimeout(resolve, 500 * attempt));
+        }
+      }
+    }
+  })();
 
   return res.status(200).json({ message: 'Document deleted successfully' });
 });
+
 
 /**
  * Generates a presigned URL for direct upload to Cloudflare R2
