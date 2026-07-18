@@ -629,7 +629,9 @@ export const chatSession = asyncHandler(async (req, res) => {
 
   documentContext.referencedChunk = referencedChunk;
 
-  const maxHistoryCount = conversation.summaryMemory ? 6 : 10;
+  // Fix Session Amnesia: keep a much larger context window (30 messages w/ summary, 50 w/o)
+  // so the AI does not forget custom constraints or the flow of the conversation.
+  const maxHistoryCount = conversation.summaryMemory ? 30 : 50;
   const history = (conversation.messages || []).slice(-maxHistoryCount);
 
   // Expensive AI Cache Check — only cache initial "ready" responses, not follow-ups

@@ -44,10 +44,23 @@ export const completeMultipartSchema = z.object({
   documentId: z.string().min(1, 'Document ID is required'),
   uploadId: z.string().min(1, 'Upload ID is required'),
   fileKey: z.string().min(1, 'File key is required'),
-  parts: z.array(z.object({
-    PartNumber: z.number().int().min(1),
-    ETag: z.string().min(1, 'ETag is required'),
-  })).min(1, 'At least one part is required'),
+  parts: z.array(
+    z.preprocess(
+      (val) => {
+        if (val && typeof val === 'object') {
+          return {
+            PartNumber: val.PartNumber !== undefined ? val.PartNumber : val.partNumber,
+            ETag: val.ETag !== undefined ? val.ETag : val.etag,
+          };
+        }
+        return val;
+      },
+      z.object({
+        PartNumber: z.number().int().min(1),
+        ETag: z.string().min(1, 'ETag is required'),
+      })
+    )
+  ).min(1, 'At least one part is required'),
 });
 
 export const abortMultipartSchema = z.object({

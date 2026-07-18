@@ -10,7 +10,7 @@ import {
   buildKnowledgeCachePromptA, 
   buildKnowledgeCachePromptB 
 } from '../utils/promptBuilder.js';
-import pdfParse from 'pdf-parse';
+import { PDFParse } from 'pdf-parse';
 import * as AIService from '../services/ai.service.js';
 import { GROQ_MODELS } from '../config/models.js';
 import { parseAIJson } from '../utils/parseAIJson.js';
@@ -152,56 +152,67 @@ export const extractionWorker = new Worker(
       let extractedText = '';
 
       if (doc.type === 'pdf') {
-        // Bug fix: pdf-parse exports a default async function, not a class.
-        const pdfData = await pdfParse(fileBuffer);
+        const parser = new PDFParse({ data: fileBuffer });
+        const pdfData = await parser.getText();
+        await parser.destroy();
         extractedText = pdfData.text;
 
         // Check if the PDF has almost no text (scanned PDF / photos of handwritten notes)
         const cleanText = cleanExtractedText(extractedText);
-        if (!cleanText || cleanText.length < 200) {
-          console.log(`[WORKER: EXTRACTION] PDF ${documentId} extracted text is empty or too short (${cleanText ? cleanText.length : 0} chars). Falling back to Vision OCR...`);
+        // Use text density to reliably catch large scanned PDFs (where only page numbers are extracted)
+        const textDensity = cleanText ? (cleanText.length / pdfData.numpages) : 0;
+
+        if (!cleanText || textDensity < 100) {
+          console.log(`[WORKER: EXTRACTION] PDF ${documentId} has low text density (${textDensity.toFixed(2)} chars/page). Detected as scanned document.`);
           
-          const { pdfToPng } = await import('pdf-to-png-converter');
-          const images = await pdfToPng(fileBuffer, {
-            viewportScale: 1.5 // increase resolution slightly for cleaner Vision OCR readings
-          });
+          try {
+            console.log(`[WORKER: EXTRACTION] Attempting native PDF extraction via OpenRouter Gateway...`);
+            extractedText = await AIService.extractPDFNative(fileBuffer, fileKey);
+          } catch (nativeErr) {
+            console.log(`[WORKER: EXTRACTION] Native PDF extraction unavailable or failed: ${nativeErr.message}. Falling back to Vision OCR images...`);
+            
+            const { pdfToPng } = await import('pdf-to-png-converter');
+            const images = await pdfToPng(fileBuffer, {
+              viewportScale: 1.5 // increase resolution slightly for cleaner Vision OCR readings
+            });
 
-          console.log(`[WORKER: EXTRACTION] Rendered ${images.length} PDF pages as PNG images.`);
+            console.log(`[WORKER: EXTRACTION] Rendered ${images.length} PDF pages as PNG images.`);
 
-          // Bug fix: was Promise.all — one page failure killed the entire document.
-          // Now sequential with per-page error recovery and rate-limit delay between pages.
-          const pagesToProcess = images.slice(0, 10);
-          console.log(`[WORKER: EXTRACTION] Processing ${pagesToProcess.length} pages sequentially...`);
+            // Bug fix: was Promise.all — one page failure killed the entire document.
+            // Now sequential with per-page error recovery and rate-limit delay between pages.
+            const pagesToProcess = images.slice(0, 10);
+            console.log(`[WORKER: EXTRACTION] Processing ${pagesToProcess.length} pages sequentially...`);
 
-          const pageTranscriptions = [];
-          for (const [index, page] of pagesToProcess.entries()) {
-            try {
-              const pageBuffer = page.content;
-              if (pageBuffer.length > 10 * 1024 * 1024) {
-                console.warn(`[WORKER: EXTRACTION] Page ${index + 1} exceeds 10MB limit. Skipping.`);
-                pageTranscriptions.push(`--- PAGE ${index + 1} ---\n[Page too large to process]`);
-                continue;
+            const pageTranscriptions = [];
+            for (const [index, page] of pagesToProcess.entries()) {
+              try {
+                const pageBuffer = page.content;
+                if (pageBuffer.length > 10 * 1024 * 1024) {
+                  console.warn(`[WORKER: EXTRACTION] Page ${index + 1} exceeds 10MB limit. Skipping.`);
+                  pageTranscriptions.push(`--- PAGE ${index + 1} ---\n[Page too large to process]`);
+                  continue;
+                }
+                const base64 = pageBuffer.toString('base64');
+                const pageText = await AIService.transcribeImage(base64, 'image/png');
+                pageTranscriptions.push(`--- PAGE ${index + 1} ---\n${pageText}`);
+                // Publish per-page progress so the bar visibly moves during OCR
+                publishProgress(documentId, 'extracting_content', 'processing', {
+                  heartbeat: true,
+                  pagesDone: index + 1,
+                  pagesTotal: pagesToProcess.length,
+                }).catch(() => {});
+              } catch (pageErr) {
+                console.warn(`[WORKER: EXTRACTION] Page ${index + 1} transcription failed, skipping:`, pageErr.message);
+                pageTranscriptions.push(`--- PAGE ${index + 1} ---\n[Page could not be transcribed]`);
               }
-              const base64 = pageBuffer.toString('base64');
-              const pageText = await AIService.transcribeImage(base64, 'image/png');
-              pageTranscriptions.push(`--- PAGE ${index + 1} ---\n${pageText}`);
-              // Publish per-page progress so the bar visibly moves during OCR
-              publishProgress(documentId, 'extracting_content', 'processing', {
-                heartbeat: true,
-                pagesDone: index + 1,
-                pagesTotal: pagesToProcess.length,
-              }).catch(() => {});
-            } catch (pageErr) {
-              console.warn(`[WORKER: EXTRACTION] Page ${index + 1} transcription failed, skipping:`, pageErr.message);
-              pageTranscriptions.push(`--- PAGE ${index + 1} ---\n[Page could not be transcribed]`);
+              // Pause between pages to avoid vision API rate limits
+              if (index < pagesToProcess.length - 1) {
+                await new Promise(resolve => setTimeout(resolve, 500));
+              }
             }
-            // Pause between pages to avoid vision API rate limits
-            if (index < pagesToProcess.length - 1) {
-              await new Promise(resolve => setTimeout(resolve, 500));
-            }
-          }
 
-          extractedText = pageTranscriptions.join('\n\n');
+            extractedText = pageTranscriptions.join('\n\n');
+          }
         }
       } else {
         if (fileBuffer.length > 10 * 1024 * 1024) {

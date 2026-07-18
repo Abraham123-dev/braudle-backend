@@ -651,12 +651,16 @@ export const gradeQuestion = asyncHandler(async (req, res) => {
   let isCorrect = false;
   let feedback = '';
 
+  let answerKeyFlag = null; // Surfaces to the client when the stored answer key was wrong
+
   if (question.type === 'mcq' || question.type === 'true_false') {
     isCorrect = gradeMcqOrTrueFalse(answer, question.answer, question.options);
-    feedback = isCorrect 
-      ? "Excellent! Your answer is correct." 
+    feedback = isCorrect
+      ? 'Excellent! Your answer is correct.'
       : `Incorrect. The correct option was: ${question.answer}.`;
   } else {
+    // Cognitive-layer grading: the model independently solves the problem first,
+    // then verifies the answer key before grading the student.
     const result = await AIService.evaluateTheoryAnswer(
       question.question,
       answer,
@@ -664,6 +668,16 @@ export const gradeQuestion = asyncHandler(async (req, res) => {
     );
     isCorrect = result.evaluation === 'correct' || result.evaluation === 'partial';
     feedback = result.feedback;
+
+    // If the stored answer key was detected as wrong, surface it to the client
+    // so the UI can show a note like "Note: the answer key for this question had an error."
+    if (result.answerKeyStatus === 'has_error') {
+      answerKeyFlag = {
+        hasError: true,
+        note: result.answerKeyNote,
+        verifiedAnswer: result.verifiedAnswer,
+      };
+    }
   }
 
   // Update question values
@@ -671,7 +685,7 @@ export const gradeQuestion = asyncHandler(async (req, res) => {
   question.isCorrect = isCorrect;
   question.feedback = feedback;
 
-  // Check if all questions are answered, if so calculate and save score
+  // Check if all questions are answered; if so calculate and save score
   const allAnswered = quiz.questions.every(q => q.studentAnswer && q.studentAnswer.trim().length > 0);
   let newLevel = null;
   if (allAnswered) {
@@ -679,8 +693,6 @@ export const gradeQuestion = asyncHandler(async (req, res) => {
     quiz.score = score;
     quiz.submittedAt = new Date();
     newLevel = await ProfileService.updateProfileAfterQuiz(userId, score, quiz.questions);
-    
-    // Invalidate performance cache so the dashboard reflects the new score immediately
     await deleteCached(CACHE_KEYS.DASHBOARD_PERF(userId));
   }
 
@@ -708,7 +720,8 @@ export const gradeQuestion = asyncHandler(async (req, res) => {
     explanation: question.explanation || '',
     quizScore: quiz.score,
     newLevel,
-    weakTopics
+    weakTopics,
+    answerKeyFlag, // null for MCQ/TF; populated for theory if the answer key had an error
   });
 });
 

@@ -32,7 +32,7 @@ export const env = {
   port: parseInt(process.env.PORT, 10) || 5000,
   nodeEnv: process.env.NODE_ENV || 'development',
   mongoUri: process.env.MONGODB_URI,
-  redisUrl: process.env.REDIS_URL || 'redis://localhost:6379',
+  redisUrl: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
   
   jwt: {
     secret: process.env.JWT_SECRET,

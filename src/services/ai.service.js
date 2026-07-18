@@ -803,6 +803,96 @@ IMPORTANT RULES:
 };
 
 /**
+ * Attempts to natively extract text from a raw PDF using OpenRouter's file API.
+ * If this fails or hits a rate limit, it throws an error so the caller can fall back 
+ * to image-based transcription across other gateway providers.
+ */
+export const extractPDFNative = async (fileBuffer, filename, signal) => {
+  if (!env.openRouter.apiKey) {
+    throw new Error('OpenRouter API key missing, skipping native PDF extraction');
+  }
+
+  const model = getModelForTask('openrouter', 'vision');
+  logProviderDecision('vision_pdf', 'openrouter', model);
+  const start = Date.now();
+
+  const base64pdf = fileBuffer.toString('base64');
+  const messages = [
+    {
+      role: 'user',
+      content: [
+        {
+          type: 'text',
+          text: `You are an expert academic content extractor for a study assistant called BRAUDLE.
+A student has uploaded a PDF document. Your job is to extract and understand EVERYTHING in this document.
+
+EXTRACT
+- Extract every single word of visible text exactly as written.
+- Extract all numbers, formulas, and structured content.
+
+STRUCTURE YOUR OUTPUT EXACTLY LIKE THIS:
+
+CONTENT_TYPE: [document type]
+SUBJECT: [subject area]
+TOPIC: [main topic]
+
+RAW_TEXT:
+[all extracted text verbatim]
+
+FULL_SUMMARY:
+[thorough summary]`
+        },
+        {
+          type: 'file',
+          file: {
+            filename: filename || 'document.pdf',
+            file_data: `data:application/pdf;base64,${base64pdf}`
+          }
+        }
+      ]
+    }
+  ];
+
+  const response = await runWithSignalAndTimeout(
+    (sig) => fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': `Bearer ${env.openRouter.apiKey}`,
+        'HTTP-Referer': 'https://braudle.com',
+        'X-Title': 'BRAUDLE',
+      },
+      body: JSON.stringify({
+        model,
+        messages,
+        temperature: 0.1,
+        max_tokens: 8192,
+      }),
+      signal: sig,
+    }),
+    signal,
+    120000 // 2-minute timeout for large PDFs
+  );
+
+  if (!response.ok) {
+    const err = new Error(`OpenRouter HTTP ${response.status}`);
+    err.status = response.status;
+    logFallback('vision_pdf', 'openrouter', err, 'vision_image_fallback', 'various');
+    throw err;
+  }
+
+  const data = await response.json();
+  const duration = Date.now() - start;
+  console.log(`[AI GATEWAY] Success | Provider: openrouter (Native PDF) | Response Time: ${duration}ms`);
+  
+  const text = data.choices?.[0]?.message?.content || '';
+  if (!text) {
+    throw new Error('OpenRouter returned empty content for PDF');
+  }
+  return text;
+};
+
+/**
  * Performs a non-streaming call to Groq.
  * Refactored to act as a wrapper for generateAIResponse.
  */
@@ -854,58 +944,100 @@ export const analyzeSession = async (messages, documentTopics = []) => {
 };
 
 /**
- * Evaluates a student's short/long theory answer against the correct answer.
+ * Evaluates a student's theory answer using a token-efficient cognitive grading protocol.
+ *
+ * Design goal: full "Understand First, Grade Second" accuracy at near-original token cost.
+ *
+ * The 3-phase reasoning (independent solution → answer-key verification → grading)
+ * is given as INTERNAL instructions the model silently follows before responding.
+ * The model never outputs its reasoning steps — only the final lean verdict.
+ * This preserves anti-hallucination quality while keeping tokens ~same as the old prompt.
+ *
+ * Model: fast 8B (llama-3.1-8b-instant) — precise instructions make the small model
+ * sufficient. The 70B smart model is overkill and ~4x more expensive per call.
+ *
+ * Return shape is backward-compatible: all callers that use { evaluation, feedback }
+ * continue to work. answerKeyStatus and answerKeyNote are available for richer UI.
  */
 export const evaluateTheoryAnswer = async (question, studentAnswer, correctAnswer) => {
   if (!studentAnswer || studentAnswer.trim().length === 0) {
     return {
       evaluation: 'wrong',
       feedback: 'No answer was provided.',
+      answerKeyStatus: 'unchecked',
+      answerKeyNote: null,
     };
   }
 
-  const prompt = `You are an educational evaluator grading a student's answer to a short theory question.
-Compare the student's answer with the expected correct answer and determine if it is correct, partially correct, or incorrect. Also provide a direct, helpful, and friendly sentence explaining why it was graded this way.
+  // Static system message — the cognitive protocol lives here as silent instructions.
+  // Keeping it in the system role lets providers that support prefix caching reuse it.
+  const systemMessage =
+    `You are a grading agent for Braudle. Before grading, silently follow these steps in your head:\n` +
+    `STEP 1: Recall the exact rule, formula, or definition for this topic from first principles.\n` +
+    `STEP 2: Note any constraint words in the question (NOT, minimum, maximum, only, exactly, units).\n` +
+    `STEP 3: Derive the correct answer yourself — do NOT look at the answer key yet.\n` +
+    `STEP 4: Compare your answer to the provided answer key. If the key is wrong, use your answer.\n` +
+    `STEP 5: Grade the student against the verified correct answer.\n\n` +
+    `Output ONLY this JSON — no markdown, no backticks, nothing else:\n` +
+    `{"answerKeyStatus":"valid" or "has_error","answerKeyNote":null or "one sentence on the key error",` +
+    `"evaluation":"correct" or "partial" or "incorrect",` +
+    `"feedback":"friendly specific feedback: what they got right, what they missed, how to improve"}`;
 
-QUESTION: "${question}"
-EXPECTED ANSWER: "${correctAnswer}"
-STUDENT'S ANSWER: "${studentAnswer}"
-
-Rules:
-- Mark as "correct" if the student's answer is accurate, complete, and covers the key points of the expected answer (even if phrased differently).
-- Mark as "partial" if the student's answer is on the right track or has some correct elements, but is incomplete, slightly inaccurate, or missing details.
-- Mark as "incorrect" if the student's answer is wrong, irrelevant, or fails to demonstrate understanding of the concept.
-
-Return ONLY a JSON object with the following schema:
-{
-  "evaluation": "correct" | "partial" | "incorrect",
-  "feedback": "Friendly feedback explaining exactly what they did well, what they missed, and how to improve."
-}
-Do NOT include markdown, backticks, or any explanation. Return only the raw JSON.`;
+  // Dynamic user message — only the per-request content
+  const userMessage =
+    `QUESTION: "${question}"\n` +
+    `ANSWER KEY: "${correctAnswer}"\n` +
+    `STUDENT ANSWER: "${studentAnswer}"`;
 
   try {
     const response = await callGroqWithRetry(
-      [{ role: 'user', content: prompt }],
+      [
+        { role: 'system', content: systemMessage },
+        { role: 'user',   content: userMessage   },
+      ],
       GROQ_MODELS.fast
     );
 
-    const parsed = parseAIJson(response, { evaluation: 'incorrect', feedback: 'Could not generate feedback.' });
-    let evaluation = (parsed.evaluation || 'incorrect').toLowerCase().trim();
-    const feedback = parsed.feedback || 'Your answer was evaluated.';
+    const parsed = parseAIJson(response, {
+      evaluation: 'incorrect',
+      feedback: 'Could not generate feedback.',
+      answerKeyStatus: 'unchecked',
+      answerKeyNote: null,
+    });
 
-    if (evaluation === 'incorrect') evaluation = 'wrong';
-    else if (evaluation !== 'correct' && evaluation !== 'partial') {
-      if (evaluation.includes('correct')) evaluation = 'correct';
+    // Normalise evaluation to the three internal values
+    let evaluation = (parsed.evaluation || 'incorrect').toLowerCase().trim();
+    if (evaluation === 'incorrect') {
+      evaluation = 'wrong';
+    } else if (evaluation !== 'correct' && evaluation !== 'partial') {
+      if (evaluation.includes('correct'))      evaluation = 'correct';
       else if (evaluation.includes('partial')) evaluation = 'partial';
-      else evaluation = 'wrong';
+      else                                     evaluation = 'wrong';
     }
 
-    return { evaluation, feedback };
+    const answerKeyStatus = parsed.answerKeyStatus || 'unchecked';
+    const answerKeyNote   = parsed.answerKeyNote   || null;
+
+    // Log answer-key errors so bad questions can be identified and fixed
+    if (answerKeyStatus === 'has_error') {
+      console.warn(
+        `[GRADING] Answer key error detected | Q: "${question.slice(0, 80)}" | ${answerKeyNote}`
+      );
+    }
+
+    return {
+      evaluation,
+      feedback: parsed.feedback || 'Your answer was evaluated.',
+      answerKeyStatus,
+      answerKeyNote,
+    };
   } catch (err) {
     console.error('[AI SERVICE] Theory evaluation failed:', err.message);
     return {
       evaluation: 'wrong',
-      feedback: 'An error occurred while evaluating your answer.',
+      feedback: 'An error occurred while evaluating your answer. Please try again.',
+      answerKeyStatus: 'unchecked',
+      answerKeyNote: null,
     };
   }
 };
