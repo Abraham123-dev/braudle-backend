@@ -15,6 +15,7 @@ import * as YouTubeService from '../services/youtube.service.js';
 import { getCached, setCached, deleteCached, CACHE_KEYS, CACHE_TTL } from '../utils/cache.js';
 import { summaryQueue } from '../queues/document.queue.js';
 import { detectQuestionsInDocument } from '../utils/documentAnalyzer.js';
+import { getDueConcepts } from '../services/mastery.service.js';
 
 // ── Flashcard parser ─────────────────────────────────────────────────────────
 /**
@@ -60,17 +61,23 @@ const parseFlashcardsFromResponse = (text) => {
 const resolveYouTubeMarker = async (text) => {
   const markerRegex = /\[YOUTUBE_SEARCH:\s*"([^"]+)"\]/i;
   const match = text.match(markerRegex);
-
   if (!match) return text;
-
   const query = match[1];
-  const videos = await YouTubeService.searchYouTube(query, 1);
-
+  // Hard 2-second timeout: if YouTube API is slow or down, strip the marker
+  // cleanly rather than hanging the SSE connection open after [DONE] is sent.
+  const videos = await Promise.race([
+    YouTubeService.searchYouTube(query, 1),
+    new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('YouTube API timeout (2s)')), 2000)
+    ),
+  ]).catch((err) => {
+    console.warn('[YOUTUBE] resolveYouTubeMarker timed out or failed:', err.message);
+    return [];
+  });
   if (videos.length > 0) {
     const videoText = YouTubeService.formatVideoSuggestion(videos[0]);
     return text.replace(markerRegex, videoText);
   }
-
   // No results or API unavailable: remove marker cleanly
   return text.replace(markerRegex, '');
 };
@@ -180,7 +187,19 @@ export const startSession = asyncHandler(async (req, res) => {
         Document.findByIdAndUpdate(document._id, { hasQuestions }).catch(() => {});
       }
 
-      const welcomeText = generateWelcomeText(document, profile || { weakTopics: [], strongTopics: [] }, name, hasQuestions);
+      let welcomeText = generateWelcomeText(document, profile || { weakTopics: [], strongTopics: [] }, name, hasQuestions);
+      // SM-2 Spaced Repetition: surface any concepts due for review today.
+      // Non-fatal — a mastery DB failure must never block session creation.
+      try {
+        const dueConcepts = await getDueConcepts(userId, documentId);
+        if (dueConcepts && dueConcepts.length > 0) {
+          const names = dueConcepts.slice(0, 3).map(c => `**${c.conceptName}**`).join(', ');
+          const moreCount = dueConcepts.length > 3 ? ` *(+${dueConcepts.length - 3} more)*` : '';
+          welcomeText += `\n\n🔁 **Spaced Review Due:** You have ${dueConcepts.length} concept${dueConcepts.length > 1 ? 's' : ''} scheduled for review today: ${names}${moreCount}. Just ask me to *"review [concept name]"* whenever you're ready!`;
+        }
+      } catch (masteryErr) {
+        console.warn('[SESSION] getDueConcepts failed (non-fatal):', masteryErr.message);
+      }
       messages.push({
         role: 'assistant',
         content: welcomeText,
@@ -547,12 +566,22 @@ export const chatSession = asyncHandler(async (req, res) => {
       await processAsyncBatch(chunkEmbeddings, 15, processVectorBatch);
       vectorRanked.sort((a, b) => b.score - a.score);
 
-      // 2. Calculate Keyword Scores & Ranks (lexical matching helper)
+      // 2. Calculate Keyword Scores & Ranks (BM25-style lexical matching).
+      // Stopwords are filtered before scoring so common function words
+      // ("the", "a", "is") don't pollute the keyword rank list.
+      const STOPWORDS = new Set([
+        'the','a','an','is','are','was','were','be','been','being',
+        'have','has','had','do','does','did','will','would','could','should','may','might',
+        'of','in','on','at','to','for','with','by','from','up','about','into','through',
+        'and','but','or','nor','not','so','yet','both','either','neither','this','that',
+        'these','those','it','its','i','my','you','your','he','his','she','her','they',
+        'their','we','our','what','which','who','when','where','why','how',
+      ]);
       const calculateKeywordScore = (query, chunkText) => {
-        const queryWords = query.toLowerCase().match(/\w+/g) || [];
+        const queryWords = (query.toLowerCase().match(/\w+/g) || [])
+          .filter(w => !STOPWORDS.has(w) && w.length > 2);
         const chunkWords = chunkText.toLowerCase().match(/\w+/g) || [];
         if (queryWords.length === 0 || chunkWords.length === 0) return 0;
-        
         let score = 0;
         queryWords.forEach(word => {
           const count = chunkWords.filter(w => w === word).length;
@@ -601,7 +630,9 @@ export const chatSession = asyncHandler(async (req, res) => {
 
       // 4. Retrieve context if query matches document relevance
       const topVectorMatch = vectorRanked[0];
-      const isRelevant = topVectorMatch && topVectorMatch.score > 0.18;
+      // Threshold raised 0.18 → 0.40: the old threshold was injecting semantically
+      // unrelated chunks into the prompt, degrading answer quality and burning tokens.
+      const isRelevant = topVectorMatch && topVectorMatch.score > 0.40;
 
       if (isRelevant) {
         // Select top 3 chunks (excluding active chunk to avoid duplicate context)
@@ -1377,7 +1408,8 @@ export const explainSelection = asyncHandler(async (req, res) => {
       }
 
       // If best score is above threshold, use it as baseline context
-      if (bestScore > 0.15) {
+      // Threshold raised 0.15 → 0.35 — same reasoning as chatSession threshold.
+      if (bestScore > 0.35) {
         matchedChunkIndex = bestIndex;
         
         // Grab adjacent chunks for broader semantic grounding

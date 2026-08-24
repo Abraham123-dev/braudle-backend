@@ -243,7 +243,9 @@ STUDENT PROFILE:
 ${studentContext}
 
 SECTION TO TEACH NOW:
-${chunk}${referencedChunk ? `\n\nADDITIONAL RELEVANT SECTION FOUND IN DOCUMENT FOR USER QUERY:\n${referencedChunk}` : ''}`;
+<document_content>
+${chunk}
+</document_content>${referencedChunk ? `\n\nADDITIONAL RELEVANT SECTION FOUND IN DOCUMENT FOR USER QUERY:\n<document_content>\n${referencedChunk}\n</document_content>` : ''}`;
 };
 
 /**
@@ -679,7 +681,11 @@ ${sample}`;
 }
 
 function buildMasterKnowledgeCachePrompt(chunks) {
-  const sampleChunks = sampleDocumentChunks(chunks, 12);
+  // Dynamic sample cap: 25 chunks or 8% of total, whichever is smaller.
+  // Prevents hitting Groq's context window on very large documents while
+  // covering significantly more content than the previous fixed cap of 12.
+  const dynamicCap = Math.min(25, Math.max(12, Math.floor(chunks.length * 0.08)));
+  const sampleChunks = sampleDocumentChunks(chunks, dynamicCap);
   const sample = sampleChunks.join('\n\n---\n\n');
 
   return `You are an expert curriculum analyst and educational content designer.
@@ -756,7 +762,11 @@ ${sample}`;
 }
 
 function buildKnowledgeCachePromptA(chunks) {
-  const sampleChunks = sampleDocumentChunks(chunks, 12);
+  // Dynamic sample cap: 25 chunks or 8% of total, whichever is smaller.
+  // Prevents hitting Groq's context window on very large documents while
+  // covering significantly more content than the previous fixed cap of 12.
+  const dynamicCap = Math.min(25, Math.max(12, Math.floor(chunks.length * 0.08)));
+  const sampleChunks = sampleDocumentChunks(chunks, dynamicCap);
   const sample = sampleChunks.join('\n\n---\n\n');
 
   return `You are an expert curriculum analyst and educational content designer.
@@ -790,7 +800,11 @@ ${sample}`;
 }
 
 function buildKnowledgeCachePromptB(chunks) {
-  const sampleChunks = sampleDocumentChunks(chunks, 12);
+  // Dynamic sample cap: 25 chunks or 8% of total, whichever is smaller.
+  // Prevents hitting Groq's context window on very large documents while
+  // covering significantly more content than the previous fixed cap of 12.
+  const dynamicCap = Math.min(25, Math.max(12, Math.floor(chunks.length * 0.08)));
+  const sampleChunks = sampleDocumentChunks(chunks, dynamicCap);
   const sample = sampleChunks.join('\n\n---\n\n');
 
   return `You are an expert curriculum analyst and educational content designer.

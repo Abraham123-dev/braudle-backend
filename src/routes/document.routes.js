@@ -33,8 +33,15 @@ import {
 
 const router = Router();
 
-// Legacy upload method (via backend server)
-router.post('/upload', verifyJWT, resetUploadCountersIfNeeded, uploadSingle, validate(uploadSchema), uploadDocument);
+// DEPRECATED: Legacy upload route — buffers entire file in Node RAM via multer.
+// Returns 410 Gone to force all callers onto the presigned URL path.
+router.post('/upload', (_req, res) => {
+  res.status(410).json({
+    status: 'error',
+    message: 'This upload method has been retired. Use POST /documents/presigned-url for direct-to-R2 upload.',
+    docs: '/api/documents/presigned-url',
+  });
+});
 
 // Direct single-file upload routes
 router.post('/presigned-url', verifyJWT, presignBurstLimiter, resetUploadCountersIfNeeded, validate(getPresignedUrlSchema), getPresignedUrl);

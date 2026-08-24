@@ -237,7 +237,22 @@ export const extractionWorker = new Worker(
       await Document.findByIdAndUpdate(documentId, { processingStage: 'identifying_concepts' });
       await publishProgress(documentId, 'identifying_concepts', 'processing');
 
-      const chunks = splitIntoChunks(extractedText);
+      // Use semantic chunking for PDFs (topic-boundary-aware).
+      // Falls back to fixed chunking if the embedding API is unavailable.
+      let chunks;
+      const isPDF = document.type === 'pdf' || fileKey?.toLowerCase().endsWith('.pdf');
+      if (isPDF) {
+        try {
+          chunks = await splitIntoChunksSemantic(extractedText, { targetWords: 350, similarityThreshold: 0.30 });
+          if (!chunks || chunks.length === 0) throw new Error('Semantic chunker returned empty result');
+          console.log(`[WORKER] Semantic chunking produced ${chunks.length} chunks for ${documentId}`);
+        } catch (semanticErr) {
+          console.warn(`[WORKER] Semantic chunking failed, falling back to fixed: ${semanticErr.message}`);
+          chunks = splitIntoChunks(extractedText);
+        }
+      } else {
+        chunks = splitIntoChunks(extractedText);
+      }
 
       // 4. Topic extraction & summary
       await Document.findByIdAndUpdate(documentId, { processingStage: 'building_learning_map' });
