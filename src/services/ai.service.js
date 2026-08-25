@@ -35,9 +35,9 @@ function isTransientError(error) {
     return false;
   }
 
-  // Treat out of credits (402) and timeouts (408) as transient/fallback-eligible
+  // Treat out of credits (402), model unavailable (404), timeouts (408), payload too large (413), rate limits (429), and 5xx as fallback-eligible
   if (status) {
-    const transientStatuses = [402, 408, 413, 429, 500, 502, 503];
+    const transientStatuses = [402, 404, 408, 413, 429, 500, 502, 503];
     return transientStatuses.includes(status);
   }
 
@@ -48,6 +48,8 @@ function isTransientError(error) {
     message.includes('network') ||
     message.includes('fetch') ||
     message.includes('connect') ||
+    message.includes('model_not_found') ||
+    message.includes('does not exist') ||
     name.includes('abort') ||
     name.includes('timeout')
   ) {
