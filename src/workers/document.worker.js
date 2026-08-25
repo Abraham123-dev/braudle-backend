@@ -240,7 +240,7 @@ export const extractionWorker = new Worker(
       // Use semantic chunking for PDFs (topic-boundary-aware).
       // Falls back to fixed chunking if the embedding API is unavailable.
       let chunks;
-      const isPDF = document.type === 'pdf' || fileKey?.toLowerCase().endsWith('.pdf');
+      const isPDF = doc?.type === 'pdf' || fileKey?.toLowerCase().endsWith('.pdf');
       if (isPDF) {
         try {
           chunks = await splitIntoChunksSemantic(extractedText, { targetWords: 350, similarityThreshold: 0.30 });

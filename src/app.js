@@ -136,7 +136,12 @@ const sanitizeRequestBody = (body) => {
   return sanitized;
 };
 
-// ── Global error handler ──────────────────────────────────────────────────────
+// 404 handler
+app.use((req, res, next) => {
+  next(new AppError(`Route not found: ${req.method} ${req.originalUrl}`, 404));
+});
+
+// Global error handler
 app.use((err, req, res, next) => {
   let statusCode = err.statusCode || 500;
   let message = err.message || 'Internal Server Error';
@@ -193,10 +198,6 @@ app.use((err, req, res, next) => {
     errorId,
     ...(showStack && { stack: err.stack }),
   });
-});
-
-app.use((req, res) => {
-  res.status(404).json({ error: 'Route not found' });
 });
 
 export { app };
