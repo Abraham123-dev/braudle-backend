@@ -3,30 +3,39 @@ import { env } from '../config/env.js';
 
 /**
  * Reusable SMTP transporter (singleton — created once at module load).
- * Nodemailer pools connections automatically for performance.
+ * If service is 'gmail' (or host contains gmail), uses Nodemailer's optimized built-in
+ * Gmail transport (port 465 / direct SSL connection), preventing cloud port-587 timeouts.
  */
-const transporter = nodemailer.createTransport({
-  host: env.smtp.host,
-  port: env.smtp.port,
-  secure: env.smtp.secure, // true for port 465 (SSL), false for 587 (STARTTLS)
-  auth: {
-    user: env.smtp.user,
-    pass: env.smtp.pass,
-  },
-});
+const transportConfig = env.smtp.service || env.smtp.host?.toLowerCase().includes('gmail')
+  ? {
+      service: 'gmail',
+      auth: {
+        user: env.smtp.user,
+        pass: env.smtp.pass,
+      },
+    }
+  : {
+      host: env.smtp.host,
+      port: env.smtp.port,
+      secure: env.smtp.secure, // true for port 465 (SSL), false for 587 (STARTTLS)
+      auth: {
+        user: env.smtp.user,
+        pass: env.smtp.pass,
+      },
+    };
+
+const transporter = nodemailer.createTransport(transportConfig);
 
 /**
- * Verify SMTP connection on startup so failures are caught early and
- * show up clearly in Render logs — not silently at send time.
+ * Verify SMTP connection on startup so connection status is clearly visible in logs.
  */
-transporter.verify((err, success) => {
+transporter.verify((err) => {
   if (err) {
-    console.error('❌ [SMTP] Connection FAILED on startup:');
-    console.error(`   Host:  ${env.smtp.host}:${env.smtp.port}`);
+    console.error('❌ [SMTP] Connection check FAILED on startup:');
     console.error(`   User:  ${env.smtp.user}`);
     console.error(`   Error: ${err.message}`);
   } else {
-    console.log(`✅ [SMTP] Connected to ${env.smtp.host}:${env.smtp.port} as ${env.smtp.user}`);
+    console.log(`✅ [SMTP] Transporter ready & verified for user: ${env.smtp.user}`);
   }
 });
 
@@ -114,14 +123,12 @@ export const sendMagicLink = async (email, token) => {
     return info;
 
   } catch (err) {
-    // Always log the full error — visible in both dev and Render production logs
     console.error('❌ [SMTP] Failed to send email:');
     console.error(`   To:    ${email}`);
     console.error(`   Error: ${err.message}`);
     console.error(`   Code:  ${err.code || 'N/A'}`);
 
     if (env.nodeEnv === 'development') {
-      // In development, do not crash the request — dev can copy the link from console output
       console.warn('⚠️  [SMTP] Dev mode: returning mock response. Use the link printed above.');
       return { messageId: 'dev_mock_id' };
     }

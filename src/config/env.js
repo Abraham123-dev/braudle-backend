@@ -83,6 +83,7 @@ export const env = {
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
 
   smtp: {
+    service: process.env.SMTP_SERVICE || (process.env.SMTP_HOST?.includes('gmail') ? 'gmail' : undefined),
     host: process.env.SMTP_HOST,
     port: parseInt(process.env.SMTP_PORT, 10) || 587,
     secure: process.env.SMTP_SECURE === 'true', // true for port 465 (SSL), false for 587 (STARTTLS)
