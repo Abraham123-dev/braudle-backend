@@ -11,7 +11,11 @@ const requiredEnvVars = [
   'GOOGLE_CALLBACK_URL',
   'GROQ_API_KEY_1',
   'GROQ_API_KEY_2',
-  'RESEND_API_KEY',
+  'SMTP_HOST',
+  'SMTP_PORT',
+  'SMTP_USER',
+  'SMTP_PASS',
+  'SMTP_FROM',
   'CF_ACCOUNT_ID',
   'CF_R2_ACCESS_KEY',
   'CF_R2_SECRET_KEY',
@@ -78,8 +82,13 @@ export const env = {
   
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
 
-  resend: {
-    apiKey: process.env.RESEND_API_KEY,
+  smtp: {
+    host: process.env.SMTP_HOST,
+    port: parseInt(process.env.SMTP_PORT, 10) || 587,
+    secure: process.env.SMTP_SECURE === 'true', // true for port 465 (SSL), false for 587 (STARTTLS)
+    user: process.env.SMTP_USER,
+    pass: process.env.SMTP_PASS,
+    from: process.env.SMTP_FROM,  // e.g. BRAUDLE <auth@braudle.com>
   },
 
   // Optional: YouTube Data API v3 key for real video suggestions in tutoring.

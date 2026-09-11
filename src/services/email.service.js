@@ -1,10 +1,22 @@
-import { Resend } from 'resend';
+import nodemailer from 'nodemailer';
 import { env } from '../config/env.js';
 
-const resend = new Resend(env.resend.apiKey);
+/**
+ * Reusable SMTP transporter (singleton — created once at module load).
+ * Nodemailer pools connections automatically for performance.
+ */
+const transporter = nodemailer.createTransport({
+  host: env.smtp.host,
+  port: env.smtp.port,
+  secure: env.smtp.secure, // true for port 465 (SSL), false for 587 (STARTTLS)
+  auth: {
+    user: env.smtp.user,
+    pass: env.smtp.pass,
+  },
+});
 
 /**
- * Sends a magic login link to the user
+ * Sends a magic login link to the user via SMTP.
  */
 export const sendMagicLink = async (email, token) => {
   const loginUrl = `${env.frontendUrl}/auth/callback?token=${token}`;
@@ -17,9 +29,8 @@ export const sendMagicLink = async (email, token) => {
   }
 
   try {
-    return await resend.emails.send({
-      // Production: Switch to 'BRAUDLE <auth@braudle.com>' after verifying your domain in Resend
-      from: 'BRAUDLE <onboarding@resend.dev>',
+    return await transporter.sendMail({
+      from: env.smtp.from, // e.g. "BRAUDLE <auth@braudle.com>"
       to: email,
       subject: 'Your BRAUDLE Magic Login Link',
       html: `
@@ -68,7 +79,7 @@ export const sendMagicLink = async (email, token) => {
                         </p>
                         <div style="border-top: 1px solid #1f2937; padding-top: 20px;">
                           <p style="font-size: 11px; color: #4b5563; margin: 0;">
-                            If you didn''t request this email, you can safely ignore it.
+                            If you didn't request this email, you can safely ignore it.
                           </p>
                         </div>
                       </td>
@@ -82,10 +93,10 @@ export const sendMagicLink = async (email, token) => {
       `,
     });
   } catch (err) {
-    console.error('📧 [RESEND] Failed to send email via API:', err.message);
+    console.error('📧 [SMTP] Failed to send email:', err.message);
     if (env.nodeEnv === 'development') {
-      // In development, do not crash the request, since the dev can copy the link from the console output
-      return { id: 'dev_mock_id' };
+      // In development, do not crash the request — dev can copy the link from console output
+      return { messageId: 'dev_mock_id' };
     }
     throw err;
   }

@@ -68,6 +68,7 @@
     "mongodb": "^7.2.0",
     "mongoose": "^9.6.3",
     "multer": "^2.1.1",
+    "nodemailer": "^10.0.7",
     "passport": "^0.7.0",
     "passport-google-oauth20": "^2.0.0",
     "pdf-parse": "^2.4.5",
@@ -75,7 +76,6 @@
     "pino": "^10.3.1",
     "pino-http": "^11.0.0",
     "rate-limit-redis": "^5.0.0",
-    "resend": "^6.12.4",
     "zod": "^4.4.3"
   }
 }
