@@ -1,9 +1,7 @@
 import nodemailer from 'nodemailer';
 
 const transporter = nodemailer.createTransport({
-  host: 'smtp.gmail.com',
-  port: 587,
-  secure: false,
+  service: 'gmail',
   auth: {
     user: 'abrahamoluwaniyi50@gmail.com',
     pass: 'osqoybmxjaynlmmw',
@@ -11,8 +9,14 @@ const transporter = nodemailer.createTransport({
 });
 
 try {
-  await transporter.verify();
-  console.log('✅ SMTP connection verified — Gmail credentials are working!');
+  console.log('Sending test email to abrahamoluwaniyi50@gmail.com...');
+  const info = await transporter.sendMail({
+    from: 'BRAUDLE <abrahamoluwaniyi50@gmail.com>',
+    to: 'abrahamoluwaniyi50@gmail.com',
+    subject: 'BRAUDLE Test Email - Gmail SMTP Working!',
+    text: 'Hello Abraham! Your Gmail SMTP is officially working.',
+  });
+  console.log('✅ Email sent successfully! MessageId:', info.messageId);
 } catch (err) {
-  console.error('❌ SMTP verification failed:', err.message);
+  console.error('❌ Failed to send test email:', err);
 }

@@ -11,11 +11,6 @@ const requiredEnvVars = [
   'GOOGLE_CALLBACK_URL',
   'GROQ_API_KEY_1',
   'GROQ_API_KEY_2',
-  'SMTP_HOST',
-  'SMTP_PORT',
-  'SMTP_USER',
-  'SMTP_PASS',
-  'SMTP_FROM',
   'CF_ACCOUNT_ID',
   'CF_R2_ACCESS_KEY',
   'CF_R2_SECRET_KEY',
@@ -24,6 +19,12 @@ const requiredEnvVars = [
 ];
 
 const missingVars = requiredEnvVars.filter(v => !process.env[v]);
+
+const smtpEmail = process.env.SMTP_EMAIL || process.env.SMTP_USER;
+const smtpPass = process.env.SMTP_PASSWORD || process.env.SMTP_PASS;
+
+if (!smtpEmail) missingVars.push('SMTP_EMAIL (or SMTP_USER)');
+if (!smtpPass) missingVars.push('SMTP_PASSWORD (or SMTP_PASS)');
 
 if (missingVars.length > 0) {
   console.error('Missing required environment variables:');
@@ -83,13 +84,9 @@ export const env = {
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
 
   smtp: {
-    service: process.env.SMTP_SERVICE || (process.env.SMTP_HOST?.includes('gmail') ? 'gmail' : undefined),
-    host: process.env.SMTP_HOST,
-    port: parseInt(process.env.SMTP_PORT, 10) || 587,
-    secure: process.env.SMTP_SECURE === 'true', // true for port 465 (SSL), false for 587 (STARTTLS)
-    user: process.env.SMTP_USER,
-    pass: process.env.SMTP_PASS,
-    from: process.env.SMTP_FROM,  // e.g. BRAUDLE <auth@braudle.com>
+    email: smtpEmail,
+    password: smtpPass,
+    from: process.env.SMTP_FROM || `BRAUDLE <${smtpEmail}>`,
   },
 
   // Optional: YouTube Data API v3 key for real video suggestions in tutoring.

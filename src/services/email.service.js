@@ -2,40 +2,26 @@ import nodemailer from 'nodemailer';
 import { env } from '../config/env.js';
 
 /**
- * Reusable SMTP transporter (singleton — created once at module load).
- * If service is 'gmail' (or host contains gmail), uses Nodemailer's optimized built-in
- * Gmail transport (port 465 / direct SSL connection), preventing cloud port-587 timeouts.
+ * Clean Gmail SMTP transporter using email & password.
  */
-const transportConfig = env.smtp.service || env.smtp.host?.toLowerCase().includes('gmail')
-  ? {
-      service: 'gmail',
-      auth: {
-        user: env.smtp.user,
-        pass: env.smtp.pass,
-      },
-    }
-  : {
-      host: env.smtp.host,
-      port: env.smtp.port,
-      secure: env.smtp.secure, // true for port 465 (SSL), false for 587 (STARTTLS)
-      auth: {
-        user: env.smtp.user,
-        pass: env.smtp.pass,
-      },
-    };
-
-const transporter = nodemailer.createTransport(transportConfig);
+const transporter = nodemailer.createTransport({
+  service: 'gmail',
+  auth: {
+    user: env.smtp.email,
+    pass: env.smtp.password,
+  },
+});
 
 /**
- * Verify SMTP connection on startup so connection status is clearly visible in logs.
+ * Verify connection status on server startup
  */
 transporter.verify((err) => {
   if (err) {
     console.error('❌ [SMTP] Connection check FAILED on startup:');
-    console.error(`   User:  ${env.smtp.user}`);
+    console.error(`   Email: ${env.smtp.email}`);
     console.error(`   Error: ${err.message}`);
   } else {
-    console.log(`✅ [SMTP] Transporter ready & verified for user: ${env.smtp.user}`);
+    console.log(`✅ [SMTP] Transporter verified & ready for: ${env.smtp.email}`);
   }
 });
 
@@ -45,7 +31,7 @@ transporter.verify((err) => {
 export const sendMagicLink = async (email, token) => {
   const loginUrl = `${env.frontendUrl}/auth/callback?token=${token}`;
 
-  // Log the magic link to console in development mode so developers can login easily without checking email
+  // Log magic link in development mode for easy copy-paste
   if (env.nodeEnv === 'development') {
     console.log('\n✉️  [DEVELOPMENT] MAGIC LOGIN LINK GENERATED:');
     console.log(`👉 Email: ${email}`);
