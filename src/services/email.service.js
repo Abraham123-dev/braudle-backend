@@ -16,6 +16,21 @@ const transporter = nodemailer.createTransport({
 });
 
 /**
+ * Verify SMTP connection on startup so failures are caught early and
+ * show up clearly in Render logs — not silently at send time.
+ */
+transporter.verify((err, success) => {
+  if (err) {
+    console.error('❌ [SMTP] Connection FAILED on startup:');
+    console.error(`   Host:  ${env.smtp.host}:${env.smtp.port}`);
+    console.error(`   User:  ${env.smtp.user}`);
+    console.error(`   Error: ${err.message}`);
+  } else {
+    console.log(`✅ [SMTP] Connected to ${env.smtp.host}:${env.smtp.port} as ${env.smtp.user}`);
+  }
+});
+
+/**
  * Sends a magic login link to the user via SMTP.
  */
 export const sendMagicLink = async (email, token) => {
@@ -29,8 +44,10 @@ export const sendMagicLink = async (email, token) => {
   }
 
   try {
-    return await transporter.sendMail({
-      from: env.smtp.from, // e.g. "BRAUDLE <auth@braudle.com>"
+    console.log(`📧 [SMTP] Sending magic link to: ${email}`);
+
+    const info = await transporter.sendMail({
+      from: env.smtp.from,
       to: email,
       subject: 'Your BRAUDLE Magic Login Link',
       html: `
@@ -92,12 +109,23 @@ export const sendMagicLink = async (email, token) => {
         </html>
       `,
     });
+
+    console.log(`✅ [SMTP] Email sent successfully. MessageId: ${info.messageId}`);
+    return info;
+
   } catch (err) {
-    console.error('📧 [SMTP] Failed to send email:', err.message);
+    // Always log the full error — visible in both dev and Render production logs
+    console.error('❌ [SMTP] Failed to send email:');
+    console.error(`   To:    ${email}`);
+    console.error(`   Error: ${err.message}`);
+    console.error(`   Code:  ${err.code || 'N/A'}`);
+
     if (env.nodeEnv === 'development') {
       // In development, do not crash the request — dev can copy the link from console output
+      console.warn('⚠️  [SMTP] Dev mode: returning mock response. Use the link printed above.');
       return { messageId: 'dev_mock_id' };
     }
+
     throw err;
   }
 };
