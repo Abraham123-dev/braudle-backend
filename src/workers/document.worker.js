@@ -584,8 +584,7 @@ cacheWorker.on('failed', async (job, err) => {
       route: 'worker:document-cache',
       method: 'job',
       body: job?.data
-    });
-  } catch (logErr) {
+    });  } catch (logErr) {
     console.error('Failed to log worker failure to DB:', logErr.message);
   }
 });
