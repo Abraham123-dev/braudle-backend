@@ -1,7 +1,7 @@
 export const GROQ_MODELS = {
-  smart:  process.env.GROQ_SMART_MODEL || 'llama-3.3-70b-versatile',
-  fast:   process.env.GROQ_FAST_MODEL || 'llama-3.1-8b-instant',
-  vision: process.env.GROQ_VISION_MODEL || 'qwen/qwen3.6-27b',
+  smart:  process.env.GROQ_SMART_MODEL || 'openai/gpt-oss-120b',
+  fast:   process.env.GROQ_FAST_MODEL || 'openai/gpt-oss-20b',
+  vision: process.env.GROQ_VISION_MODEL || 'qwen/qwen3.8-27b',
 };
 
 export const MODEL_ROUTING = {
@@ -24,16 +24,16 @@ export const MODEL_ROUTING = {
 
 export const PROVIDER_MODEL_MAPPING = {
   groq: {
-    tutoring: process.env.MODEL_GROQ_TUTORING || 'llama-3.3-70b-versatile',
-    analysis: process.env.MODEL_GROQ_ANALYSIS || 'llama-3.1-8b-instant',
-    vision: process.env.MODEL_GROQ_VISION || 'qwen/qwen3.6-27b',
-    general_chat: process.env.MODEL_GROQ_GENERAL_CHAT || 'llama-3.3-70b-versatile'
+    tutoring: process.env.MODEL_GROQ_TUTORING || 'openai/gpt-oss-120b',
+    analysis: process.env.MODEL_GROQ_ANALYSIS || 'openai/gpt-oss-20b',
+    vision: process.env.MODEL_GROQ_VISION || 'qwen/qwen3.8-27b',
+    general_chat: process.env.MODEL_GROQ_GENERAL_CHAT || 'openai/gpt-oss-120b'
   },
   groq_secondary: {
-    tutoring: process.env.MODEL_GROQ_SECONDARY_TUTORING || 'llama-3.3-70b-versatile',
-    analysis: process.env.MODEL_GROQ_SECONDARY_ANALYSIS || 'llama-3.1-8b-instant',
-    vision: process.env.MODEL_GROQ_SECONDARY_VISION || 'qwen/qwen3.6-27b',
-    general_chat: process.env.MODEL_GROQ_SECONDARY_GENERAL_CHAT || 'llama-3.3-70b-versatile'
+    tutoring: process.env.MODEL_GROQ_SECONDARY_TUTORING || 'openai/gpt-oss-120b',
+    analysis: process.env.MODEL_GROQ_SECONDARY_ANALYSIS || 'openai/gpt-oss-20b',
+    vision: process.env.MODEL_GROQ_SECONDARY_VISION || 'qwen/qwen3.8-27b',
+    general_chat: process.env.MODEL_GROQ_SECONDARY_GENERAL_CHAT || 'openai/gpt-oss-120b'
   },
   openrouter: {
     tutoring: process.env.MODEL_OPENROUTER_TUTORING || 'deepseek/deepseek-chat',

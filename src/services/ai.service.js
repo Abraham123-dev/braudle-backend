@@ -35,9 +35,9 @@ function isTransientError(error) {
     return false;
   }
 
-  // Treat out of credits (402), model unavailable (404), timeouts (408), payload too large (413), rate limits (429), and 5xx as fallback-eligible
+  // Treat out of credits (402), model unavailable (404), timeouts (408), model gone/deprecated (410), payload too large (413), rate limits (429), and 5xx as fallback-eligible
   if (status) {
-    const transientStatuses = [402, 404, 408, 413, 429, 500, 502, 503];
+    const transientStatuses = [402, 404, 408, 410, 413, 429, 500, 502, 503, 504];
     return transientStatuses.includes(status);
   }
 
@@ -93,6 +93,9 @@ const getModelForTask = (provider, task) => {
  */
 const getModelDisplayName = (modelSlug) => {
   const MODEL_DISPLAY_NAMES = {
+    'openai/gpt-oss-120b': 'GPT OSS 120B (Groq)',
+    'openai/gpt-oss-20b': 'GPT OSS 20B (Groq)',
+    'qwen/qwen3.8-27b': 'Qwen 3.8 27B Vision (Groq)',
     'llama-3.3-70b-versatile': 'llama-3.3-70b-versatile',
     'llama-3.1-8b-instant': 'llama-3.1-8b-instant',
     'llama-3.2-11b-vision-preview': 'Llama 3.2 11B Vision',
