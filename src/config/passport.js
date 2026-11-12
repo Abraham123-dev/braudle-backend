@@ -3,6 +3,7 @@ import { Strategy as GoogleStrategy } from 'passport-google-oauth20';
 import { env } from './env.js';
 import User from '../models/User.model.js';
 import { AppError } from '../utils/AppError.js';
+import { logger } from '../utils/logger.js';
 
 passport.use(
   new GoogleStrategy(
@@ -51,6 +52,15 @@ passport.use(
 
         return done(null, user);
       } catch (error) {
+        logger.error(
+          {
+            provider: 'google',
+            errorName: error.name,
+            errorCode: error.code,
+            err: error,
+          },
+          'Google OAuth user lookup or persistence failed'
+        );
         return done(new AppError(error.message || 'Google authentication failed', 500));
       }
     }

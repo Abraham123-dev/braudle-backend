@@ -7,17 +7,83 @@ import rateLimit from '../middleware/rateLimit.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
 import { logoutSchema, emptyBodySchema, emailLoginSchema, magicLinkSchema, onboardingSchema } from '../validators/auth.validator.js';
 import { handleGoogleCallback, getMe, logout, refreshSession, startEmailLogin, verifyMagicLink, updateOnboardingName } from '../controllers/auth.controller.js';
+import { logger } from '../utils/logger.js';
 
 const router = Router();
 
-router.get('/google', passport.authenticate('google', { scope: ['profile', 'email'], session: false }));
+router.get('/google', (req, res, next) => {
+  passport.authenticate(
+    'google',
+    { scope: ['profile', 'email'], session: false }
+  )(req, res, (error) => {
+      if (error) {
+        logger.error(
+          {
+            provider: 'google',
+            phase: 'authorization-start',
+            errorName: error.name,
+            errorCode: error.code,
+            err: error,
+          },
+          'Google OAuth authorization start failed'
+        );
+      }
+      return next(error);
+    });
+});
 
 router.get(
   '/google/callback',
-  passport.authenticate('google', {
-    session: false,
-    failureRedirect: `${env.frontendUrl}/login`,
-  }),
+  (req, res, next) => {
+    passport.authenticate(
+      'google',
+      { session: false },
+      (error, user, info) => {
+        if (error) {
+          logger.error(
+            {
+              provider: 'google',
+              phase: 'callback',
+              errorName: error.name,
+              errorCode: error.code,
+              err: error,
+            },
+            'Google OAuth callback failed'
+          );
+          return next(error);
+        }
+
+        if (!user) {
+          logger.error(
+            {
+              provider: 'google',
+              phase: 'callback',
+              info: info?.message || info,
+            },
+            'Google OAuth callback returned no user'
+          );
+          return res.redirect(`${env.frontendUrl}/login`);
+        }
+
+        return req.logIn(user, { session: false }, (loginError) => {
+          if (loginError) {
+            logger.error(
+              {
+                provider: 'google',
+                phase: 'callback-login',
+                errorName: loginError.name,
+                errorCode: loginError.code,
+                err: loginError,
+              },
+              'Google OAuth user login setup failed'
+            );
+            return next(loginError);
+          }
+          return next();
+        });
+      }
+    )(req, res, next);
+  },
   asyncHandler(handleGoogleCallback)
 );
 
