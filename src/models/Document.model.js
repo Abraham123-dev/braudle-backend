@@ -34,6 +34,20 @@ const documentSchema = new mongoose.Schema(
       type: String,
       index: true,
     },
+    // Upload-session state is separate from processingStatus so retries cannot
+    // increment quotas or enqueue the same document more than once.
+    uploadState: {
+      type: String,
+      enum: ['presigned', 'completed', 'aborted'],
+      default: 'presigned',
+    },
+    multipartUploadId: {
+      type: String,
+      index: true,
+    },
+    uploadConfirmedAt: {
+      type: Date,
+    },
     processingStatus: {
       type: String,
       enum: ['pending', 'processing', 'ready', 'failed'],

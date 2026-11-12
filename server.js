@@ -74,22 +74,42 @@ const server = app.listen(env.port, () => {
   logger.info({ port: env.port, env: env.nodeEnv }, `Server running on http://localhost:${env.port}`);
 });
 
-// Handle graceful shutdown
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM received — shutting down gracefully');
-  server.close(() => {
-    logger.info('Server closed');
-    process.exit(0);
-  });
-});
+let shuttingDown = false;
 
-process.on('SIGINT', () => {
-  logger.info('SIGINT received — shutting down gracefully');
-  server.close(() => {
-    logger.info('Server closed');
+const shutdown = async (signal) => {
+  if (shuttingDown) return;
+  shuttingDown = true;
+
+  logger.info({ signal }, 'Starting graceful shutdown');
+
+  const forceExit = setTimeout(() => {
+    logger.fatal('Graceful shutdown timed out');
+    process.exit(1);
+  }, 30_000);
+
+  try {
+    await new Promise((resolve) => server.close(resolve));
+
+    await Promise.all([
+      extractionWorker.close(),
+      embeddingWorker.close(),
+      cacheWorker.close(),
+      summaryWorker.close()
+    ]);
+
+    await mongoose.connection.close();
+    await redisClient.quit();
+
+    clearTimeout(forceExit);
     process.exit(0);
-  });
-});
+  } catch (error) {
+    logger.fatal({ err: error }, 'Graceful shutdown failed');
+    process.exit(1);
+  }
+};
+
+process.once('SIGTERM', () => void shutdown('SIGTERM'));
+process.once('SIGINT', () => void shutdown('SIGINT'));
 
 // Handle unhandled rejection — log structured then exit so Render restarts the dyno
 process.on('unhandledRejection', (reason, promise) => {

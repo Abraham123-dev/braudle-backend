@@ -14,6 +14,7 @@ import * as StorageService from '../services/storage.service.js';
 import { extractionQueue } from '../queues/document.queue.js';
 import { env } from '../config/env.js';
 import { deleteCached, CACHE_KEYS } from '../utils/cache.js';
+import { canConfirmUpload, isOwnedUploadSession } from '../utils/uploadSession.js';
 
 /**
  * Handles document upload, R2 storage, and background task queuing 
@@ -163,6 +164,7 @@ export const uploadDocument = asyncHandler(async (req, res) => {
       userId: document.userId,
       plan: userRecord.plan || 'free'
     }, {
+      jobId: `document:${document._id}`,
       attempts: 2,
       backoff: { type: 'exponential', delay: 5000 },
       timeout: 300000 // 5 minutes
@@ -388,6 +390,7 @@ export const getPresignedUrl = asyncHandler(async (req, res) => {
     fileUrl,
     fileKey,
     processingStatus: 'pending',
+    uploadState: 'presigned',
   });
 
   return res.status(200).json({
@@ -407,40 +410,93 @@ export const confirmUpload = asyncHandler(async (req, res) => {
   const { documentId, fileHash } = req.body;
   const userId = req.user.id;
 
-  const document = await Document.findById(documentId);
+  const document = await Document.findOne({ _id: documentId, userId });
   if (!document) {
     throw new AppError('Document not found', 404);
   }
 
-  if (document.userId.toString() !== userId) {
-    throw new AppError('Forbidden: Access denied', 403);
-  }
-
-  // Stamp file hash for deduplication (computed client-side in parallel with presign request)
-  if (fileHash && !document.fileHash) {
-    await Document.findByIdAndUpdate(documentId, { fileHash });
+  // A retry after confirmation is safe and returns the existing state without
+  // consuming another quota slot or adding another job.
+  if (!canConfirmUpload(document)) {
+    return res.status(200).json({
+      documentId: document._id,
+      status: document.processingStatus,
+      message: 'Upload was already confirmed.',
+      idempotent: true,
+    });
   }
 
   const user = await User.findById(userId);
+  if (!user) {
+    throw new AppError('User not found', 404);
+  }
+
   const plan = user?.plan || 'free';
   const isPdf = document.type === 'pdf';
   const countField = isPdf ? 'uploadCount.pdf' : 'uploadCount.image';
 
-  // ── Atomically increment the upload counter now that the file has landed ───
-  // This is the correct place — the R2 upload already succeeded at this point.
-  await User.findByIdAndUpdate(userId, {
-    $inc: { [countField]: 1 },
-    $set: { lastUploadDate: new Date() },
-  });
+  const isUnlimitedPdf = !isPdf
+    || env.nodeEnv === 'development'
+    || user.role === 'admin'
+    || plan === 'pro';
+  const limit = plan === 'plus' ? 10 : 5;
+  const quotaFilter = isUnlimitedPdf
+    ? { _id: userId }
+    : { _id: userId, 'uploadCount.pdf': { $lt: limit } };
+
+  // Claim the upload atomically. Only the request that changes this document
+  // from presigned to completed may consume quota and enqueue work.
+  const claimedDocument = await Document.findOneAndUpdate(
+    {
+      _id: documentId,
+      userId,
+      uploadState: { $in: ['presigned', null] },
+      uploadConfirmedAt: { $exists: false },
+      processingStatus: 'pending',
+    },
+    {
+      $set: {
+        uploadState: 'completed',
+        uploadConfirmedAt: new Date(),
+        ...(fileHash ? { fileHash } : {}),
+      },
+    },
+    { returnDocument: 'after' }
+  );
+
+  if (!claimedDocument) {
+    const currentDocument = await Document.findOne({ _id: documentId, userId });
+    return res.status(200).json({
+      documentId,
+      status: currentDocument?.processingStatus || 'pending',
+      message: 'Upload was already confirmed.',
+      idempotent: true,
+    });
+  }
+
+  const updatedUser = await User.findOneAndUpdate(
+    quotaFilter,
+    { $inc: { [countField]: 1 }, $set: { lastUploadDate: new Date() } },
+    { returnDocument: 'after' }
+  );
+
+  if (!updatedUser) {
+    await Document.findOneAndUpdate(
+      { _id: documentId, userId, uploadState: 'completed', processingStatus: 'pending' },
+      { $set: { uploadState: 'presigned' }, $unset: { uploadConfirmedAt: 1, fileHash: 1 } }
+    );
+    throw new AppError(`You've reached your maximum daily limit of ${limit} PDF uploads for the ${plan.toUpperCase()} plan.`, 429);
+  }
 
   try {
     // Queue the background processing job
     await extractionQueue.add('process-document', {
-      documentId: document._id,
-      fileKey: document.fileKey,
-      userId: document.userId,
+      documentId: claimedDocument._id,
+      fileKey: claimedDocument.fileKey,
+      userId: claimedDocument.userId,
       plan
     }, {
+      jobId: `document:${claimedDocument._id}`,
       attempts: 2,
       backoff: { type: 'exponential', delay: 5000 },
       timeout: 300000 // 5 minutes
@@ -448,12 +504,15 @@ export const confirmUpload = asyncHandler(async (req, res) => {
   } catch (queueErr) {
     // If queuing fails, roll back counter and delete the orphan doc
     await User.findByIdAndUpdate(userId, { $inc: { [countField]: -1 } });
-    await Document.findByIdAndDelete(document._id);
+    await Document.findOneAndUpdate(
+      { _id: documentId, userId, uploadState: 'completed', processingStatus: 'pending' },
+      { $set: { uploadState: 'presigned' }, $unset: { uploadConfirmedAt: 1, fileHash: 1 } }
+    );
     throw queueErr;
   }
 
   return res.status(200).json({
-    documentId: document._id,
+    documentId: claimedDocument._id,
     status: 'pending',
     message: 'Upload confirmed! BRAUDLE is studying your notes in the background now.',
   });
@@ -534,6 +593,8 @@ export const initiateMultipart = asyncHandler(async (req, res) => {
       type,
       fileUrl,
       fileKey,
+      multipartUploadId: uploadId,
+      uploadState: 'presigned',
       processingStatus: 'pending',
     });
 
@@ -554,7 +615,20 @@ export const initiateMultipart = asyncHandler(async (req, res) => {
  * Generates presigned URLs for specific parts of a multipart upload
  */
 export const presignParts = asyncHandler(async (req, res) => {
+  const userId = req.user.id;
   const { uploadId, fileKey, partNumbers } = req.body;
+
+  const document = await Document.findOne({
+    userId,
+    fileKey,
+    multipartUploadId: uploadId,
+    uploadState: 'presigned',
+    processingStatus: 'pending',
+  }).select('_id');
+
+  if (!document) {
+    throw new AppError('Invalid or expired upload session', 404);
+  }
 
   const parts = [];
   for (const partNumber of partNumbers) {
@@ -572,21 +646,82 @@ export const completeMultipart = asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const { documentId, uploadId, fileKey, parts } = req.body;
 
-  const document = await Document.findById(documentId);
+  const document = await Document.findOne({ _id: documentId, userId });
   if (!document) {
     throw new AppError('Document not found', 404);
   }
 
-  if (document.userId.toString() !== userId) {
-    throw new AppError('Forbidden: Access denied', 403);
+  if (!isOwnedUploadSession(document, { userId, fileKey, uploadId })) {
+    throw new AppError('Invalid upload session', 400);
+  }
+
+  if (document.uploadState === 'completed' && document.processingStatus === 'pending') {
+    const user = await User.findById(userId);
+    const plan = user?.plan || 'free';
+    await extractionQueue.add('process-document', {
+      documentId: document._id,
+      fileKey: document.fileKey,
+      userId: document.userId,
+      plan,
+    }, {
+      jobId: `document:${document._id}`,
+      attempts: 2,
+      backoff: { type: 'exponential', delay: 5000 },
+      timeout: 300000,
+    });
+
+    return res.status(200).json({
+      documentId: document._id,
+      status: document.processingStatus,
+      fileUrl: document.fileUrl,
+      message: 'Multipart upload was already completed.',
+      idempotent: true,
+    });
+  }
+
+  if (document.uploadState === 'completed' || document.processingStatus !== 'pending') {
+    return res.status(200).json({
+      documentId: document._id,
+      status: document.processingStatus,
+      fileUrl: document.fileUrl,
+      message: 'Multipart upload was already completed.',
+      idempotent: true,
+    });
   }
 
   // Complete the upload on R2
   const fileUrl = await StorageService.completeMultipartUpload(fileKey, uploadId, parts);
 
-  // Update document file URL to the resolved completed URL
-  document.fileUrl = fileUrl;
-  await document.save();
+  // Claim completion atomically so concurrent retries cannot enqueue duplicate jobs.
+  const completedDocument = await Document.findOneAndUpdate(
+    {
+      _id: documentId,
+      userId,
+      fileKey,
+      multipartUploadId: uploadId,
+      uploadState: 'presigned',
+      processingStatus: 'pending',
+    },
+    {
+      $set: {
+        fileUrl,
+        uploadState: 'completed',
+        uploadConfirmedAt: new Date(),
+      },
+    },
+    { returnDocument: 'after' }
+  );
+
+  if (!completedDocument) {
+    const currentDocument = await Document.findOne({ _id: documentId, userId });
+    return res.status(200).json({
+      documentId,
+      status: currentDocument?.processingStatus || 'pending',
+      fileUrl: currentDocument?.fileUrl,
+      message: 'Multipart upload was already completed.',
+      idempotent: true,
+    });
+  }
 
   const user = await User.findById(userId);
   const plan = user?.plan || 'free';
@@ -595,18 +730,19 @@ export const completeMultipart = asyncHandler(async (req, res) => {
   // explicit options, falling back to BullMQ defaults (3 attempts, 1s delay, no timeout).
   // Large files uploaded via multipart need the same resilience as other upload paths.
   await extractionQueue.add('process-document', {
-    documentId: document._id,
-    fileKey: document.fileKey,
-    userId: document.userId,
+    documentId: completedDocument._id,
+    fileKey: completedDocument.fileKey,
+    userId: completedDocument.userId,
     plan,
   }, {
+    jobId: `document:${completedDocument._id}`,
     attempts: 2,
     backoff: { type: 'exponential', delay: 5000 },
     timeout: 300000, // 5 minutes — multipart files are large, give the worker time
   });
 
   return res.status(200).json({
-    documentId: document._id,
+    documentId: completedDocument._id,
     status: 'pending',
     fileUrl,
     message: 'Multipart upload completed! BRAUDLE is studying your notes in the background now.',
@@ -620,13 +756,16 @@ export const abortMultipart = asyncHandler(async (req, res) => {
   const userId = req.user.id;
   const { documentId, uploadId, fileKey } = req.body;
 
-  const document = await Document.findById(documentId);
+  const document = await Document.findOne({ _id: documentId, userId });
   if (!document) {
     throw new AppError('Document not found', 404);
   }
 
-  if (document.userId.toString() !== userId) {
-    throw new AppError('Forbidden: Access denied', 403);
+  if (
+    !isOwnedUploadSession(document, { userId, fileKey, uploadId })
+    || document.uploadState !== 'presigned'
+  ) {
+    throw new AppError('Invalid or expired upload session', 400);
   }
 
   const isPdf = document.type === 'pdf';
@@ -640,7 +779,10 @@ export const abortMultipart = asyncHandler(async (req, res) => {
   }
 
   // Rollback MongoDB document and counter
-  await document.deleteOne();
+  await Document.findOneAndUpdate(
+    { _id: documentId, userId, uploadState: 'presigned' },
+    { $set: { uploadState: 'aborted', processingStatus: 'failed', processingStage: 'failed' } }
+  );
   await User.findByIdAndUpdate(userId, { $inc: { [countField]: -1 } });
 
   return res.status(200).json({
@@ -828,9 +970,14 @@ Schema:
   });
 });
 
-export const getDocumentProgressStream = (req, res) => {
+export const getDocumentProgressStream = asyncHandler(async (req, res) => {
   const { id } = req.params;
   const userId = req.user.id;
+
+  const document = await Document.findOne({ _id: id, userId }).select('_id processingStatus processingStage');
+  if (!document) {
+    throw new AppError('Document not found', 404);
+  }
 
   // Set SSE headers
   res.writeHead(200, {
@@ -934,7 +1081,7 @@ export const getDocumentProgressStream = (req, res) => {
       }
     }
   })();
-};
+});
 
 export const generateConceptFlashcards = asyncHandler(async (req, res) => {
   const { conceptName, sessionId, count } = req.body;
