@@ -73,3 +73,12 @@ export const summaryQueue = new Queue('session-summary', {
   prefix: QUEUE_PREFIX,
   defaultJobOptions,
 });
+
+export const closeQueues = async () => {
+  await Promise.all([
+    extractionQueue.close(),
+    embeddingQueue.close(),
+    cacheQueue.close(),
+    summaryQueue.close(),
+  ]);
+};

@@ -18,7 +18,14 @@ import { detectQuestionsInDocument } from '../utils/documentAnalyzer.js';
 import crypto from 'crypto';
 import AppErrorLog from '../models/AppErrorLog.model.js';
 import Conversation from '../models/Conversation.model.js';
-import { extractionQueue, embeddingQueue, cacheQueue, summaryQueue, QUEUE_PREFIX } from '../queues/document.queue.js';
+import {
+  extractionQueue,
+  embeddingQueue,
+  cacheQueue,
+  summaryQueue,
+  closeQueues,
+  QUEUE_PREFIX
+} from '../queues/document.queue.js';
 
 // Connect to MongoDB
 await connectDB();
@@ -653,6 +660,17 @@ summaryWorker.on('failed', async (job, err) => {
     console.error('Failed to log worker failure to DB:', logErr.message);
   }
 });
+
+export const closeDocumentWorkers = async () => {
+  await Promise.all([
+    extractionWorker.close(),
+    embeddingWorker.close(),
+    cacheWorker.close(),
+    summaryWorker.close(),
+  ]);
+  await closeQueues();
+  await workerConnection.quit();
+};
 
 export default {
   extractionWorker,

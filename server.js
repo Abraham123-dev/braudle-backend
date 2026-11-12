@@ -6,33 +6,30 @@ import { logger } from './src/utils/logger.js';
 // Connect to database
 await connectDB();
 
-// ── Start background workers BEFORE the HTTP server opens for traffic ──────
-// This prevents a race condition where an upload job gets queued to Redis
-// before any worker is listening to consume it (critical on Render cold starts).
-if (env.nodeEnv === 'production' || process.env.START_WORKER_IN_WEB === 'true') {
+// Workers run as a separate Render Background Worker in production.
+// Set START_WORKER_IN_WEB=true only for a deliberately single-process deployment.
+let embeddedWorkers = null;
+if (process.env.START_WORKER_IN_WEB === 'true') {
   logger.info('Starting background workers...');
   try {
-    await import('./src/workers/document.worker.js');
+    embeddedWorkers = await import('./src/workers/document.worker.js');
     logger.info('Background workers ready.');
   } catch (workerErr) {
-    // Log but do NOT exit — the API is still usable. Worker jobs will re-queue on retry.
-    logger.error({ err: workerErr }, 'Failed to start background workers');
+    logger.error({ err: workerErr }, 'Failed to start embedded background workers');
+    process.exit(1);
   }
 }
 
 // ── Startup: clean up documents orphaned by crashes or abandoned uploads ───────
 //
-// Two categories of orphan handled differently:
+// Abandoned presigned uploads have no fileHash and are safe to remove. Confirmed
+// documents are left alone here because they may be waiting in BullMQ while the
+// worker is scaling or restarting.
 //
-// 1. NO fileHash  — these are pre-presigned or multipart-initiated documents where
+// NO fileHash — these are pre-presigned or multipart-initiated documents where
 //    the user never completed the upload (closed the browser, network error, etc.).
 //    They have no file in R2, no content, and no processing job queued.
 //    Action: DELETE them outright so they never show in the user's library.
-//
-// 2. Has fileHash — the file reached R2 but the server crashed between
-//    Document.create() and extractionQueue.add(). The file exists but no worker
-//    job was queued to process it.
-//    Action: Mark as FAILED so the user sees a clear status and can re-upload.
 try {
   const { default: Document } = await import('./src/models/Document.model.js');
   const fifteenMinutesAgo = new Date(Date.now() - 15 * 60 * 1000);
@@ -50,21 +47,6 @@ try {
     );
   }
 
-  // Category 2: real upload that lost its worker job — mark failed
-  const crashedResult = await Document.updateMany(
-    {
-      processingStatus: 'pending',
-      fileHash: { $exists: true, $ne: null, $ne: '' },
-      createdAt: { $lt: fifteenMinutesAgo },
-    },
-    { $set: { processingStatus: 'failed', processingStage: 'failed' } }
-  );
-  if (crashedResult.modifiedCount > 0) {
-    logger.warn(
-      { count: crashedResult.modifiedCount },
-      'Marked orphaned pending documents as failed (file uploaded, worker job was lost)'
-    );
-  }
 } catch (cleanupErr) {
   logger.error({ err: cleanupErr }, 'Orphan cleanup failed (non-fatal)');
 }
@@ -90,12 +72,9 @@ const shutdown = async (signal) => {
   try {
     await new Promise((resolve) => server.close(resolve));
 
-    await Promise.all([
-      extractionWorker.close(),
-      embeddingWorker.close(),
-      cacheWorker.close(),
-      summaryWorker.close()
-    ]);
+    if (embeddedWorkers?.closeDocumentWorkers) {
+      await embeddedWorkers.closeDocumentWorkers();
+    }
 
     await mongoose.connection.close();
     await redisClient.quit();
