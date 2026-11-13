@@ -88,6 +88,20 @@ const getModelForTask = (provider, task) => {
   return PROVIDER_MODEL_MAPPING[provider]?.[task] || '';
 };
 
+const RETIRED_NVIDIA_MODELS = new Set([
+  'meta/llama-3.1-70b-instruct',
+  'meta/llama-3.1-8b-instruct',
+  'meta/llama-3.3-70b-instruct',
+]);
+
+const isProviderModelAvailable = (provider, model) => {
+  if (provider === 'nvidia' && RETIRED_NVIDIA_MODELS.has(model)) {
+    console.warn(`[AI GATEWAY] Skipping retired NVIDIA model: ${model}. Update the Render model override.`);
+    return false;
+  }
+  return true;
+};
+
 /**
  * Maps task model IDs to their standard display names for logging.
  */
@@ -195,6 +209,10 @@ export const generateAIResponse = async ({ task, messages, temperature = 0.5, ma
     const model = getModelForTask(provider, task);
     const start = Date.now();
     const fallbackLevel = providers.indexOf(provider); // 0 = primary, 1 = fallback 1, etc.
+
+    if (!isProviderModelAvailable(provider, model)) {
+      continue;
+    }
 
     // Validate key presence before trying
     if (provider === 'groq' && !env.groq.apiKey) {
@@ -395,6 +413,10 @@ export async function* streamAIResponse({ task, messages, temperature = 0.7, max
     const model = getModelForTask(provider, task);
     const start = Date.now();
     const fallbackLevel = providers.indexOf(provider); // 0 = primary, 1 = fallback 1, etc.
+
+    if (!isProviderModelAvailable(provider, model)) {
+      continue;
+    }
 
     // Validate key presence before trying
     if (provider === 'groq' && !env.groq.apiKey) {
