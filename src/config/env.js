@@ -20,6 +20,17 @@ const requiredEnvVars = [
 
 const missingVars = requiredEnvVars.filter(v => !process.env[v]);
 
+const normalizeApiKey = (name) => {
+  const value = process.env[name];
+  if (!value) return value;
+
+  const normalized = value.trim().replace(/[\r\n\t]/g, '');
+  if (normalized !== value) {
+    console.warn(`[ENV] Normalized whitespace in ${name}. Update the Render variable without line breaks.`);
+  }
+  return normalized;
+};
+
 const smtpEmail = process.env.SMTP_EMAIL || process.env.SMTP_USER;
 const smtpPass = process.env.SMTP_PASSWORD || process.env.SMTP_PASS;
 
@@ -52,25 +63,25 @@ export const env = {
   },
   
   groq: {
-    apiKey: process.env.GROQ_API_KEY_1,
+    apiKey: normalizeApiKey('GROQ_API_KEY_1'),
   },
   groqSecondary: {
-    apiKey: process.env.GROQ_API_KEY_2,
+    apiKey: normalizeApiKey('GROQ_API_KEY_2'),
   },
   mistral: {
-    apiKey: process.env.MISTRAL_API_KEY,
+    apiKey: normalizeApiKey('MISTRAL_API_KEY'),
   },
   openRouter: {
-    apiKey: process.env.OPENROUTER_API_KEY,
+    apiKey: normalizeApiKey('OPENROUTER_API_KEY'),
   },
   nvidia: {
-    apiKey: process.env.NVIDIA_API_KEY,
+    apiKey: normalizeApiKey('NVIDIA_API_KEY'),
   },
   cerebras: {
-    apiKey: process.env.CEREBRAS_API_KEY,
+    apiKey: normalizeApiKey('CEREBRAS_API_KEY'),
   },
   gemini: {
-    apiKey: process.env.GEMINI_API_KEY,
+    apiKey: normalizeApiKey('GEMINI_API_KEY'),
   },
   
   cfR2: {
