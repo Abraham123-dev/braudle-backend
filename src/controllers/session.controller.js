@@ -154,6 +154,16 @@ export const startSession = asyncHandler(async (req, res) => {
   if (!document) throw new AppError('Document not found', 404);
   if (document.userId.toString() !== userId) throw new AppError('Forbidden: Access denied', 403);
 
+  if (document.processingStatus !== 'ready') {
+    const isFailed = document.processingStatus === 'failed';
+    throw new AppError(
+      isFailed
+        ? 'Document analysis failed. Please upload the document again.'
+        : `Document analysis is still in progress (${document.processingStage}).`,
+      isFailed ? 422 : 409
+    );
+  }
+
   // Record study activity (streak, total sessions, etc.)
   await ProfileService.recordStudyActivity(userId).catch(err => console.error('[SESSION] Failed to record study activity:', err));
 
@@ -218,6 +228,7 @@ export const startSession = asyncHandler(async (req, res) => {
   res.status(201).json({
     status: 'success',
     sessionId: session._id,
+    documentId: document._id,
     mode: session.mode,
     message: "Your study session is ready! Let's start learning together.",
   });
