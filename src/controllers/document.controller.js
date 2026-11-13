@@ -214,6 +214,10 @@ export const getDocument = asyncHandler(async (req, res) => {
 });
 
 export const getDocumentStatus = asyncHandler(async (req, res) => {
+  // This endpoint is polled while a worker changes the document state.
+  // A cached 304 response can make the frontend display an old processing stage.
+  res.set('Cache-Control', 'no-store');
+
   const document = await Document.findById(req.params.id)
     .select('processingStatus processingStage knowledgeCacheStatus topics summary userId');
 
