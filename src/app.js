@@ -196,11 +196,16 @@ app.use((err, req, res, next) => {
   const clientMessage = isInternal && !isDev 
     ? 'An unexpected error occurred on our end. Please try again later.' 
     : message;
+  const includeDebugMessage = process.env.DEBUG_ERRORS === 'true';
 
   res.status(statusCode).json({
     status: 'error',
     message: clientMessage,
     errorId,
+    ...(includeDebugMessage && {
+      debugMessage: message,
+      debugErrorName: err.name,
+    }),
     ...(showStack && { stack: err.stack }),
   });
 });
