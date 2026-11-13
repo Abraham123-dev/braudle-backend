@@ -145,19 +145,31 @@ app.use((req, res, next) => {
 app.use((err, req, res, next) => {
   let statusCode = err.statusCode || 500;
   let message = err.message || 'Internal Server Error';
-  
+
+  // Handle body-parser / JSON.parse errors before logging so the log describes
+  // the client-facing classification rather than the raw parser exception.
+  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
+    statusCode = 400;
+    message = 'Invalid JSON payload provided';
+    err.isOperational = true;
+  }
+
   // Generate a unique correlation/error ID for tracking
   const errorId = `err_${crypto.randomUUID().slice(0, 8)}`;
 
-  // Structured error log (goes into pino JSON stream in production)
+  // Keep the response generic for unexpected production errors, but make the
+  // actual cause explicit in Render logs for diagnosis.
   logger.error({
     errorId,
     statusCode,
+    errorName: err.name,
+    errorMessage: message,
+    errorStack: err.stack,
     method: req.method,
     url: req.originalUrl,
     userId: req.user?.id,
     err,
-  }, `[${errorId}] ${statusCode} - ${err.message}`);
+  }, `[${errorId}] ${statusCode} - ${message}`);
 
   // Central Error House DB Logger (Non-blocking)
   AppErrorLog.create({
@@ -173,13 +185,6 @@ app.use((err, req, res, next) => {
     ip: req.ip || req.connection?.remoteAddress,
     userAgent: req.headers['user-agent']
   }).catch(logErr => logger.warn({ err: logErr }, 'Failed to save error log to MongoDB'));
-
-  // Handle body-parser / JSON.parse errors gracefully
-  if (err instanceof SyntaxError && err.status === 400 && 'body' in err) {
-    statusCode = 400;
-    message = 'Invalid JSON payload provided';
-    err.isOperational = true;
-  }
 
   const isDev = env.nodeEnv === 'development';
   
