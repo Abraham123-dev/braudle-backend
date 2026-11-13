@@ -101,8 +101,14 @@ export const extractionWorker = new Worker(
     try {
       // 1. Atomic status transition: pending -> processing
       const doc = await Document.findOneAndUpdate(
-        { _id: documentId, processingStatus: 'pending' },
-        { processingStatus: 'processing', processingStage: 'file_received' },
+        { _id: documentId, processingStatus: { $in: ['pending', 'failed'] } },
+        {
+          $set: {
+            processingStatus: 'processing',
+            processingStage: 'file_received',
+          },
+          $unset: { processingError: 1 },
+        },
         { returnDocument: 'after' }
       );
 

@@ -85,11 +85,11 @@ export const env = {
   },
   
   cfR2: {
-    accountId: process.env.CF_ACCOUNT_ID,
-    accessKey: process.env.CF_R2_ACCESS_KEY,
-    secretKey: process.env.CF_R2_SECRET_KEY,
-    bucket: process.env.CF_R2_BUCKET,
-    publicUrl: process.env.CF_R2_PUBLIC_URL,
+    accountId: normalizeApiKey('CF_ACCOUNT_ID'),
+    accessKey: normalizeApiKey('CF_R2_ACCESS_KEY'),
+    secretKey: normalizeApiKey('CF_R2_SECRET_KEY'),
+    bucket: normalizeApiKey('CF_R2_BUCKET'),
+    publicUrl: normalizeApiKey('CF_R2_PUBLIC_URL'),
   },
   
   frontendUrl: process.env.FRONTEND_URL || 'http://localhost:3000',
