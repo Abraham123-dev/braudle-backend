@@ -75,7 +75,9 @@ export const env = {
     apiKey: normalizeApiKey('OPENROUTER_API_KEY'),
   },
   nvidia: {
-    apiKey: normalizeApiKey('NVIDIA_API_KEY'),
+    apiKey: process.env.NVIDIA_ENABLED === 'true'
+      ? normalizeApiKey('NVIDIA_API_KEY')
+      : undefined,
   },
   cerebras: {
     apiKey: process.env.CEREBRAS_ENABLED === 'true'

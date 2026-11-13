@@ -397,7 +397,11 @@ export const generateAIResponse = async ({ task, messages, temperature = 0.5, ma
     }
   }
 
-  throw lastError || new Error('AI Gateway failed to generate response');
+  const unavailableError = new Error('AI providers are temporarily unavailable. Please try again later.');
+  unavailableError.statusCode = 503;
+  unavailableError.isOperational = true;
+  unavailableError.cause = lastError || undefined;
+  throw unavailableError;
 };
 
 /**
@@ -722,7 +726,11 @@ export async function* streamAIResponse({ task, messages, temperature = 0.7, max
     }
   }
 
-  throw lastError || new Error('AI Gateway failed to generate response');
+  const unavailableError = new Error('AI providers are temporarily unavailable. Please try again later.');
+  unavailableError.statusCode = 503;
+  unavailableError.isOperational = true;
+  unavailableError.cause = lastError || undefined;
+  throw unavailableError;
 }
 
 /**
