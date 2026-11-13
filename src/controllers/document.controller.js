@@ -219,7 +219,7 @@ export const getDocumentStatus = asyncHandler(async (req, res) => {
   res.set('Cache-Control', 'no-store');
 
   const document = await Document.findById(req.params.id)
-    .select('processingStatus processingStage knowledgeCacheStatus topics summary userId');
+    .select('processingStatus processingStage processingError knowledgeCacheStatus topics summary userId');
 
   if (!document) throw new AppError('Document not found', 404);
   if (document.userId.toString() !== req.user.id) throw new AppError('Forbidden: Access denied', 403);
@@ -228,6 +228,9 @@ export const getDocumentStatus = asyncHandler(async (req, res) => {
     documentId: document._id,
     processingStatus: document.processingStatus,
     processingStage: document.processingStage,
+    ...(document.processingStatus === 'failed' && document.processingError
+      ? { processingError: document.processingError }
+      : {}),
     knowledgeCacheStatus: document.knowledgeCacheStatus,
     // Returned once stage reaches 'ready' — frontend uses these to render the welcome card
     topics: document.topics,

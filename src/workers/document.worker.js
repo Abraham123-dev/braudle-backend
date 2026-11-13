@@ -368,7 +368,7 @@ export const extractionWorker = new Worker(
       await Document.findByIdAndUpdate(documentId, {
         processingStatus: 'failed',
         processingStage: 'failed',
-        'metadata.lastError': error.message
+        processingError: error.message
       });
       await publishProgress(documentId, 'failed', 'failed', { error: error.message });
 

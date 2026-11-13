@@ -67,6 +67,10 @@ const documentSchema = new mongoose.Schema(
       ],
       default: 'file_received',
     },
+    processingError: {
+      type: String,
+      maxlength: 1000,
+    },
     rawText: {
       type: String,
     },
