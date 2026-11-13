@@ -78,7 +78,9 @@ export const env = {
     apiKey: normalizeApiKey('NVIDIA_API_KEY'),
   },
   cerebras: {
-    apiKey: normalizeApiKey('CEREBRAS_API_KEY'),
+    apiKey: process.env.CEREBRAS_ENABLED === 'true'
+      ? normalizeApiKey('CEREBRAS_API_KEY')
+      : undefined,
   },
   gemini: {
     apiKey: normalizeApiKey('GEMINI_API_KEY'),

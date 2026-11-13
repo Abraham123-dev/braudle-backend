@@ -48,10 +48,10 @@ export const PROVIDER_MODEL_MAPPING = {
     general_chat: process.env.MODEL_MISTRAL_GENERAL_CHAT || 'mistral-small-latest'
   },
   nvidia: {
-    tutoring: process.env.MODEL_NVIDIA_TUTORING || 'meta/llama-3.3-70b-instruct',
+    tutoring: process.env.MODEL_NVIDIA_TUTORING || 'meta/llama-3.1-70b-instruct',
     analysis: process.env.MODEL_NVIDIA_ANALYSIS || 'meta/llama-3.1-8b-instruct',
     vision: process.env.MODEL_NVIDIA_VISION || 'meta/llama-3.2-11b-vision-instruct',
-    general_chat: process.env.MODEL_NVIDIA_GENERAL_CHAT || 'meta/llama-3.3-70b-instruct'
+    general_chat: process.env.MODEL_NVIDIA_GENERAL_CHAT || 'meta/llama-3.1-70b-instruct'
   },
   cerebras: {
     tutoring: process.env.MODEL_CEREBRAS_TUTORING || 'gpt-oss-120b',
