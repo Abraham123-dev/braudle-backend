@@ -164,7 +164,7 @@ export const uploadDocument = asyncHandler(async (req, res) => {
       userId: document.userId,
       plan: userRecord.plan || 'free'
     }, {
-      jobId: `document:${document._id}`,
+      jobId: `document-${document._id}`,
       attempts: 2,
       backoff: { type: 'exponential', delay: 5000 },
       timeout: 300000 // 5 minutes
@@ -496,7 +496,7 @@ export const confirmUpload = asyncHandler(async (req, res) => {
       userId: claimedDocument.userId,
       plan
     }, {
-      jobId: `document:${claimedDocument._id}`,
+      jobId: `document-${claimedDocument._id}`,
       attempts: 2,
       backoff: { type: 'exponential', delay: 5000 },
       timeout: 300000 // 5 minutes
@@ -664,7 +664,7 @@ export const completeMultipart = asyncHandler(async (req, res) => {
       userId: document.userId,
       plan,
     }, {
-      jobId: `document:${document._id}`,
+      jobId: `document-${document._id}`,
       attempts: 2,
       backoff: { type: 'exponential', delay: 5000 },
       timeout: 300000,
@@ -735,7 +735,7 @@ export const completeMultipart = asyncHandler(async (req, res) => {
     userId: completedDocument.userId,
     plan,
   }, {
-    jobId: `document:${completedDocument._id}`,
+    jobId: `document-${completedDocument._id}`,
     attempts: 2,
     backoff: { type: 'exponential', delay: 5000 },
     timeout: 300000, // 5 minutes — multipart files are large, give the worker time
