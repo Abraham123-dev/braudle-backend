@@ -1,6 +1,8 @@
 import { closeDocumentWorkers } from './document.worker.js';
 import { mongoose } from '../config/db.js';
 
+console.log('[WORKER] Document worker process started.');
+
 let shuttingDown = false;
 
 const shutdown = async (signal) => {

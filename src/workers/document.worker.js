@@ -37,6 +37,18 @@ const workerConnection = new Redis(env.redisUrl, {
   keepAlive: 30000,
 });
 
+workerConnection.on('ready', () => {
+  console.log('[WORKER] Redis connection ready.');
+});
+
+workerConnection.on('error', (error) => {
+  console.error('[WORKER] Redis connection error:', error.message);
+});
+
+workerConnection.on('close', () => {
+  console.warn('[WORKER] Redis connection closed.');
+});
+
 /**
  * Cleans raw text extracted from PDFs and OCR.
  */
@@ -660,6 +672,23 @@ summaryWorker.on('failed', async (job, err) => {
     console.error('Failed to log worker failure to DB:', logErr.message);
   }
 });
+
+for (const [name, worker] of [
+  ['extraction', extractionWorker],
+  ['embedding', embeddingWorker],
+  ['cache', cacheWorker],
+  ['summary', summaryWorker],
+]) {
+  worker.on('ready', () => {
+    console.log(`[WORKER] ${name} queue consumer ready.`);
+  });
+  worker.on('error', (error) => {
+    console.error(`[WORKER] ${name} queue consumer error:`, error.message);
+  });
+  worker.on('stalled', (jobId) => {
+    console.warn(`[WORKER] ${name} job stalled: ${jobId}`);
+  });
+}
 
 export const closeDocumentWorkers = async () => {
   await Promise.all([
