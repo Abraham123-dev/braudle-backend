@@ -15,6 +15,7 @@ import { extractionQueue } from '../queues/document.queue.js';
 import { env } from '../config/env.js';
 import { deleteCached, CACHE_KEYS } from '../utils/cache.js';
 import { canConfirmUpload, isOwnedUploadSession } from '../utils/uploadSession.js';
+import { resetDailyUploadQuota } from '../services/quota.service.js';
 
 /**
  * Handles document upload, R2 storage, and background task queuing 
@@ -35,8 +36,10 @@ export const uploadDocument = asyncHandler(async (req, res) => {
 
   const userRecord = await User.findById(userId);
   if (!userRecord) throw new AppError('User not found', 404);
+  const resetUser = await resetDailyUploadQuota(userId);
+  const quotaUser = resetUser || userRecord;
 
-  const plan = userRecord.plan || 'free';
+  const plan = quotaUser.plan || 'free';
 
   // ── Step 1: Compute hash and run duplicate check BEFORE touching any counter.
   // Old order was: increment → check duplicate → rollback on duplicate (rollback was missing!).
@@ -68,7 +71,7 @@ export const uploadDocument = asyncHandler(async (req, res) => {
   let user;
   if (isPdf) {
     const isDev = env.nodeEnv === 'development';
-    const isUnlimited = isDev || userRecord.role === 'admin' || plan === 'pro';
+    const isUnlimited = isDev || quotaUser.role === 'admin' || plan === 'pro';
 
     if (isUnlimited) {
       user = await User.findByIdAndUpdate(
@@ -162,7 +165,7 @@ export const uploadDocument = asyncHandler(async (req, res) => {
       documentId: document._id,
       fileKey: document.fileKey,
       userId: document.userId,
-      plan: userRecord.plan || 'free'
+      plan: quotaUser.plan || 'free'
     }, {
       jobId: `document-${document._id}`,
       attempts: 2,
@@ -367,16 +370,18 @@ export const getPresignedUrl = asyncHandler(async (req, res) => {
   // the R2 upload succeeds, preventing quota loss on failed uploads) ──────────
   const userRecord = await User.findById(userId);
   if (!userRecord) throw new AppError('User not found', 404);
-  const plan = userRecord.plan || 'free';
+  const resetUser = await resetDailyUploadQuota(userId);
+  const quotaUser = resetUser || userRecord;
+  const plan = quotaUser.plan || 'free';
 
   if (isPdf) {
     const isDev = env.nodeEnv === 'development';
     let limit = 5;
     if (isDev) limit = 50;
-    else if (userRecord.role === 'admin' || plan === 'pro') limit = 1000;
+    else if (quotaUser.role === 'admin' || plan === 'pro') limit = 1000;
     else if (plan === 'plus') limit = 10;
 
-    if (userRecord.uploadCount.pdf >= limit) {
+    if (quotaUser.uploadCount.pdf >= limit) {
       throw new AppError(`You've reached your maximum daily limit of ${limit} PDF uploads for the ${plan.toUpperCase()} plan.`, 429);
     }
   }
@@ -437,14 +442,16 @@ export const confirmUpload = asyncHandler(async (req, res) => {
   if (!user) {
     throw new AppError('User not found', 404);
   }
+  const resetUser = await resetDailyUploadQuota(userId);
+  const quotaUser = resetUser || user;
 
-  const plan = user?.plan || 'free';
+  const plan = quotaUser.plan || 'free';
   const isPdf = document.type === 'pdf';
   const countField = isPdf ? 'uploadCount.pdf' : 'uploadCount.image';
 
   const isUnlimitedPdf = !isPdf
     || env.nodeEnv === 'development'
-    || user.role === 'admin'
+    || quotaUser.role === 'admin'
     || plan === 'pro';
   const limit = plan === 'plus' ? 10 : 5;
   const quotaFilter = isUnlimitedPdf
@@ -540,13 +547,15 @@ export const initiateMultipart = asyncHandler(async (req, res) => {
   if (isPdf) {
     const userRecord = await User.findById(userId);
     if (!userRecord) throw new AppError('User not found', 404);
-    const plan = userRecord.plan || 'free';
+    const resetUser = await resetDailyUploadQuota(userId);
+    const quotaUser = resetUser || userRecord;
+    const plan = quotaUser.plan || 'free';
     const isDev = env.nodeEnv === 'development';
 
     let limit = 5;
     if (isDev) {
       limit = 50;
-    } else if (userRecord.role === 'admin' || plan === 'pro') {
+    } else if (quotaUser.role === 'admin' || plan === 'pro') {
       limit = 1000;
     } else if (plan === 'plus') {
       limit = 10;
@@ -569,6 +578,7 @@ export const initiateMultipart = asyncHandler(async (req, res) => {
     }
   } else {
     // Images are unlimited
+    await resetDailyUploadQuota(userId);
     user = await User.findByIdAndUpdate(
       userId,
       { 

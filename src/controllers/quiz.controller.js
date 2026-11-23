@@ -11,6 +11,7 @@ import { calculateScore } from '../utils/scoreCalculator.js';
 import { redisClient, isRedisHealthy } from '../config/redis.js';
 import { deleteCached, CACHE_KEYS } from '../utils/cache.js';
 import { parseAIJson } from '../utils/parseAIJson.js';
+import { resetDailyGenerationQuota } from '../services/quota.service.js';
 
 const stripAnswers = (questions) => questions.map((q) => ({
   _id: q._id,
@@ -39,6 +40,8 @@ const normalizeQuestions = (questions) => {
 
 // Helper to check and record generation limits
 export const checkGenLimit = async (user, document, type) => {
+  const resetUser = await resetDailyGenerationQuota(user._id);
+  if (resetUser) user = resetUser;
   const plan = user.plan || 'free';
  
   if (plan === 'pro') {
@@ -65,6 +68,8 @@ export const checkGenLimit = async (user, document, type) => {
 };
 
 export const recordGenLimit = async (user, document, type) => {
+  const resetUser = await resetDailyGenerationQuota(user._id);
+  if (resetUser) user = resetUser;
   const plan = user.plan || 'free';
 
   if (plan === 'pro') {

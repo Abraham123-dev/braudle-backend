@@ -1,6 +1,7 @@
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import User from '../src/models/User.model.js';
+import { resetDailyUploadQuota, resetDailyGenerationQuota } from '../src/services/quota.service.js';
 
 dotenv.config();
 
@@ -42,25 +43,12 @@ async function runTest() {
   await user.save();
   console.log("Staged mock user state with non-zero counters and yesterday's timestamps.");
 
-  // 2. Perform the exact day check and reset logic as added to verifyJWT
+  // 2. Exercise the dedicated quota service instead of authentication middleware logic
   const today = new Date().toISOString().split('T')[0];
-  const lastUpload = user.lastUploadDate ? user.lastUploadDate.toISOString().split('T')[0] : null;
-  const lastGen = user.lastGenerationResetDate ? user.lastGenerationResetDate.toISOString().split('T')[0] : null;
-
-  console.log(`Checking reset condition: lastUpload=${lastUpload}, lastGen=${lastGen}, today=${today}`);
-  
-  let didReset = false;
-  if (lastUpload !== today || lastGen !== today) {
-    user.uploadCount = { pdf: 0, image: 0 };
-    user.dailyGenerationsCount = { flashcards: 0, practice: 0, exam: 0 };
-    user.lastUploadDate = new Date();
-    user.lastGenerationResetDate = new Date();
-    user.markModified('uploadCount');
-    user.markModified('dailyGenerationsCount');
-    await user.save();
-    didReset = true;
-    console.log("Reset executed successfully!");
-  }
+  const resetUploadUser = await resetDailyUploadQuota(user._id);
+  const resetGenerationUser = await resetDailyGenerationQuota(user._id);
+  const didReset = !!resetUploadUser && !!resetGenerationUser;
+  console.log("Dedicated quota reset executed successfully!");
 
   // 3. Reload user from DB and check assertions
   const reloaded = await User.findById(user._id);
