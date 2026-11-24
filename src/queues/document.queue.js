@@ -3,7 +3,7 @@ import Redis from 'ioredis';
 import { env } from '../config/env.js';
 
 // Dedicated connection for BullMQ (no commandTimeout to allow blocking long-polls)
-const queueConnection = new Redis(env.redisUrl, {
+const queueConnection = new Redis(env.queueRedisUrl, {
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
   keepAlive: 30000,

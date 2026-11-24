@@ -49,6 +49,8 @@ export const env = {
   nodeEnv: process.env.NODE_ENV || 'development',
   mongoUri: process.env.MONGODB_URI,
   redisUrl: process.env.REDIS_URL || 'redis://127.0.0.1:6379',
+  cacheRedisUrl: process.env.CACHE_REDIS_URL || process.env.REDIS_URL || 'redis://127.0.0.1:6379',
+  queueRedisUrl: process.env.QUEUE_REDIS_URL || process.env.REDIS_URL || 'redis://127.0.0.1:6379',
   
   jwt: {
     secret: process.env.JWT_SECRET,

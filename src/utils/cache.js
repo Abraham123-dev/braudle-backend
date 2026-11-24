@@ -2,25 +2,70 @@ import { redisClient, isRedisHealthy } from '../config/redis.js';
 
 /**
  * Sets a value in Redis with an optional TTL
- * @param {string} key 
- * @param {any} value 
+ * @param {string} key
+ * @param {any} value
  * @param {number} ttl - Time to live in seconds (default 24h)
  */
-export const setCached = async (key, value, ttl = 86400) => {
+export const setCached = async (key, value, ttl = 86400, jitter = false) => {
   if (!isRedisHealthy()) {
     return;
   }
   try {
     const stringValue = typeof value === 'string' ? value : JSON.stringify(value);
-    await redisClient.set(key, stringValue, 'EX', ttl);
+    const effectiveTtl = jitter ? addCacheTtlJitter(ttl) : ttl;
+    await redisClient.set(key, stringValue, 'EX', effectiveTtl);
   } catch (err) {
     console.error(`[CACHE] Set error for key ${key}:`, err.message);
   }
 };
 
+export const addCacheTtlJitter = (ttl, jitterPercent = 0.05) => {
+  if (!Number.isFinite(ttl) || ttl <= 0) return ttl;
+  const jitter = Math.floor(ttl * jitterPercent);
+  if (jitter <= 0) return ttl;
+  return ttl + Math.floor(Math.random() * (jitter * 2 + 1)) - jitter;
+};
+
+export const acquireCacheLock = async (key, ttlSeconds = 60) => {
+  if (!isRedisHealthy()) return null;
+
+  const token = `${process.pid}:${Date.now()}:${Math.random().toString(36).slice(2)}`;
+  try {
+    const acquired = await redisClient.set(
+      key,
+      token,
+      'EX',
+      ttlSeconds,
+      'NX'
+    );
+    return acquired === 'OK' ? token : null;
+  } catch (err) {
+    console.error(`[CACHE] Lock acquisition error for key ${key}:`, err.message);
+    return null;
+  }
+};
+
+export const releaseCacheLock = async (key, token) => {
+  if (!isRedisHealthy() || !token) return;
+
+  try {
+    await redisClient.eval(
+      `if redis.call("get", KEYS[1]) == ARGV[1] then
+        return redis.call("del", KEYS[1])
+      end
+      return 0`,
+      1,
+      key,
+      token
+    );
+  } catch (err) {
+    console.error(`[CACHE] Lock release error for key ${key}:`, err.message);
+  }
+};
+
 /**
  * Gets a value from Redis
- * @param {string} key 
+ * @param {string} key
  * @returns {any|null}
  */
 export const getCached = async (key) => {
@@ -30,7 +75,7 @@ export const getCached = async (key) => {
   try {
     const value = await redisClient.get(key);
     if (!value) return null;
-    
+
     try {
       return JSON.parse(value);
     } catch {
@@ -44,7 +89,7 @@ export const getCached = async (key) => {
 
 /**
  * Deletes a value from Redis
- * @param {string} key 
+ * @param {string} key
  */
 export const deleteCached = async (key) => {
   if (!isRedisHealthy()) {
@@ -83,7 +128,7 @@ export const getOrSet = async (key, fetchFn, ttl = 86400) => {
     try {
       const freshValue = await fetchFn();
       if (freshValue !== null && freshValue !== undefined) {
-        await setCached(key, freshValue, ttl);
+        await setCached(key, freshValue, ttl, true);
       }
       return freshValue;
     } finally {
@@ -113,4 +158,4 @@ export const CACHE_TTL = {
   PROFILE:    300,     // 5min — profile changes after quiz/XP, stale-safe window
   DASHBOARD:  300,     // 5min — aggregation is expensive, fine to lag slightly
   STREAM:     300,     // 5min — safety TTL on the stream concurrency lock
-};
+};

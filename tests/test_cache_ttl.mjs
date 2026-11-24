@@ -3,7 +3,7 @@
  * Verifies that the constants used in session.controller.js match those defined in cache.js
  */
 
-import { CACHE_TTL, CACHE_KEYS } from '../src/utils/cache.js';
+import { CACHE_TTL, CACHE_KEYS, addCacheTtlJitter } from '../src/utils/cache.js';
 
 let passed = 0;
 let failed = 0;
@@ -30,8 +30,14 @@ assert('CACHE_TTL.STREAM is defined (5min)', CACHE_TTL.STREAM === 300);
 
 console.log('\n── CACHE_KEYS Functions ──');
 assert('CACHE_KEYS.TEACH is a function', typeof CACHE_KEYS.TEACH === 'function');
-assert('CACHE_KEYS.TEACH produces expected key format', CACHE_KEYS.TEACH('doc1', 2, 'beginner') === 'v1:teach:doc1:2:beginner');
+assert('CACHE_KEYS.TEACH produces expected key format', CACHE_KEYS.TEACH('doc1', 2) === 'v1:teach:doc1:2');
 assert('CACHE_KEYS.QUIZ_GENERATED produces expected key format', CACHE_KEYS.QUIZ_GENERATED('doc1', 'beginner', 5) === 'v1:quiz:doc1:beginner:5');
+
+console.log('\n── CACHE TTL Jitter ──');
+for (let i = 0; i < 20; i += 1) {
+  const ttl = addCacheTtlJitter(CACHE_TTL.TEACHING);
+  assert('Teaching cache jitter stays within 5 percent', ttl >= 82080 && ttl <= 90720);
+}
 
 import { redisClient } from '../src/config/redis.js';
 

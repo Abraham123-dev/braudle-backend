@@ -9,6 +9,9 @@
   },
   "scripts": {
     "start": "node server.js",
+    "test": "node --test tests/test_quota_service.js tests/test_abuse_limits.js tests/test_global_limiter_store.js tests/test_redis_eviction_architecture.js tests/test_upload_session_contract.js",
+    "test:integration:quota": "node tests/test_verifyJWT_limits_reset.mjs",
+    "test:integration:abuse": "node tests/test_abuse_limits_integration.mjs",
     "dev": "concurrently -n \"server,worker\" -c \"blue,green\" \"npm run dev:server\" \"npm run dev:worker\"",
     "dev:server": "nodemon server.js",
     "dev:worker": "nodemon src/workers/worker.entry.js",
@@ -16,8 +19,7 @@
     "flush:queues": "node scripts/flush-bullmq-versions.js",
     "queue:inspect": "node scripts/migrate-bullmq.js --mode=inspect",
     "queue:flush": "node scripts/migrate-bullmq.js --mode=flush",
-    "queue:migrate": "node scripts/migrate-bullmq.js --mode=migrate",
-    "test": "echo \"Error: no test specified\" && exit 1"
+    "queue:migrate": "node scripts/migrate-bullmq.js --mode=migrate"
   },
   "repository": {
     "type": "git",

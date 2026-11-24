@@ -18,7 +18,7 @@
 import Redis from 'ioredis';
 import { env } from './env.js';
 
-const pubSubClient = new Redis(env.redisUrl, {
+const pubSubClient = new Redis(env.cacheRedisUrl, {
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
   keepAlive: 30000,

@@ -1,7 +1,11 @@
 import mongoose from 'mongoose';
 import dotenv from 'dotenv';
 import User from '../src/models/User.model.js';
-import { resetDailyUploadQuota, resetDailyGenerationQuota } from '../src/services/quota.service.js';
+import {
+  resetDailyUploadQuota,
+  resetDailyGenerationQuota,
+  consumeGenerationQuota,
+} from '../src/services/quota.service.js';
 
 dotenv.config();
 
@@ -73,6 +77,24 @@ async function runTest() {
   const reloadedGenDateStr = reloaded.lastGenerationResetDate.toISOString().split('T')[0];
   assert("lastUploadDate is set to today", reloadedUploadDateStr === today);
   assert("lastGenerationResetDate is set to today", reloadedGenDateStr === today);
+
+  // Reset the test user, then verify concurrent generation consumption is atomic.
+  await User.findByIdAndUpdate(user._id, {
+    $set: {
+      plan: 'free',
+      dailyGenerationsCount: { flashcards: 0, practice: 0, exam: 0 },
+      lastGenerationResetDate: new Date(),
+    }
+  });
+
+  const concurrentResults = await Promise.allSettled([
+    consumeGenerationQuota(user._id, 'practice'),
+    consumeGenerationQuota(user._id, 'practice'),
+  ]);
+  const fulfilled = concurrentResults.filter(result => result.status === 'fulfilled');
+  const rejected = concurrentResults.filter(result => result.status === 'rejected');
+  assert("Exactly one concurrent free generation is consumed", fulfilled.length === 1);
+  assert("A concurrent extra generation is rejected with 429", rejected.length === 1 && rejected[0].reason.statusCode === 429);
 
   // Clean up
   await User.deleteOne({ _id: user._id });

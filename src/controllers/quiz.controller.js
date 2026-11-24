@@ -11,7 +11,8 @@ import { calculateScore } from '../utils/scoreCalculator.js';
 import { redisClient, isRedisHealthy } from '../config/redis.js';
 import { deleteCached, CACHE_KEYS } from '../utils/cache.js';
 import { parseAIJson } from '../utils/parseAIJson.js';
-import { resetDailyGenerationQuota } from '../services/quota.service.js';
+import { acquireCacheLock, releaseCacheLock } from '../utils/cache.js';
+import { resetDailyGenerationQuota, consumeGenerationQuota } from '../services/quota.service.js';
 
 const stripAnswers = (questions) => questions.map((q) => ({
   _id: q._id,
@@ -68,21 +69,7 @@ export const checkGenLimit = async (user, document, type) => {
 };
 
 export const recordGenLimit = async (user, document, type) => {
-  const resetUser = await resetDailyGenerationQuota(user._id);
-  if (resetUser) user = resetUser;
-  const plan = user.plan || 'free';
-
-  if (plan === 'pro') {
-    return;
-  }
-
-  if (plan === 'plus' || plan === 'free') {
-    const count = user.dailyGenerationsCount[type] || 0;
-    user.dailyGenerationsCount[type] = count + 1;
-    user.markModified('dailyGenerationsCount');
-    await user.save();
-    return;
-  }
+  await consumeGenerationQuota(user._id, type);
 };
 
 export const checkAndRecordGenLimit = async (user, document, type) => {
@@ -245,12 +232,12 @@ export const generateQuiz = asyncHandler(async (req, res) => {
   if (!session) throw new AppError('Session not found or access denied', 404);
 
   const lockKey = `lock:quiz:generate:${sessionId}:${userId}`;
+  let lockToken = null;
   if (isRedisHealthy()) {
-    const isLocked = await redisClient.get(lockKey);
-    if (isLocked) {
+    lockToken = await acquireCacheLock(lockKey, 60);
+    if (!lockToken) {
       throw new AppError('A quiz is already generating for this session. Please wait.', 429);
     }
-    await redisClient.set(lockKey, 'locked', 'EX', 60);
   }
 
   try {
@@ -345,9 +332,7 @@ export const generateQuiz = asyncHandler(async (req, res) => {
   } catch (error) {
     throw error;
   } finally {
-    if (isRedisHealthy()) {
-      await redisClient.del(lockKey);
-    }
+    await releaseCacheLock(lockKey, lockToken);
   }
 });
 
@@ -383,12 +368,12 @@ export const generateCustomAssessment = asyncHandler(async (req, res) => {
   }
 
   const lockKey = `lock:quiz:custom:${activeSessionId}:${userId}`;
+  let lockToken = null;
   if (isRedisHealthy()) {
-    const isLocked = await redisClient.get(lockKey);
-    if (isLocked) {
+    lockToken = await acquireCacheLock(lockKey, 60);
+    if (!lockToken) {
       throw new AppError('An assessment is already generating for this session. Please wait.', 429);
     }
-    await redisClient.set(lockKey, 'locked', 'EX', 60);
   }
 
   try {
@@ -494,9 +479,7 @@ export const generateCustomAssessment = asyncHandler(async (req, res) => {
   } catch (error) {
     throw error;
   } finally {
-    if (isRedisHealthy()) {
-      await redisClient.del(lockKey);
-    }
+    await releaseCacheLock(lockKey, lockToken);
   }
 });
 

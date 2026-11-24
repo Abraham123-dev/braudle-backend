@@ -15,7 +15,7 @@ import { extractionQueue } from '../queues/document.queue.js';
 import { env } from '../config/env.js';
 import { deleteCached, CACHE_KEYS } from '../utils/cache.js';
 import { canConfirmUpload, isOwnedUploadSession } from '../utils/uploadSession.js';
-import { resetDailyUploadQuota } from '../services/quota.service.js';
+import { getDailyUploadLimit, resetDailyUploadQuota } from '../services/quota.service.js';
 
 /**
  * Handles document upload, R2 storage, and background task queuing 
@@ -375,11 +375,7 @@ export const getPresignedUrl = asyncHandler(async (req, res) => {
   const plan = quotaUser.plan || 'free';
 
   if (isPdf) {
-    const isDev = env.nodeEnv === 'development';
-    let limit = 5;
-    if (isDev) limit = 50;
-    else if (quotaUser.role === 'admin' || plan === 'pro') limit = 1000;
-    else if (plan === 'plus') limit = 10;
+    const limit = getDailyUploadLimit(plan, quotaUser.role, env.nodeEnv === 'development');
 
     if (quotaUser.uploadCount.pdf >= limit) {
       throw new AppError(`You've reached your maximum daily limit of ${limit} PDF uploads for the ${plan.toUpperCase()} plan.`, 429);
@@ -453,7 +449,7 @@ export const confirmUpload = asyncHandler(async (req, res) => {
     || env.nodeEnv === 'development'
     || quotaUser.role === 'admin'
     || plan === 'pro';
-  const limit = plan === 'plus' ? 10 : 5;
+  const limit = getDailyUploadLimit(plan, quotaUser.role, env.nodeEnv === 'development');
   const quotaFilter = isUnlimitedPdf
     ? { _id: userId }
     : { _id: userId, 'uploadCount.pdf': { $lt: limit } };
@@ -550,16 +546,7 @@ export const initiateMultipart = asyncHandler(async (req, res) => {
     const resetUser = await resetDailyUploadQuota(userId);
     const quotaUser = resetUser || userRecord;
     const plan = quotaUser.plan || 'free';
-    const isDev = env.nodeEnv === 'development';
-
-    let limit = 5;
-    if (isDev) {
-      limit = 50;
-    } else if (quotaUser.role === 'admin' || plan === 'pro') {
-      limit = 1000;
-    } else if (plan === 'plus') {
-      limit = 10;
-    }
+    const limit = getDailyUploadLimit(plan, quotaUser.role, env.nodeEnv === 'development');
 
     user = await User.findOneAndUpdate(
       { 

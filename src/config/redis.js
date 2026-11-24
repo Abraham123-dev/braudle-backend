@@ -35,7 +35,7 @@ export const recordRedisSuccess = () => {
   breakerTripped = false;
 };
 
-const redisClient = new redis(env.redisUrl, {
+const redisClient = new redis(env.cacheRedisUrl, {
   retryStrategy: (times) => {
     const delay = Math.min(times * 50, 2000);
     return delay;
@@ -50,16 +50,6 @@ const redisClient = new redis(env.redisUrl, {
 redisClient.on('connect', () => {
   console.log('Redis connected successfully');
   recordRedisSuccess();
-
-  // Try to set maxmemory-policy dynamically to volatile-lru/allkeys-lru
-  // Wrapped in a catch block because some managed Redis hosts disable the CONFIG command
-  redisClient.config('SET', 'maxmemory-policy', 'allkeys-lru')
-    .then(() => {
-      console.log('🔌 [REDIS] Successfully set maxmemory-policy to allkeys-lru');
-    })
-    .catch((err) => {
-      console.warn('🔌 [REDIS] CONFIG SET maxmemory-policy bypassed (restricted on this environment):', err.message);
-    });
 });
 
 redisClient.on('error', (err) => {

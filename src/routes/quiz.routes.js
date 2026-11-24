@@ -2,7 +2,7 @@ import { Router } from 'express';
 import { verifyJWT } from '../middleware/auth.middleware.js';
 import { validate } from '../middleware/validate.middleware.js';
 import { generateQuizSchema, submitQuizSchema, generateCustomAssessmentSchema, gradeQuestionSchema } from '../validators/quiz.validator.js';
-import { quizLimiter, quizGenerationLimiter } from '../middleware/rateLimit.middleware.js';
+import { quizLimiter, quizGenerationBurstLimiter } from '../middleware/rateLimit.middleware.js';
 import {
   generateQuiz,
   generateCustomAssessment,
@@ -22,10 +22,10 @@ router.use(verifyJWT);
 router.get('/history', getQuizHistory);
 
 // Generate a new quiz for an active teaching session
-router.post('/generate', quizGenerationLimiter, validate(generateQuizSchema), generateQuiz);
+router.post('/generate', quizGenerationBurstLimiter, validate(generateQuizSchema), generateQuiz);
 
 // Generate a custom practice quiz/exam
-router.post('/custom', quizGenerationLimiter, validate(generateCustomAssessmentSchema), generateCustomAssessment);
+router.post('/custom', quizGenerationBurstLimiter, validate(generateCustomAssessmentSchema), generateCustomAssessment);
 
 // Get quizzes for a specific session
 router.get('/session/:sessionId', getSessionQuizzes);

@@ -5,33 +5,16 @@ import rateLimit, { ipKeyGenerator } from 'express-rate-limit';
 import RedisStore from 'rate-limit-redis';
 import { redisClient } from '../config/redis.js';
 import { env } from '../config/env.js';
+import { getAbuseLimitConfig, getGlobalLimiterConfig } from '../config/abuseLimits.js';
 
 const isDev = env.nodeEnv === 'development';
-
-export const getPdfUploadMax = (req) => {
-  if (isDev) return 50;
-  if (req.user?.role === 'admin' || req.user?.plan === 'pro') return 1000;
-  if (req.user?.plan === 'plus') return 10;
-  return 5;
-};
-
-export const getImageUploadMax = (req) => {
-  if (isDev) return 100;
-  if (req.user?.role === 'admin' || req.user?.plan === 'plus' || req.user?.plan === 'pro') return 1000;
-  return 20;
-};
+const abuseLimitConfig = getAbuseLimitConfig(isDev);
+const globalLimitConfig = getGlobalLimiterConfig(isDev);
 
 export const getChatMax = (req) => {
   if (isDev) return 1000;
   if (req.user?.role === 'admin' || req.user?.plan === 'plus' || req.user?.plan === 'pro') return 500;
   return 60;
-};
-
-export const getQuizGenMax = (req) => {
-  if (isDev) return 100;
-  if (req.user?.role === 'admin' || req.user?.plan === 'pro') return 1000;
-  if (req.user?.plan === 'plus') return 5;
-  return 5;
 };
 
 // ─── Shared Redis store helper ────────────────────────────────────────────────
@@ -40,35 +23,16 @@ const makeStore = (prefix) => new RedisStore({
   prefix: `rl:${prefix}:`,
 });
 
-// Global rate limiter: 300 req / 15 min (10,000 in dev)
-// Redis-backed so limits are enforced across all server instances.
+// Global IP rate limiter: 300 req / 15 min (10,000 in dev).
+// This limiter runs on every HTTP request, so it deliberately uses the
+// express-rate-limit memory store. The Redis Store is reserved for abuse
+// limiters on explicitly sensitive or expensive endpoints.
 export const globalLimiter = rateLimit({
-  store: makeStore('global'),
-  windowMs: 15 * 60 * 1000,
-  max: isDev ? 10000 : 300,
+  windowMs: globalLimitConfig.windowMs,
+  max: globalLimitConfig.max,
   message: 'Too many requests from this IP, please try again later.',
   standardHeaders: true,
   legacyHeaders: false,
-});
-
-// PDF upload limiter: daily quota per user (Free: 5, Plus: 10, Pro: unlimited)
-export const uploadPdfLimiter = rateLimit({
-  store: makeStore('pdf'),
-  windowMs: 24 * 60 * 60 * 1000,
-  max: getPdfUploadMax,
-  keyGenerator: (req) => req.user?.id || ipKeyGenerator(req),
-  message: 'You have reached the limit of PDF uploads per day',
-  statusCode: 429,
-});
-
-// Image upload limiter: daily quota per user (Free: 20, Plus/Pro: unlimited)
-export const uploadImageLimiter = rateLimit({
-  store: makeStore('image'),
-  windowMs: 24 * 60 * 60 * 1000,
-  max: getImageUploadMax,
-  keyGenerator: (req) => req.user?.id || ipKeyGenerator(req),
-  message: 'You have reached the limit of image uploads per day',
-  statusCode: 429,
 });
 
 // Presign burst limiter: max 5 presign requests per minute per user.
@@ -76,8 +40,8 @@ export const uploadImageLimiter = rateLimit({
 // without ever completing an upload.
 export const presignBurstLimiter = rateLimit({
   store: makeStore('presign'),
-  windowMs: 60 * 1000,
-  max: isDev ? 100 : 5,
+  windowMs: abuseLimitConfig.presign.windowMs,
+  max: abuseLimitConfig.presign.max,
   keyGenerator: (req) => req.user?.id || ipKeyGenerator(req),
   message: 'Too many upload requests. Please wait a moment before trying again.',
   statusCode: 429,
@@ -103,13 +67,13 @@ export const quizLimiter = rateLimit({
   statusCode: 429,
 });
 
-// Quiz generation limiter: daily quota per user
-export const quizGenerationLimiter = rateLimit({
-  store: makeStore('quiz_gen'),
-  windowMs: 24 * 60 * 60 * 1000,
-  max: getQuizGenMax,
+// Short abuse limiter only. Daily plan quotas are enforced atomically in MongoDB.
+export const quizGenerationBurstLimiter = rateLimit({
+  store: makeStore('quiz_gen_burst'),
+  windowMs: abuseLimitConfig.quizGeneration.windowMs,
+  max: abuseLimitConfig.quizGeneration.max,
   keyGenerator: (req) => req.user?.id || ipKeyGenerator(req),
-  message: 'You have reached the limit of quiz generations per day. Please try again tomorrow.',
+  message: 'Too many quiz requests. Please wait before trying again.',
   statusCode: 429,
 });
 

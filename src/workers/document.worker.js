@@ -31,7 +31,7 @@ import {
 await connectDB();
 
 // Dedicated connection for BullMQ Worker (no commandTimeout to allow long blocking pop)
-const workerConnection = new Redis(env.redisUrl, {
+const workerConnection = new Redis(env.queueRedisUrl, {
   maxRetriesPerRequest: null,
   enableReadyCheck: false,
   keepAlive: 30000,
